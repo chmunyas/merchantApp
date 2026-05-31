@@ -17,7 +17,18 @@ import {
   Share2,
   ExternalLink,
   AlertCircle,
+  ImageIcon,
+  X,
 } from "lucide-react";
+import type {
+  CatalogueItem,
+  MenuSchedule,
+  ModifierOption,
+} from "@/components/merchant/features/types";
+import {
+  ensureMerchantDemoData,
+  getActiveMenuSchedule,
+} from "@/lib/merchant-dashboard";
 import {
   executePayment,
   buildPaymentMetadata,
@@ -33,7 +44,10 @@ export const Route = createFileRoute("/table")({
         name: "description",
         content: "Scan your table QR, view bill, split & pay with tips.",
       },
-      { name: "viewport", content: "width=device-width, initial-scale=1, maximum-scale=1" },
+      {
+        name: "viewport",
+        content: "width=device-width, initial-scale=1, maximum-scale=1",
+      },
     ],
   }),
   component: TablePayPage,
@@ -41,7 +55,15 @@ export const Route = createFileRoute("/table")({
 
 // --- Types ---
 
-type MenuItem = {
+type SelectedModifier = {
+  modifierId: string;
+  modifierName: string;
+  optionId: string;
+  optionLabel: string;
+  priceAdjustment: number;
+};
+
+type TableItem = {
   id: string;
   name: string;
   price: number;
@@ -49,6 +71,24 @@ type MenuItem = {
   category?: string;
   dietary?: string[];
   destination?: "kitchen" | "bar";
+  image?: string;
+  description?: string;
+  modifiers?: CatalogueItem["modifiers"];
+  selectedModifiers?: SelectedModifier[];
+};
+
+type OrderSelection = {
+  key: string;
+  itemId: string;
+  name: string;
+  basePrice: number;
+  quantity: number;
+  category?: string;
+  dietary?: string[];
+  destination?: "kitchen" | "bar";
+  image?: string;
+  description?: string;
+  selectedOptions: SelectedModifier[];
 };
 
 type TableData = {
@@ -56,10 +96,10 @@ type TableData = {
   merchant: string;
   till: string;
   server: string;
-  items: MenuItem[];
+  items: TableItem[];
   openedAt: string;
   quickCharge?: number;
-  catalogue?: MenuItem[]; // menu for ordering
+  catalogue?: CatalogueItem[];
 };
 
 type SplitMode = "full" | "equal" | "by-item" | "custom";
@@ -201,6 +241,7 @@ const TRANSLATIONS: Record<Lang, Record<string, string>> = {
 // --- Demo Data ---
 
 function getDemoTable(): TableData {
+  const merchantData = ensureMerchantDemoData();
   return {
     tableNumber: 7,
     merchant: "Mama Oliech Restaurant",
@@ -208,20 +249,76 @@ function getDemoTable(): TableData {
     server: "Grace M.",
     openedAt: new Date(Date.now() - 45 * 60000).toISOString(),
     items: [
-      { id: "i1", name: "Nyama Choma (500g)", price: 850, qty: 1, category: "Main" },
+      {
+        id: "i1",
+        name: "Nyama Choma (500g)",
+        price: 850,
+        qty: 1,
+        category: "Main",
+      },
       { id: "i2", name: "Ugali", price: 100, qty: 2, category: "Side" },
       { id: "i3", name: "Sukuma Wiki", price: 80, qty: 2, category: "Side" },
-      { id: "i4", name: "Tusker Lager", price: 250, qty: 3, category: "Drinks" },
+      {
+        id: "i4",
+        name: "Tusker Lager",
+        price: 250,
+        qty: 3,
+        category: "Drinks",
+      },
       { id: "i5", name: "Coca Cola", price: 120, qty: 1, category: "Drinks" },
       { id: "i6", name: "Pilau Rice", price: 350, qty: 1, category: "Main" },
       { id: "i7", name: "Chapati", price: 50, qty: 4, category: "Side" },
     ],
+    catalogue: merchantData.catalogue,
   };
+}
+
+function mapOptionToSelection(
+  modifierId: string,
+  modifierName: string,
+  option: ModifierOption,
+): SelectedModifier {
+  return {
+    modifierId,
+    modifierName,
+    optionId: option.id,
+    optionLabel: option.label,
+    priceAdjustment: option.priceAdjustment,
+  };
+}
+
+function makeOrderKey(itemId: string, options: SelectedModifier[]) {
+  const suffix =
+    options
+      .map((option) => option.optionId)
+      .sort()
+      .join(",") || "base";
+  return `${itemId}::${suffix}`;
+}
+
+function getSelectionUnitPrice(selection: OrderSelection) {
+  return (
+    selection.basePrice +
+    selection.selectedOptions.reduce(
+      (sum, option) => sum + option.priceAdjustment,
+      0,
+    )
+  );
 }
 
 // --- Main Page ---
 
-type PageState = "loading" | "bill" | "order" | "order-sent" | "split" | "tip" | "phone" | "processing" | "success" | "error";
+type PageState =
+  | "loading"
+  | "bill"
+  | "order"
+  | "order-sent"
+  | "split"
+  | "tip"
+  | "phone"
+  | "processing"
+  | "success"
+  | "error";
 
 function TablePayPage() {
   const [state, setState] = useState<PageState>("loading");
@@ -236,8 +333,9 @@ function TablePayPage() {
   const [payerName, setPayerName] = useState("");
   const [lang, setLang] = useState<Lang>("en");
   // Order-at-table state
-  const [orderItems, setOrderItems] = useState<Map<string, number>>(new Map());
+  const [orderItems, setOrderItems] = useState<OrderSelection[]>([]);
   const [orderSentTo, setOrderSentTo] = useState<string[]>([]);
+  const [menuSchedules, setMenuSchedules] = useState<MenuSchedule[]>([]);
   // PesaSwap payment state
   const [paymentId, setPaymentId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
@@ -265,10 +363,21 @@ function TablePayPage() {
     const params = new URLSearchParams(window.location.search);
     const tableParam = params.get("t");
     qrScannedAtRef.current = new Date().toISOString();
+    const merchantData = ensureMerchantDemoData();
+    setMenuSchedules(merchantData.menuSchedules);
+
+    const withMerchantCatalogue = (data: TableData) => ({
+      ...data,
+      catalogue:
+        data.catalogue && data.catalogue.length > 0
+          ? data.catalogue
+          : merchantData.catalogue,
+    });
+
     if (tableParam) {
       try {
         const data = JSON.parse(atob(tableParam)) as TableData;
-        setTableData(data);
+        setTableData(withMerchantCatalogue(data));
         setState("bill");
       } catch {
         // Invalid - use demo
@@ -285,21 +394,37 @@ function TablePayPage() {
   }, []);
 
   const totalBill = useMemo(
-    () => tableData?.quickCharge ?? tableData?.items.reduce((s, i) => s + i.price * i.qty, 0) ?? 0,
+    () =>
+      tableData?.quickCharge ??
+      tableData?.items.reduce((s, i) => s + i.price * i.qty, 0) ??
+      0,
     [tableData],
+  );
+  const activeSchedule = useMemo(
+    () => getActiveMenuSchedule(menuSchedules),
+    [menuSchedules],
   );
 
   const mySubtotal = useMemo(() => {
     if (splitMode === "full") return totalBill;
     if (splitMode === "equal") return Math.ceil(totalBill / splitCount);
     if (splitMode === "by-item") {
-      return tableData?.items
-        .filter((i) => selectedItems.has(i.id))
-        .reduce((s, i) => s + i.price * i.qty, 0) ?? 0;
+      return (
+        tableData?.items
+          .filter((i) => selectedItems.has(i.id))
+          .reduce((s, i) => s + i.price * i.qty, 0) ?? 0
+      );
     }
     if (splitMode === "custom") return Number(customAmount) || 0;
     return totalBill;
-  }, [splitMode, totalBill, splitCount, selectedItems, customAmount, tableData]);
+  }, [
+    splitMode,
+    totalBill,
+    splitCount,
+    selectedItems,
+    customAmount,
+    tableData,
+  ]);
 
   const tipAmount = useMemo(() => {
     if (customTip) return Number(customTip) || 0;
@@ -339,11 +464,17 @@ function TablePayPage() {
         category: i.category,
       })),
       split: {
-        type: splitMode === "by-item" ? "by_item" : splitMode as "full" | "equal" | "custom",
+        type:
+          splitMode === "by-item"
+            ? "by_item"
+            : (splitMode as "full" | "equal" | "custom"),
         totalParties: splitMode === "equal" ? splitCount : 1,
         index: 1,
       },
-      tip: tipAmount > 0 ? { amount: tipAmount, recipient: tableData.server } : undefined,
+      tip:
+        tipAmount > 0
+          ? { amount: tipAmount, recipient: tableData.server }
+          : undefined,
       qrScannedAt: qrScannedAtRef.current,
     });
 
@@ -376,7 +507,7 @@ function TablePayPage() {
     setCustomTip("");
     setPhone("");
     setPayerName("");
-    setOrderItems(new Map());
+    setOrderItems([]);
     setOrderSentTo([]);
     setPaymentId(null);
     setErrorMsg("");
@@ -388,14 +519,34 @@ function TablePayPage() {
   }
 
   function placeOrder() {
-    if (!tableData || orderItems.size === 0) return;
-    const catalogue = tableData.catalogue || tableData.items;
+    if (!tableData || orderItems.length === 0) return;
     const destinations = new Set<string>();
-    orderItems.forEach((qty, id) => {
-      const item = catalogue.find((i) => i.id === id);
-      if (item) destinations.add(item.destination || (item.category === "Drinks" || item.category === "Cocktails" ? "bar" : "kitchen"));
+    const nextItems: TableItem[] = [...tableData.items];
+
+    orderItems.forEach((selection) => {
+      destinations.add(
+        selection.destination ||
+          (selection.category === "Drinks" || selection.category === "Cocktails"
+            ? "bar"
+            : "kitchen"),
+      );
+      nextItems.push({
+        id: `order-${selection.key}-${Date.now()}`,
+        name: selection.name,
+        price: getSelectionUnitPrice(selection),
+        qty: selection.quantity,
+        category: selection.category,
+        dietary: selection.dietary,
+        destination: selection.destination,
+        image: selection.image,
+        description: selection.description,
+        selectedModifiers: selection.selectedOptions,
+      });
     });
+
+    setTableData({ ...tableData, items: nextItems });
     setOrderSentTo(Array.from(destinations));
+    setOrderItems([]);
     setState("order-sent");
     // Auto-return to bill after 3s
     setTimeout(() => setState("bill"), 3000);
@@ -408,7 +559,9 @@ function TablePayPage() {
         <div className="text-center mb-4">
           <div className="inline-flex items-center gap-2 rounded-full bg-foreground text-background px-4 py-2 mb-2">
             <Receipt className="size-4" />
-            <span className="text-sm font-bold font-mono">PesaSwap {t.tablePay}</span>
+            <span className="text-sm font-bold font-mono">
+              PesaSwap {t.tablePay}
+            </span>
           </div>
           {/* Language toggle */}
           <div className="flex items-center justify-center gap-1 mt-1">
@@ -439,6 +592,7 @@ function TablePayPage() {
             table={tableData}
             orderItems={orderItems}
             setOrderItems={setOrderItems}
+            activeSchedule={activeSchedule}
             onBack={() => setState("bill")}
             onPlace={placeOrder}
             t={t}
@@ -492,7 +646,12 @@ function TablePayPage() {
         )}
         {state === "processing" && <ProcessingState />}
         {state === "error" && (
-          <PaymentErrorState message={errorMsg} onRetry={retryPayment} onCancel={reset} lang={lang} />
+          <PaymentErrorState
+            message={errorMsg}
+            onRetry={retryPayment}
+            onCancel={reset}
+            lang={lang}
+          />
         )}
         {state === "success" && tableData && (
           <SuccessState
@@ -518,7 +677,9 @@ function LoadingState() {
   return (
     <div className="flex flex-col items-center justify-center py-16 space-y-4">
       <div className="size-12 border-4 border-foreground border-t-transparent rounded-full animate-spin" />
-      <p className="text-sm text-muted-foreground font-mono">Loading table bill...</p>
+      <p className="text-sm text-muted-foreground font-mono">
+        Loading table bill...
+      </p>
     </div>
   );
 }
@@ -537,7 +698,9 @@ function BillView({
   t: Record<string, string>;
 }) {
   const [expanded, setExpanded] = useState(true);
-  const elapsed = Math.round((Date.now() - new Date(table.openedAt).getTime()) / 60000);
+  const elapsed = Math.round(
+    (Date.now() - new Date(table.openedAt).getTime()) / 60000,
+  );
 
   return (
     <div className="space-y-4">
@@ -546,7 +709,9 @@ function BillView({
         <div className="flex items-center justify-between">
           <div>
             <p className="text-lg font-bold">{table.merchant}</p>
-            <p className="text-sm text-muted-foreground">{t.table} {table.tableNumber} · {t.server}: {table.server}</p>
+            <p className="text-sm text-muted-foreground">
+              {t.table} {table.tableNumber} · {t.server}: {table.server}
+            </p>
           </div>
           <div className="size-12 rounded-full bg-foreground text-background flex items-center justify-center text-lg font-bold">
             {table.tableNumber}
@@ -564,24 +729,56 @@ function BillView({
             onClick={() => setExpanded(!expanded)}
             className="w-full flex items-center justify-between px-4 py-3 bg-card"
           >
-            <span className="text-sm font-semibold">{t.yourBill} ({table.items.length} {t.items})</span>
-            {expanded ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+            <span className="text-sm font-semibold">
+              {t.yourBill} ({table.items.length} {t.items})
+            </span>
+            {expanded ? (
+              <ChevronUp className="size-4" />
+            ) : (
+              <ChevronDown className="size-4" />
+            )}
           </button>
 
           {expanded && (
             <div className="divide-y divide-border">
               {table.items.map((item) => (
-                <div key={item.id} className="px-4 py-2.5 flex items-center justify-between">
+                <div
+                  key={item.id}
+                  className="px-4 py-2.5 flex items-center justify-between"
+                >
                   <div>
                     <p className="text-sm font-medium">{item.name}</p>
                     <div className="flex items-center gap-1">
-                      <p className="text-[10px] text-muted-foreground">{item.category} · Qty: {item.qty}</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {item.category} · Qty: {item.qty}
+                      </p>
                       {item.dietary && item.dietary.length > 0 && (
                         <span className="text-[9px]">
-                          {item.dietary.map((d) => d === "vegan" ? "🌱" : d === "vegetarian" ? "🥬" : d === "gluten-free" ? "🌾✗" : d === "halal" ? "☪" : d === "contains-nuts" ? "🥜" : "🥛✗").join("")}
+                          {item.dietary
+                            .map((d) =>
+                              d === "vegan"
+                                ? "🌱"
+                                : d === "vegetarian"
+                                  ? "🥬"
+                                  : d === "gluten-free"
+                                    ? "🌾✗"
+                                    : d === "halal"
+                                      ? "☪"
+                                      : d === "contains-nuts"
+                                        ? "🥜"
+                                        : "🥛✗",
+                            )
+                            .join("")}
                         </span>
                       )}
                     </div>
+                    {item.selectedModifiers?.length ? (
+                      <p className="text-[10px] text-muted-foreground">
+                        {item.selectedModifiers
+                          .map((option) => option.optionLabel)
+                          .join(" · ")}
+                      </p>
+                    ) : null}
                   </div>
                   <p className="text-sm font-mono font-bold">
                     {(item.price * item.qty).toLocaleString()}
@@ -593,14 +790,18 @@ function BillView({
         </div>
       ) : (
         <div className="rounded-2xl border border-border p-6 text-center">
-          <p className="text-sm text-muted-foreground">Amount charged by merchant</p>
+          <p className="text-sm text-muted-foreground">
+            Amount charged by merchant
+          </p>
         </div>
       )}
 
       {/* Total */}
       <div className="rounded-2xl bg-foreground text-background p-4 flex items-center justify-between">
         <span className="font-semibold">{t.total}</span>
-        <span className="text-2xl font-bold font-mono">KES {total.toLocaleString()}</span>
+        <span className="text-2xl font-bold font-mono">
+          KES {total.toLocaleString()}
+        </span>
       </div>
 
       {/* Actions */}
@@ -634,48 +835,144 @@ function OrderView({
   table,
   orderItems,
   setOrderItems,
+  activeSchedule,
   onBack,
   onPlace,
   t,
 }: {
   table: TableData;
-  orderItems: Map<string, number>;
-  setOrderItems: (m: Map<string, number>) => void;
+  orderItems: OrderSelection[];
+  setOrderItems: (items: OrderSelection[]) => void;
+  activeSchedule: MenuSchedule | null;
   onBack: () => void;
   onPlace: () => void;
   t: Record<string, string>;
 }) {
-  const menu = table.catalogue || table.items;
-  const categories = [...new Set(menu.map((i) => i.category || "Other"))];
+  const menu = table.catalogue || [];
+  const visibleMenu = activeSchedule
+    ? menu.filter((item) => activeSchedule.categories.includes(item.category))
+    : menu;
+  const categories = [
+    ...new Set(visibleMenu.map((i) => i.category || "Other")),
+  ];
   const [filterCat, setFilterCat] = useState<string>("All");
-  const filteredMenu = filterCat === "All" ? menu : menu.filter((i) => i.category === filterCat);
+  const filteredMenu =
+    filterCat === "All"
+      ? visibleMenu
+      : visibleMenu.filter((i) => i.category === filterCat);
+  const [modifierItem, setModifierItem] = useState<CatalogueItem | null>(null);
+  const [selectedModifierOptions, setSelectedModifierOptions] = useState<
+    Record<string, string>
+  >({});
 
-  const orderTotal = Array.from(orderItems.entries()).reduce((s, [id, qty]) => {
-    const item = menu.find((i) => i.id === id);
-    return s + (item ? item.price * qty : 0);
-  }, 0);
+  const orderTotal = orderItems.reduce(
+    (sum, item) => sum + getSelectionUnitPrice(item) * item.quantity,
+    0,
+  );
 
-  function addItem(id: string) {
-    const next = new Map(orderItems);
-    next.set(id, (next.get(id) || 0) + 1);
-    setOrderItems(next);
+  function setDefaultModifierSelections(item: CatalogueItem) {
+    const defaults = Object.fromEntries(
+      (item.modifiers || [])
+        .filter((modifier) => modifier.options[0])
+        .map((modifier) => [modifier.id, modifier.options[0].id]),
+    );
+    setSelectedModifierOptions(defaults);
   }
 
-  function removeItem(id: string) {
-    const next = new Map(orderItems);
-    const current = next.get(id) || 0;
-    if (current <= 1) next.delete(id);
-    else next.set(id, current - 1);
-    setOrderItems(next);
+  function addSelection(
+    item: CatalogueItem,
+    selectedOptions: SelectedModifier[],
+  ) {
+    const key = makeOrderKey(item.id, selectedOptions);
+    const existing = orderItems.find((entry) => entry.key === key);
+
+    if (existing) {
+      setOrderItems(
+        orderItems.map((entry) =>
+          entry.key === key
+            ? { ...entry, quantity: entry.quantity + 1 }
+            : entry,
+        ),
+      );
+      return;
+    }
+
+    setOrderItems([
+      ...orderItems,
+      {
+        key,
+        itemId: item.id,
+        name: item.name,
+        basePrice: item.price,
+        quantity: 1,
+        category: item.category,
+        dietary: item.dietary,
+        destination: item.destination,
+        image: item.image,
+        description: item.description,
+        selectedOptions,
+      },
+    ]);
+  }
+
+  function addItem(item: CatalogueItem) {
+    if ((item.available ?? true) === false) return;
+    if (item.modifiers?.length) {
+      setModifierItem(item);
+      setDefaultModifierSelections(item);
+      return;
+    }
+    addSelection(item, []);
+  }
+
+  function confirmModifierSelection() {
+    if (!modifierItem) return;
+    const selectedOptions = (modifierItem.modifiers || [])
+      .map((modifier) => {
+        const optionId = selectedModifierOptions[modifier.id];
+        const option = modifier.options.find((entry) => entry.id === optionId);
+        return option
+          ? mapOptionToSelection(modifier.id, modifier.name, option)
+          : null;
+      })
+      .filter(Boolean) as SelectedModifier[];
+
+    addSelection(modifierItem, selectedOptions);
+    setModifierItem(null);
+  }
+
+  function changeQuantity(key: string, delta: number) {
+    const existing = orderItems.find((entry) => entry.key === key);
+    if (!existing) return;
+    const nextQty = existing.quantity + delta;
+    if (nextQty <= 0) {
+      setOrderItems(orderItems.filter((entry) => entry.key !== key));
+      return;
+    }
+
+    setOrderItems(
+      orderItems.map((entry) =>
+        entry.key === key ? { ...entry, quantity: nextQty } : entry,
+      ),
+    );
   }
 
   return (
     <div className="space-y-4">
-      <button onClick={onBack} className="text-sm text-muted-foreground">← {t.back}</button>
+      <button onClick={onBack} className="text-sm text-muted-foreground">
+        ← {t.back}
+      </button>
       <p className="text-lg font-bold">{t.orderMore}</p>
       <p className="text-xs text-muted-foreground">
-        {t.table} {table.tableNumber} · Orders route to {t.kitchen} or {t.bar} automatically
+        {t.table} {table.tableNumber} · Orders route to {t.kitchen} or {t.bar}{" "}
+        automatically
       </p>
+      {activeSchedule ? (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">
+          {activeSchedule.name} is active · Showing{" "}
+          {activeSchedule.categories.join(", ")}
+        </div>
+      ) : null}
 
       {/* Category filter */}
       <div className="flex gap-1 overflow-x-auto pb-1">
@@ -691,43 +988,116 @@ function OrderView({
             onClick={() => setFilterCat(cat)}
             className={`px-3 py-1.5 rounded-full text-[10px] font-semibold whitespace-nowrap ${filterCat === cat ? "bg-foreground text-background" : "bg-muted"}`}
           >
-            {cat === "Drinks" || cat === "Cocktails" ? "🍺 " : "🍳 "}{cat}
+            {cat === "Drinks" || cat === "Cocktails" ? "🍺 " : "🍳 "}
+            {cat}
           </button>
         ))}
       </div>
 
       {/* Menu items */}
       <div className="space-y-1 max-h-64 overflow-y-auto">
+        {filteredMenu.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-border px-4 py-5 text-center text-xs text-muted-foreground">
+            No items available for this schedule.
+          </div>
+        ) : null}
         {filteredMenu.map((item) => {
-          const qty = orderItems.get(item.id) || 0;
+          const itemSelections = orderItems.filter(
+            (entry) => entry.itemId === item.id,
+          );
+          const qty = itemSelections.reduce(
+            (sum, entry) => sum + entry.quantity,
+            0,
+          );
+          const isAvailable = item.available ?? true;
           return (
-            <div key={item.id} className="flex items-center justify-between py-2.5 px-3 rounded-xl border border-border">
+            <div
+              key={item.id}
+              className={`flex items-center justify-between gap-3 py-2.5 px-3 rounded-xl border border-border ${isAvailable ? "" : "bg-muted/40 opacity-70"}`}
+            >
               <div className="flex-1">
-                <p className="text-xs font-medium">
-                  {item.destination === "bar" || item.category === "Drinks" || item.category === "Cocktails" ? "🍺" : "🍳"} {item.name}
+                <p
+                  className={`text-xs font-medium ${isAvailable ? "" : "line-through text-muted-foreground"}`}
+                >
+                  {item.destination === "bar" ||
+                  item.category === "Drinks" ||
+                  item.category === "Cocktails"
+                    ? "🍺"
+                    : "🍳"}{" "}
+                  {item.name}
                 </p>
                 <div className="flex items-center gap-1.5">
-                  <p className="text-[10px] font-mono text-muted-foreground">KES {item.price}</p>
+                  <p className="text-[10px] font-mono text-muted-foreground">
+                    KES {item.price}
+                  </p>
                   {item.dietary && item.dietary.length > 0 && (
                     <span className="text-[8px]">
-                      {item.dietary.map((d) => d === "vegan" ? "🌱" : d === "vegetarian" ? "🥬" : d === "gluten-free" ? "🌾✗" : d === "halal" ? "☪" : d === "contains-nuts" ? "🥜" : "🥛✗").join("")}
+                      {item.dietary
+                        .map((d) =>
+                          d === "vegan"
+                            ? "🌱"
+                            : d === "vegetarian"
+                              ? "🥬"
+                              : d === "gluten-free"
+                                ? "🌾✗"
+                                : d === "halal"
+                                  ? "☪"
+                                  : d === "contains-nuts"
+                                    ? "🥜"
+                                    : "🥛✗",
+                        )
+                        .join("")}
                     </span>
                   )}
                   <span className="text-[8px] text-muted-foreground">
-                    → {item.destination === "bar" || item.category === "Drinks" || item.category === "Cocktails" ? t.bar : t.kitchen}
+                    →{" "}
+                    {item.destination === "bar" ||
+                    item.category === "Drinks" ||
+                    item.category === "Cocktails"
+                      ? t.bar
+                      : t.kitchen}
                   </span>
+                  {item.modifiers?.length ? (
+                    <span className="text-[8px] text-emerald-700">
+                      Modifiers
+                    </span>
+                  ) : null}
                 </div>
+                {item.description ? (
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    {item.description}
+                  </p>
+                ) : null}
+                {!isAvailable ? (
+                  <span className="mt-2 inline-flex rounded-full bg-red-500 px-2 py-0.5 text-[9px] font-semibold text-white">
+                    Sold Out
+                  </span>
+                ) : null}
               </div>
               <div className="flex items-center gap-2">
                 {qty > 0 && (
                   <>
-                    <button onClick={() => removeItem(item.id)} className="size-6 rounded-full border border-border flex items-center justify-center">
+                    <button
+                      onClick={() => {
+                        const latestSelection =
+                          itemSelections[itemSelections.length - 1];
+                        if (latestSelection)
+                          changeQuantity(latestSelection.key, -1);
+                      }}
+                      className="size-6 rounded-full border border-border flex items-center justify-center"
+                    >
                       <Minus className="size-3" />
                     </button>
-                    <span className="text-xs font-bold w-4 text-center">{qty}</span>
+                    <span className="text-xs font-bold w-4 text-center">
+                      {qty}
+                    </span>
                   </>
                 )}
-                <button onClick={() => addItem(item.id)} className="size-6 rounded-full bg-emerald-600 text-white flex items-center justify-center">
+                <button
+                  onClick={() => addItem(item)}
+                  disabled={!isAvailable}
+                  className="size-6 rounded-full bg-emerald-600 text-white flex items-center justify-center disabled:bg-slate-300"
+                >
                   <Plus className="size-3" />
                 </button>
               </div>
@@ -737,11 +1107,56 @@ function OrderView({
       </div>
 
       {/* Order summary */}
-      {orderItems.size > 0 && (
+      {orderItems.length > 0 && (
         <div className="rounded-2xl bg-foreground text-background p-4 space-y-2">
+          <div className="space-y-2">
+            {orderItems.map((item) => (
+              <div key={item.key} className="rounded-xl bg-white/10 p-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold">{item.name}</p>
+                    {item.selectedOptions.length ? (
+                      <p className="text-[10px] text-white/70">
+                        {item.selectedOptions
+                          .map((option) => option.optionLabel)
+                          .join(" · ")}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => changeQuantity(item.key, -1)}
+                      className="size-6 rounded-full border border-white/30 flex items-center justify-center"
+                    >
+                      <Minus className="size-3" />
+                    </button>
+                    <span className="text-xs font-bold w-4 text-center">
+                      {item.quantity}
+                    </span>
+                    <button
+                      onClick={() => changeQuantity(item.key, 1)}
+                      className="size-6 rounded-full bg-emerald-500 text-white flex items-center justify-center"
+                    >
+                      <Plus className="size-3" />
+                    </button>
+                  </div>
+                </div>
+                <p className="mt-1 text-[10px] font-mono text-white/80">
+                  KES{" "}
+                  {(
+                    getSelectionUnitPrice(item) * item.quantity
+                  ).toLocaleString()}
+                </p>
+              </div>
+            ))}
+          </div>
           <div className="flex items-center justify-between">
-            <span className="text-sm font-semibold">{orderItems.size} {t.items}</span>
-            <span className="text-lg font-bold font-mono">KES {orderTotal.toLocaleString()}</span>
+            <span className="text-sm font-semibold">
+              {orderItems.length} {t.items}
+            </span>
+            <span className="text-lg font-bold font-mono">
+              KES {orderTotal.toLocaleString()}
+            </span>
           </div>
           <button
             onClick={onPlace}
@@ -751,19 +1166,103 @@ function OrderView({
           </button>
         </div>
       )}
+
+      {modifierItem ? (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-3xl bg-background p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-lg font-bold">{modifierItem.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  Choose your options before adding to order.
+                </p>
+              </div>
+              <button
+                onClick={() => setModifierItem(null)}
+                className="rounded-full border border-border p-2"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            {modifierItem.image ? (
+              <img
+                src={modifierItem.image}
+                alt={modifierItem.name}
+                className="mt-4 h-32 w-full rounded-2xl object-cover"
+              />
+            ) : (
+              <div className="mt-4 flex h-32 items-center justify-center rounded-2xl border border-dashed border-border bg-muted/30 text-muted-foreground">
+                <ImageIcon className="size-8" />
+              </div>
+            )}
+
+            <div className="mt-4 space-y-4">
+              {(modifierItem.modifiers || []).map((modifier) => (
+                <div key={modifier.id} className="space-y-2">
+                  <p className="text-sm font-semibold">{modifier.name}</p>
+                  <div className="space-y-2">
+                    {modifier.options.map((option) => {
+                      const checked =
+                        selectedModifierOptions[modifier.id] === option.id;
+                      return (
+                        <button
+                          key={option.id}
+                          onClick={() =>
+                            setSelectedModifierOptions((current) => ({
+                              ...current,
+                              [modifier.id]: option.id,
+                            }))
+                          }
+                          className={`flex w-full items-center justify-between rounded-2xl border px-3 py-2 text-left ${checked ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-border"}`}
+                        >
+                          <span className="text-sm font-medium">
+                            {option.label}
+                          </span>
+                          <span className="text-xs font-mono">
+                            {option.priceAdjustment > 0
+                              ? `+KES ${option.priceAdjustment}`
+                              : "+KES 0"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <button
+              onClick={confirmModifierSelection}
+              className="mt-5 w-full rounded-2xl bg-emerald-600 py-3 text-sm font-bold text-white"
+            >
+              {t.addToOrder}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
 // --- Order Sent Confirmation ---
-function OrderSentState({ destinations, t }: { destinations: string[]; t: Record<string, string> }) {
+function OrderSentState({
+  destinations,
+  t,
+}: {
+  destinations: string[];
+  t: Record<string, string>;
+}) {
   return (
     <div className="text-center py-12 space-y-4">
       <div className="text-5xl animate-bounce">✅</div>
       <p className="text-lg font-bold">{t.orderSent}:</p>
       <div className="flex items-center justify-center gap-3">
         {destinations.map((d) => (
-          <span key={d} className={`px-4 py-2 rounded-xl text-sm font-bold ${d === "bar" ? "bg-purple-100 text-purple-800" : "bg-orange-100 text-orange-800"}`}>
+          <span
+            key={d}
+            className={`px-4 py-2 rounded-xl text-sm font-bold ${d === "bar" ? "bg-purple-100 text-purple-800" : "bg-orange-100 text-orange-800"}`}
+          >
             {d === "bar" ? "🍺 " + t.bar : "🍳 " + t.kitchen}
           </span>
         ))}
@@ -804,13 +1303,40 @@ function SplitView({
   onBack: () => void;
   onProceed: () => void;
 }) {
-  const splitOptions: { mode: SplitMode; icon: typeof Receipt; label: string; desc: string }[] = [
-    { mode: "full", icon: Receipt, label: "Pay full bill", desc: "I'll cover everything" },
-    { mode: "equal", icon: Users, label: "Split equally", desc: "Divide evenly among group" },
+  const splitOptions: {
+    mode: SplitMode;
+    icon: typeof Receipt;
+    label: string;
+    desc: string;
+  }[] = [
+    {
+      mode: "full",
+      icon: Receipt,
+      label: "Pay full bill",
+      desc: "I'll cover everything",
+    },
+    {
+      mode: "equal",
+      icon: Users,
+      label: "Split equally",
+      desc: "Divide evenly among group",
+    },
     ...(table.items.length > 0
-      ? [{ mode: "by-item" as SplitMode, icon: SplitSquareVertical, label: "Pay for my items", desc: "Select what I ordered" }]
+      ? [
+          {
+            mode: "by-item" as SplitMode,
+            icon: SplitSquareVertical,
+            label: "Pay for my items",
+            desc: "Select what I ordered",
+          },
+        ]
       : []),
-    { mode: "custom", icon: Percent, label: "Custom amount", desc: "Enter specific amount" },
+    {
+      mode: "custom",
+      icon: Percent,
+      label: "Custom amount",
+      desc: "Enter specific amount",
+    },
   ];
 
   function toggleItem(id: string) {
@@ -845,7 +1371,9 @@ function SplitView({
                 : "border-border"
             }`}
           >
-            <opt.icon className={`size-4 mb-1 ${splitMode === opt.mode ? "text-emerald-600" : "text-muted-foreground"}`} />
+            <opt.icon
+              className={`size-4 mb-1 ${splitMode === opt.mode ? "text-emerald-600" : "text-muted-foreground"}`}
+            />
             <p className="text-xs font-semibold">{opt.label}</p>
             <p className="text-[9px] text-muted-foreground">{opt.desc}</p>
           </button>
@@ -863,7 +1391,9 @@ function SplitView({
             >
               <Minus className="size-4" />
             </button>
-            <span className="text-3xl font-bold font-mono w-12 text-center">{splitCount}</span>
+            <span className="text-3xl font-bold font-mono w-12 text-center">
+              {splitCount}
+            </span>
             <button
               onClick={() => setSplitCount(Math.min(12, splitCount + 1))}
               className="size-10 rounded-full border border-border flex items-center justify-center"
@@ -872,7 +1402,10 @@ function SplitView({
             </button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Each person pays: <span className="font-bold font-mono">KES {Math.ceil(total / splitCount).toLocaleString()}</span>
+            Each person pays:{" "}
+            <span className="font-bold font-mono">
+              KES {Math.ceil(total / splitCount).toLocaleString()}
+            </span>
           </p>
         </div>
       )}
@@ -888,20 +1421,28 @@ function SplitView({
               key={item.id}
               onClick={() => toggleItem(item.id)}
               className={`w-full px-4 py-2.5 flex items-center justify-between border-t border-border transition-colors ${
-                selectedItems.has(item.id) ? "bg-emerald-50 dark:bg-emerald-950/20" : ""
+                selectedItems.has(item.id)
+                  ? "bg-emerald-50 dark:bg-emerald-950/20"
+                  : ""
               }`}
             >
               <div className="flex items-center gap-3">
                 <div
                   className={`size-5 rounded-full border-2 flex items-center justify-center ${
-                    selectedItems.has(item.id) ? "border-emerald-500 bg-emerald-500" : "border-border"
+                    selectedItems.has(item.id)
+                      ? "border-emerald-500 bg-emerald-500"
+                      : "border-border"
                   }`}
                 >
-                  {selectedItems.has(item.id) && <CheckCircle2 className="size-3 text-white" />}
+                  {selectedItems.has(item.id) && (
+                    <CheckCircle2 className="size-3 text-white" />
+                  )}
                 </div>
                 <div className="text-left">
                   <p className="text-xs font-medium">{item.name}</p>
-                  <p className="text-[9px] text-muted-foreground">Qty: {item.qty}</p>
+                  <p className="text-[9px] text-muted-foreground">
+                    Qty: {item.qty}
+                  </p>
                 </div>
               </div>
               <span className="text-xs font-mono font-bold">
@@ -921,14 +1462,18 @@ function SplitView({
             <input
               type="tel"
               value={customAmount}
-              onChange={(e) => setCustomAmount(e.target.value.replace(/[^0-9]/g, ""))}
+              onChange={(e) =>
+                setCustomAmount(e.target.value.replace(/[^0-9]/g, ""))
+              }
               placeholder="0"
               className="flex-1 bg-transparent text-2xl font-mono font-bold outline-none"
               max={total}
             />
           </div>
           {Number(customAmount) > total && (
-            <p className="text-[10px] text-red-500">Amount exceeds total bill</p>
+            <p className="text-[10px] text-red-500">
+              Amount exceeds total bill
+            </p>
           )}
         </div>
       )}
@@ -937,19 +1482,26 @@ function SplitView({
       <div className="rounded-2xl bg-muted p-4 space-y-2">
         <div className="flex justify-between text-sm">
           <span className="text-muted-foreground">Your share</span>
-          <span className="font-bold font-mono">KES {mySubtotal.toLocaleString()}</span>
+          <span className="font-bold font-mono">
+            KES {mySubtotal.toLocaleString()}
+          </span>
         </div>
         {splitMode !== "full" && (
           <div className="flex justify-between text-xs">
             <span className="text-muted-foreground">Remaining on table</span>
-            <span className="font-mono text-amber-600">KES {remainingBalance.toLocaleString()}</span>
+            <span className="font-mono text-amber-600">
+              KES {remainingBalance.toLocaleString()}
+            </span>
           </div>
         )}
       </div>
 
       <button
         onClick={onProceed}
-        disabled={mySubtotal <= 0 || (splitMode === "custom" && Number(customAmount) > total)}
+        disabled={
+          mySubtotal <= 0 ||
+          (splitMode === "custom" && Number(customAmount) > total)
+        }
         className="w-full bg-emerald-600 text-white py-4 rounded-2xl text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-40"
       >
         Continue — KES {mySubtotal.toLocaleString()}
@@ -987,7 +1539,9 @@ function TipView({
         <button onClick={onBack} className="text-sm text-muted-foreground">
           ← Back
         </button>
-        <p className="text-[10px] font-mono text-muted-foreground">Step 3 of 4</p>
+        <p className="text-[10px] font-mono text-muted-foreground">
+          Step 3 of 4
+        </p>
       </div>
 
       <div className="text-center space-y-2">
@@ -1021,7 +1575,7 @@ function TipView({
             <p className="text-xs font-bold">{opt.label}</p>
             {opt.percent > 0 && (
               <p className="text-[9px] text-muted-foreground font-mono">
-                {Math.round(subtotal * opt.percent / 100)}
+                {Math.round((subtotal * opt.percent) / 100)}
               </p>
             )}
           </button>
@@ -1051,7 +1605,9 @@ function TipView({
         </div>
         <div className="flex justify-between text-xs">
           <span className="text-muted-foreground">Tip for {server}</span>
-          <span className="font-mono text-amber-600">+ KES {tipAmount.toLocaleString()}</span>
+          <span className="font-mono text-amber-600">
+            + KES {tipAmount.toLocaleString()}
+          </span>
         </div>
         <div className="h-px bg-border" />
         <div className="flex justify-between text-sm font-bold">
@@ -1065,7 +1621,10 @@ function TipView({
           if (diff > 0 && diff <= 50 && diff !== tipAmount) {
             return (
               <button
-                onClick={() => { setCustomTip(String(tipAmount + diff)); setTipPercent(0); }}
+                onClick={() => {
+                  setCustomTip(String(tipAmount + diff));
+                  setTipPercent(0);
+                }}
                 className="w-full text-[10px] text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 py-1.5 rounded-lg mt-1"
               >
                 Round up to KES {roundTo.toLocaleString()}? (+{diff})
@@ -1112,7 +1671,9 @@ function PhoneView({
   onBack: () => void;
   onPay: () => void;
 }) {
-  const [payMethod, setPayMethod] = useState<"mpesa" | "card" | "apple" | "google">("mpesa");
+  const [payMethod, setPayMethod] = useState<
+    "mpesa" | "card" | "apple" | "google"
+  >("mpesa");
 
   const methods = [
     { id: "mpesa" as const, label: "M-Pesa", icon: "📱", desc: "STK Push" },
@@ -1127,14 +1688,18 @@ function PhoneView({
         <button onClick={onBack} className="text-sm text-muted-foreground">
           ← Back
         </button>
-        <p className="text-[10px] font-mono text-muted-foreground">Step 4 of 4</p>
+        <p className="text-[10px] font-mono text-muted-foreground">
+          Step 4 of 4
+        </p>
       </div>
 
       <p className="text-lg font-bold">Confirm & Pay</p>
 
       {/* Payment method selector */}
       <div className="space-y-2">
-        <p className="text-[10px] font-mono uppercase text-muted-foreground">Payment method</p>
+        <p className="text-[10px] font-mono uppercase text-muted-foreground">
+          Payment method
+        </p>
         <div className="grid grid-cols-4 gap-1.5">
           {methods.map((m) => (
             <button
@@ -1155,7 +1720,9 @@ function PhoneView({
 
       <div className="rounded-2xl border border-border p-4 space-y-3">
         <div>
-          <p className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Your name (optional)</p>
+          <p className="text-[10px] font-mono uppercase text-muted-foreground mb-1">
+            Your name (optional)
+          </p>
           <input
             type="text"
             value={payerName}
@@ -1167,13 +1734,19 @@ function PhoneView({
 
         {payMethod === "mpesa" && (
           <div>
-            <p className="text-[10px] font-mono uppercase text-muted-foreground mb-1">M-Pesa number</p>
+            <p className="text-[10px] font-mono uppercase text-muted-foreground mb-1">
+              M-Pesa number
+            </p>
             <div className="flex items-center gap-2 bg-muted rounded-xl px-4 py-3">
-              <span className="text-sm font-mono text-muted-foreground">+254</span>
+              <span className="text-sm font-mono text-muted-foreground">
+                +254
+              </span>
               <input
                 type="tel"
                 value={phone}
-                onChange={(e) => setPhone(e.target.value.replace(/[^0-9]/g, "").slice(0, 9))}
+                onChange={(e) =>
+                  setPhone(e.target.value.replace(/[^0-9]/g, "").slice(0, 9))
+                }
                 placeholder="7XX XXX XXX"
                 className="flex-1 bg-transparent text-sm font-mono font-bold outline-none"
               />
@@ -1184,7 +1757,9 @@ function PhoneView({
         {payMethod === "card" && (
           <div className="space-y-2">
             <div>
-              <p className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Card number</p>
+              <p className="text-[10px] font-mono uppercase text-muted-foreground mb-1">
+                Card number
+              </p>
               <input
                 type="tel"
                 placeholder="4242 4242 4242 4242"
@@ -1192,32 +1767,51 @@ function PhoneView({
               />
             </div>
             <div className="flex gap-2">
-              <input type="tel" placeholder="MM/YY" className="flex-1 bg-muted rounded-xl px-4 py-3 text-sm font-mono outline-none" />
-              <input type="tel" placeholder="CVV" className="w-20 bg-muted rounded-xl px-4 py-3 text-sm font-mono outline-none" />
+              <input
+                type="tel"
+                placeholder="MM/YY"
+                className="flex-1 bg-muted rounded-xl px-4 py-3 text-sm font-mono outline-none"
+              />
+              <input
+                type="tel"
+                placeholder="CVV"
+                className="w-20 bg-muted rounded-xl px-4 py-3 text-sm font-mono outline-none"
+              />
             </div>
           </div>
         )}
 
         {(payMethod === "apple" || payMethod === "google") && (
           <div className="rounded-xl bg-muted p-4 text-center">
-            <p className="text-2xl mb-1">{payMethod === "apple" ? "🍎" : "🟢"}</p>
-            <p className="text-xs text-muted-foreground">
-              {payMethod === "apple" ? "Tap to pay with Apple Pay" : "Tap to pay with Google Pay"}
+            <p className="text-2xl mb-1">
+              {payMethod === "apple" ? "🍎" : "🟢"}
             </p>
-            <p className="text-[10px] text-muted-foreground mt-1">Biometric confirmation required</p>
+            <p className="text-xs text-muted-foreground">
+              {payMethod === "apple"
+                ? "Tap to pay with Apple Pay"
+                : "Tap to pay with Google Pay"}
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Biometric confirmation required
+            </p>
           </div>
         )}
       </div>
 
       <div className="rounded-2xl bg-foreground text-background p-4 flex items-center justify-between">
         <span className="font-semibold">Total</span>
-        <span className="text-xl font-bold font-mono">KES {myTotal.toLocaleString()}</span>
+        <span className="text-xl font-bold font-mono">
+          KES {myTotal.toLocaleString()}
+        </span>
       </div>
 
       <p className="text-[10px] text-center text-muted-foreground">
-        {payMethod === "mpesa" && "An M-Pesa STK push will be sent to your phone for PIN confirmation"}
-        {payMethod === "card" && "Your card will be charged securely via PCI-DSS compliant gateway"}
-        {payMethod === "apple" && "Authenticate with Face ID or Touch ID to confirm"}
+        {payMethod === "mpesa" &&
+          "An M-Pesa STK push will be sent to your phone for PIN confirmation"}
+        {payMethod === "card" &&
+          "Your card will be charged securely via PCI-DSS compliant gateway"}
+        {payMethod === "apple" &&
+          "Authenticate with Face ID or Touch ID to confirm"}
         {payMethod === "google" && "Authenticate with your device to confirm"}
       </p>
 
@@ -1269,7 +1863,11 @@ function PaymentErrorState({
         </div>
         <div className="text-center">
           <p className="text-lg font-bold text-red-700">
-            {lang === "sw" ? "Malipo yameshindikana" : lang === "fr" ? "Paiement échoué" : "Payment failed"}
+            {lang === "sw"
+              ? "Malipo yameshindikana"
+              : lang === "fr"
+                ? "Paiement échoué"
+                : "Payment failed"}
           </p>
           <p className="text-sm text-muted-foreground mt-2">{message}</p>
         </div>
@@ -1280,7 +1878,11 @@ function PaymentErrorState({
         className="w-full bg-foreground text-background py-4 rounded-2xl text-sm font-bold flex items-center justify-center gap-2"
       >
         <Zap className="size-4" />
-        {lang === "sw" ? "Jaribu tena" : lang === "fr" ? "Réessayer" : "Try Again"}
+        {lang === "sw"
+          ? "Jaribu tena"
+          : lang === "fr"
+            ? "Réessayer"
+            : "Try Again"}
       </button>
 
       <button
@@ -1331,7 +1933,9 @@ function SuccessState({
     `Phone: +254 ${phone.slice(0, 3)}***${phone.slice(-2)}`,
     `━━━━━━━━━━━━━━━`,
     `Subtotal: KES ${(myTotal - tipAmount).toLocaleString()}`,
-    ...(tipAmount > 0 ? [`Tip (${table.server}): KES ${tipAmount.toLocaleString()}`] : []),
+    ...(tipAmount > 0
+      ? [`Tip (${table.server}): KES ${tipAmount.toLocaleString()}`]
+      : []),
     `Total: KES ${myTotal.toLocaleString()}`,
     `━━━━━━━━━━━━━━━`,
     `Ref: ${receiptRef}`,
@@ -1372,8 +1976,12 @@ function SuccessState({
           <CheckCircle2 className="size-12 text-emerald-600" />
         </div>
         <div className="text-center">
-          <p className="text-lg font-bold text-emerald-700">Payment successful!</p>
-          <p className="text-2xl font-bold font-mono mt-1">KES {myTotal.toLocaleString()}</p>
+          <p className="text-lg font-bold text-emerald-700">
+            Payment successful!
+          </p>
+          <p className="text-2xl font-bold font-mono mt-1">
+            KES {myTotal.toLocaleString()}
+          </p>
         </div>
       </div>
 
@@ -1383,9 +1991,14 @@ function SuccessState({
           ["Merchant", table.merchant],
           ["Table", `#${table.tableNumber}`],
           ...(payerName ? [["Paid by", payerName]] : []),
-          ["Phone", phone ? `+254 ${phone.slice(0, 3)}***${phone.slice(-2)}` : "—"],
+          [
+            "Phone",
+            phone ? `+254 ${phone.slice(0, 3)}***${phone.slice(-2)}` : "—",
+          ],
           ["Subtotal", `KES ${(myTotal - tipAmount).toLocaleString()}`],
-          ...(tipAmount > 0 ? [["Tip for " + table.server, `KES ${tipAmount.toLocaleString()}`]] : []),
+          ...(tipAmount > 0
+            ? [["Tip for " + table.server, `KES ${tipAmount.toLocaleString()}`]]
+            : []),
           ["Total paid", `KES ${myTotal.toLocaleString()}`],
           ["Reference", receiptRef],
           ["Time", receiptTime],
@@ -1409,7 +2022,10 @@ function SuccessState({
       {remainingBalance > 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-950/20 p-3 text-center">
           <p className="text-xs text-amber-700 dark:text-amber-400">
-            Remaining on table: <span className="font-bold font-mono">KES {remainingBalance.toLocaleString()}</span>
+            Remaining on table:{" "}
+            <span className="font-bold font-mono">
+              KES {remainingBalance.toLocaleString()}
+            </span>
           </p>
           <p className="text-[10px] text-amber-600 dark:text-amber-500 mt-0.5">
             Others in your group can scan the same QR to pay their share
@@ -1420,7 +2036,9 @@ function SuccessState({
       {/* Review prompt */}
       {showReview && !reviewSubmitted && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 dark:bg-amber-950/20 p-4 space-y-3 animate-in fade-in slide-in-from-bottom-2">
-          <p className="text-sm font-semibold text-center">How was your experience?</p>
+          <p className="text-sm font-semibold text-center">
+            How was your experience?
+          </p>
           <div className="flex justify-center gap-1">
             {[1, 2, 3, 4, 5].map((star) => (
               <button
@@ -1430,7 +2048,9 @@ function SuccessState({
               >
                 <Star
                   className={`size-8 transition-colors ${
-                    star <= rating ? "text-amber-500 fill-amber-500" : "text-muted-foreground"
+                    star <= rating
+                      ? "text-amber-500 fill-amber-500"
+                      : "text-muted-foreground"
                   }`}
                 />
               </button>
@@ -1456,7 +2076,9 @@ function SuccessState({
 
       {reviewSubmitted && (
         <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/20 p-3 text-center">
-          <p className="text-xs text-emerald-700">Thank you for your feedback! 🙏</p>
+          <p className="text-xs text-emerald-700">
+            Thank you for your feedback! 🙏
+          </p>
         </div>
       )}
 

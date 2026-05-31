@@ -1,5 +1,6 @@
 import type {
   CatalogueItem,
+  MenuSchedule,
   OrderTicket,
   Reservation,
 } from "@/components/merchant/features/types";
@@ -15,6 +16,7 @@ export const STAFF_NAMES = [
 
 export const STORAGE_KEYS = {
   catalogue: "fxengine.merchant.catalogue",
+  menuSchedules: "fxengine.merchant.menuSchedules",
   tables: "fxengine.merchant.tables",
   orders: "fxengine.merchant.orders",
   reservations: "fxengine.merchant.reservations",
@@ -115,6 +117,7 @@ export type MerchantSettings = {
 
 export type MerchantSnapshot = {
   catalogue: CatalogueItem[];
+  menuSchedules: MenuSchedule[];
   tables: MerchantTable[];
   orders: OrderTicket[];
   reservations: Reservation[];
@@ -169,6 +172,47 @@ function plusDays(base: Date, days: number, hour: number, minute = 0) {
   return next;
 }
 
+function createImage(label: string, color: string) {
+  return `https://placehold.co/200x200/${color}/white?text=${encodeURIComponent(label)}`;
+}
+
+function modifierOption(id: string, label: string, priceAdjustment: number) {
+  return { id, label, priceAdjustment };
+}
+
+export function getScheduleDayIndex(date = new Date()) {
+  return (date.getDay() + 6) % 7;
+}
+
+function toMinutes(value: string) {
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+export function isMenuScheduleActive(schedule: MenuSchedule, now = new Date()) {
+  const day = getScheduleDayIndex(now);
+  if (!schedule.days.includes(day)) return false;
+
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const startMinutes = toMinutes(schedule.startTime);
+  const endMinutes = toMinutes(schedule.endTime);
+
+  if (startMinutes <= endMinutes) {
+    return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+  }
+
+  return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
+}
+
+export function getActiveMenuSchedule(
+  schedules: MenuSchedule[],
+  now = new Date(),
+) {
+  return (
+    schedules.find((schedule) => isMenuScheduleActive(schedule, now)) ?? null
+  );
+}
+
 function buildCatalogue(): CatalogueItem[] {
   return [
     {
@@ -178,6 +222,29 @@ function buildCatalogue(): CatalogueItem[] {
       category: "Mains",
       destination: "kitchen",
       dietary: ["halal", "gluten-free"],
+      image: createImage("Nyama", "059669"),
+      available: true,
+      description:
+        "Charcoal-grilled beef platter served with kachumbari, pili pili salsa, and warm chapati.",
+      modifiers: [
+        {
+          id: "nyama-size",
+          name: "Size",
+          options: [
+            modifierOption("nyama-small", "Small", 0),
+            modifierOption("nyama-regular", "Regular", 0),
+            modifierOption("nyama-large", "Large", 50),
+          ],
+        },
+        {
+          id: "nyama-extras",
+          name: "Extras",
+          options: [
+            modifierOption("nyama-cheese", "Extra Cheese", 30),
+            modifierOption("nyama-bacon", "Bacon", 50),
+          ],
+        },
+      ],
     },
     {
       id: "cat-tilapia",
@@ -186,6 +253,10 @@ function buildCatalogue(): CatalogueItem[] {
       category: "Mains",
       destination: "kitchen",
       dietary: ["gluten-free"],
+      image: createImage("Tilapia", "0f766e"),
+      available: true,
+      description:
+        "Whole tilapia fried crisp and finished with lemon-herb butter and chilli mango relish.",
     },
     {
       id: "cat-pilau",
@@ -194,6 +265,10 @@ function buildCatalogue(): CatalogueItem[] {
       category: "Mains",
       destination: "kitchen",
       dietary: ["vegetarian"],
+      image: createImage("Pilau", "b45309"),
+      available: true,
+      description:
+        "Fragrant basmati pilau tossed with coconut cream, caramelised onions, and toasted cashews.",
     },
     {
       id: "cat-wings",
@@ -202,6 +277,10 @@ function buildCatalogue(): CatalogueItem[] {
       category: "Sides",
       destination: "kitchen",
       dietary: ["halal"],
+      image: createImage("Wings", "dc2626"),
+      available: true,
+      description:
+        "Sticky tamarind-glazed wings with charred lime and a smoky house dip.",
     },
     {
       id: "cat-sukuma",
@@ -210,6 +289,10 @@ function buildCatalogue(): CatalogueItem[] {
       category: "Sides",
       destination: "kitchen",
       dietary: ["vegan", "gluten-free"],
+      image: createImage("Sukuma", "65a30d"),
+      available: true,
+      description:
+        "Flash-charred greens with garlic oil, sesame, and fresh lemon.",
     },
     {
       id: "cat-chapati",
@@ -218,6 +301,10 @@ function buildCatalogue(): CatalogueItem[] {
       category: "Sides",
       destination: "kitchen",
       dietary: ["vegetarian"],
+      image: createImage("Chapati", "a16207"),
+      available: true,
+      description:
+        "Soft layered chapatis served warm with whipped garlic butter.",
     },
     {
       id: "cat-tusker",
@@ -226,6 +313,9 @@ function buildCatalogue(): CatalogueItem[] {
       category: "Drinks",
       destination: "bar",
       dietary: ["vegan"],
+      image: createImage("Tusker", "1d4ed8"),
+      available: true,
+      description: "Crisp local lager served ice-cold from the tap.",
     },
     {
       id: "cat-soda",
@@ -234,6 +324,9 @@ function buildCatalogue(): CatalogueItem[] {
       category: "Drinks",
       destination: "bar",
       dietary: ["vegan", "gluten-free"],
+      image: createImage("Soda", "7c3aed"),
+      available: false,
+      description: "Sparkling passion fruit soda with fresh mint and citrus.",
     },
     {
       id: "cat-spritz",
@@ -242,6 +335,19 @@ function buildCatalogue(): CatalogueItem[] {
       category: "Cocktails",
       destination: "bar",
       dietary: ["vegan"],
+      image: createImage("Spritz", "db2777"),
+      available: true,
+      description: "Bright baobab and prosecco spritz topped with orange zest.",
+      modifiers: [
+        {
+          id: "spritz-size",
+          name: "Pour",
+          options: [
+            modifierOption("spritz-regular", "Regular", 0),
+            modifierOption("spritz-large", "Large", 80),
+          ],
+        },
+      ],
     },
     {
       id: "cat-dawa",
@@ -250,6 +356,10 @@ function buildCatalogue(): CatalogueItem[] {
       category: "Cocktails",
       destination: "bar",
       dietary: ["gluten-free"],
+      image: createImage("Dawa", "9333ea"),
+      available: true,
+      description:
+        "Honey, lime, and vodka shaken with crushed ice for a modern Nairobi classic.",
     },
     {
       id: "cat-cake",
@@ -258,6 +368,10 @@ function buildCatalogue(): CatalogueItem[] {
       category: "Desserts",
       destination: "kitchen",
       dietary: ["vegetarian"],
+      image: createImage("Cake", "ea580c"),
+      available: true,
+      description:
+        "Moist carrot cake layered with cardamom cream cheese frosting.",
     },
     {
       id: "cat-mandazi",
@@ -266,6 +380,39 @@ function buildCatalogue(): CatalogueItem[] {
       category: "Desserts",
       destination: "kitchen",
       dietary: ["vegetarian"],
+      image: createImage("Mandazi", "f59e0b"),
+      available: true,
+      description:
+        "Warm mandazi bites with vanilla gelato and salted caramel drizzle.",
+    },
+  ];
+}
+
+function buildMenuSchedules(): MenuSchedule[] {
+  return [
+    {
+      id: "schedule-breakfast",
+      name: "Breakfast",
+      days: [0, 1, 2, 3, 4, 5, 6],
+      startTime: "07:00",
+      endTime: "11:30",
+      categories: ["Sides", "Drinks", "Desserts"],
+    },
+    {
+      id: "schedule-lunch",
+      name: "Lunch Menu",
+      days: [0, 1, 2, 3, 4],
+      startTime: "12:00",
+      endTime: "16:00",
+      categories: ["Mains", "Sides", "Drinks"],
+    },
+    {
+      id: "schedule-evening",
+      name: "Evening Menu",
+      days: [4, 5, 6],
+      startTime: "16:00",
+      endTime: "23:00",
+      categories: ["Mains", "Sides", "Cocktails", "Desserts", "Drinks"],
     },
   ];
 }
@@ -621,6 +768,7 @@ function buildTables(
 
 export function createMerchantDemoData(now = new Date()): MerchantSnapshot {
   const catalogue = buildCatalogue();
+  const menuSchedules = buildMenuSchedules();
   const payments = buildPayments(catalogue, now);
   const tables = buildTables(catalogue, payments);
   const orders = buildOrders(
@@ -632,6 +780,7 @@ export function createMerchantDemoData(now = new Date()): MerchantSnapshot {
 
   return {
     catalogue,
+    menuSchedules,
     tables,
     orders,
     reservations,
@@ -682,6 +831,10 @@ export function loadMerchantSnapshot(): MerchantSnapshot {
 
   return {
     catalogue: readStorage(STORAGE_KEYS.catalogue, fallback.catalogue),
+    menuSchedules: readStorage(
+      STORAGE_KEYS.menuSchedules,
+      fallback.menuSchedules,
+    ),
     tables: readStorage(STORAGE_KEYS.tables, fallback.tables),
     orders: readStorage(STORAGE_KEYS.orders, fallback.orders),
     reservations: readStorage(STORAGE_KEYS.reservations, fallback.reservations),
@@ -696,6 +849,10 @@ export function saveMerchantTables(tables: MerchantTable[]) {
 
 export function saveMerchantCatalogue(catalogue: CatalogueItem[]) {
   writeStorage(STORAGE_KEYS.catalogue, catalogue);
+}
+
+export function saveMerchantMenuSchedules(menuSchedules: MenuSchedule[]) {
+  writeStorage(STORAGE_KEYS.menuSchedules, menuSchedules);
 }
 
 export function saveMerchantReviews(reviews: MerchantReview[]) {

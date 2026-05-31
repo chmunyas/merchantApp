@@ -154,6 +154,31 @@ export type CatalogueItem = {
   category: string;
   dietary?: string[]; // "vegan" | "vegetarian" | "gluten-free" | "halal" | "contains-nuts" | "dairy-free"
   destination?: "kitchen" | "bar"; // where the order goes
+  image?: string;
+  available?: boolean;
+  description?: string;
+  modifiers?: ItemModifier[];
+};
+
+export type ModifierOption = {
+  id: string;
+  label: string;
+  priceAdjustment: number;
+};
+
+export type ItemModifier = {
+  id: string;
+  name: string;
+  options: ModifierOption[];
+};
+
+export type MenuSchedule = {
+  id: string;
+  name: string;
+  days: number[];
+  startTime: string;
+  endTime: string;
+  categories: string[];
 };
 
 export type OrderTicket = {
