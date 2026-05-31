@@ -1,10 +1,17 @@
 import type {
+  AIStaffInsight,
   CatalogueItem,
   ExternalMenu,
   Menu,
   MenuSchedule,
   OrderTicket,
   Reservation,
+  StaffMember,
+  StaffNotification,
+  StaffPayout,
+  StaffPerformanceChallenge,
+  StaffRole,
+  StaffShift,
   Zone,
 } from "@/components/merchant/features/types";
 
@@ -15,7 +22,18 @@ export const STAFF_NAMES = [
   "James K.",
   "Faith W.",
   "Peter O.",
+  "Amina N.",
+  "Kevin O.",
 ] as const;
+
+export const STAFF_ROLES = [
+  "waiter",
+  "bartender",
+  "kitchen",
+  "host",
+  "manager",
+  "admin",
+] as const satisfies readonly StaffRole[];
 
 export const STORAGE_KEYS = {
   catalogue: "fxengine.merchant.catalogue",
@@ -29,6 +47,12 @@ export const STORAGE_KEYS = {
   reservations: "fxengine.merchant.reservations",
   reviews: "fxengine.merchant.reviews",
   settings: "fxengine.merchant.settings",
+  staffMembers: "fxengine.merchant.staffMembers",
+  staffShifts: "fxengine.merchant.staffShifts",
+  staffNotifications: "fxengine.merchant.staffNotifications",
+  staffPayouts: "fxengine.merchant.staffPayouts",
+  staffChallenges: "fxengine.merchant.staffChallenges",
+  staffInsights: "fxengine.merchant.staffInsights",
 } as const;
 
 export type PaymentMethod = "M-Pesa" | "Card" | "Split" | "Cash";
@@ -134,6 +158,12 @@ export type MerchantSnapshot = {
   reservations: Reservation[];
   reviews: MerchantReview[];
   settings: MerchantSettings;
+  staffMembers: StaffMember[];
+  staffShifts: StaffShift[];
+  staffNotifications: StaffNotification[];
+  staffPayouts: StaffPayout[];
+  staffChallenges: StaffPerformanceChallenge[];
+  staffInsights: AIStaffInsight[];
 };
 
 const customerNames = [
@@ -198,6 +228,14 @@ export function getScheduleDayIndex(date = new Date()) {
 function toMinutes(value: string) {
   const [hours, minutes] = value.split(":").map(Number);
   return hours * 60 + minutes;
+}
+
+function toIsoDate(value: Date) {
+  return value.toISOString().slice(0, 10);
+}
+
+function createStaffId(prefix: string, suffix: string) {
+  return `${prefix}-${suffix}`;
 }
 
 export function isMenuScheduleActive(schedule: MenuSchedule, now = new Date()) {
@@ -900,6 +938,561 @@ function buildTables(
   });
 }
 
+export type StaffDemoData = {
+  staffMembers: StaffMember[];
+  staffShifts: StaffShift[];
+  staffNotifications: StaffNotification[];
+  staffPayouts: StaffPayout[];
+  staffChallenges: StaffPerformanceChallenge[];
+  staffInsights: AIStaffInsight[];
+};
+
+export function getStaffPayoutSummary(payouts: StaffPayout[]) {
+  return payouts.reduce(
+    (summary, payout) => {
+      summary.currency = payout.currency;
+      summary.count += 1;
+      summary.byType[payout.type] += payout.amount;
+      if (payout.status === "sent") {
+        summary.totalDisbursed += payout.amount;
+      }
+      if (payout.status === "failed") {
+        summary.failed += payout.amount;
+      }
+      if (payout.status === "pending" || payout.status === "processing") {
+        summary.pending += payout.amount;
+      }
+      return summary;
+    },
+    {
+      currency: payouts[0]?.currency || "KES",
+      count: 0,
+      totalDisbursed: 0,
+      pending: 0,
+      failed: 0,
+      byType: {
+        tip: 0,
+        salary: 0,
+        bonus: 0,
+        incentive: 0,
+      },
+    },
+  );
+}
+
+export function generateAIStaffInsights(
+  staff: StaffMember[],
+  shifts: StaffShift[],
+): AIStaffInsight[] {
+  const now = new Date();
+  const today = toIsoDate(now);
+  const staffById = new Map(staff.map((member) => [member.id, member]));
+  const activeTeam = staff.filter((member) => member.isActive);
+  const todayShifts = shifts.filter((shift) => shift.date === today);
+  const lateShift = todayShifts.find((shift) => shift.status === "late");
+  const fridayEveningServers = shifts.filter((shift) => {
+    const day = new Date(`${shift.date}T12:00:00`).getDay();
+    const member = staffById.get(shift.staffId);
+    return (
+      day === 5 &&
+      shift.startTime >= "17:00" &&
+      (member?.role === "waiter" || member?.role === "host")
+    );
+  }).length;
+  const topPerformer = [...activeTeam].sort(
+    (left, right) =>
+      right.totalEarnings +
+      right.pendingPayout -
+      (left.totalEarnings + left.pendingPayout),
+  )[0];
+  const highestPending = [...activeTeam].sort(
+    (left, right) => right.pendingPayout - left.pendingPayout,
+  )[0];
+  const topTrainer = activeTeam.find((member) => member.role === "manager");
+
+  return [
+    {
+      id: "ai-staff-checkin",
+      type: "performance",
+      title: "Watch service pace this week",
+      insight: lateShift
+        ? `${staffById.get(lateShift.staffId)?.name || "A team member"} clocked in late today, which can ripple into slower table turns during the dinner rush.`
+        : "Shift starts have been steady this week, keeping table handoffs smooth across lunch and dinner service.",
+      recommendation: lateShift
+        ? "Check in early with the floor team before the next rush and stagger table assignments for the first 30 minutes."
+        : "Keep the current pre-shift routine and reuse it for Friday dinner to preserve momentum.",
+      confidence: lateShift ? 0.82 : 0.76,
+      createdAt: now.toISOString(),
+    },
+    {
+      id: "ai-staff-friday-coverage",
+      type: "scheduling",
+      title: "Friday evening staffing gap",
+      insight:
+        fridayEveningServers >= 3
+          ? `You already have ${fridayEveningServers} front-of-house staff covering Friday evenings, which matches the recent demand pattern.`
+          : `Recent demand suggests Friday 7–9pm needs 3 servers or hosts, but only ${fridayEveningServers} are scheduled right now.`,
+      recommendation:
+        fridayEveningServers >= 3
+          ? "Keep one flex server on standby for large walk-ins and watch terrace turnover after 8pm."
+          : "Add one more waiter or host to the Friday evening roster and prioritize terrace plus dining room coverage.",
+      confidence: 0.91,
+      createdAt: now.toISOString(),
+    },
+    {
+      id: "ai-staff-mentor",
+      type: "training",
+      title: "Pair your strongest mentor with new hires",
+      insight: topPerformer
+        ? `${topPerformer.name} is leading the team on earnings momentum, which usually signals strong upsell conversations and guest trust.`
+        : "One of your senior staff members is consistently outperforming the team on guest spend and payouts.",
+      recommendation: topTrainer
+        ? `Pair ${topPerformer?.name || "your top performer"} with ${topTrainer.name} to coach newer staff during the next busy evening shift.`
+        : `Pair ${topPerformer?.name || "your top performer"} with newer staff for shadowing during the next busy evening shift.`,
+      confidence: 0.87,
+      createdAt: now.toISOString(),
+    },
+    {
+      id: "ai-staff-payouts",
+      type: "cost_saving",
+      title: "Pending M-Pesa payouts are building up",
+      insight: highestPending
+        ? `${highestPending.name} has the largest pending payout balance at KES ${highestPending.pendingPayout.toLocaleString()}, which can affect morale if it sits too long.`
+        : "Tip balances are currently low across the team, which reduces payout pressure this week.",
+      recommendation:
+        "Run a same-day M-Pesa disbursement for pending tips before the next peak shift to keep trust high and reduce manual follow-up.",
+      confidence: 0.79,
+      createdAt: now.toISOString(),
+    },
+    {
+      id: "ai-staff-upsell",
+      type: "upsell_coaching",
+      title: "Ratings and upsell coaching opportunity",
+      insight:
+        "Tip pools typically expand fastest when more of the team consistently lands 4.5+ guest ratings and recommends premium add-ons confidently.",
+      recommendation:
+        "Use a quick coaching huddle before dinner: highlight top pairings, dessert prompts, and how to ask for feedback at the right moment.",
+      confidence: 0.73,
+      createdAt: now.toISOString(),
+    },
+  ];
+}
+
+export function generateStaffDemoData(now = new Date()): StaffDemoData {
+  const zones = buildZones();
+  const today = toIsoDate(now);
+  const yesterday = toIsoDate(plusDays(now, -1, 12));
+  const tomorrow = toIsoDate(plusDays(now, 1, 12));
+  const friday = toIsoDate(plusDays(now, (5 - now.getDay() + 7) % 7 || 7, 18));
+  const members: StaffMember[] = [
+    {
+      id: createStaffId("staff", "grace"),
+      name: "Grace M.",
+      phone: "254711110022",
+      role: "waiter",
+      pin: "1122",
+      isActive: true,
+      hiredAt: "2025-11-08T09:00:00.000Z",
+      assignedZones: [zones[0]?.id, zones[1]?.id].filter(Boolean),
+      assignedTables: [1, 2, 3, 4, 5],
+      mpesaPayoutEnabled: true,
+      totalEarnings: 128400,
+      pendingPayout: 3600,
+    },
+    {
+      id: createStaffId("staff", "james"),
+      name: "James K.",
+      phone: "254722330099",
+      role: "waiter",
+      pin: "2200",
+      isActive: true,
+      hiredAt: "2025-09-14T09:00:00.000Z",
+      assignedZones: [zones[1]?.id].filter(Boolean),
+      assignedTables: [6, 7, 8, 9],
+      mpesaPayoutEnabled: true,
+      totalEarnings: 116800,
+      pendingPayout: 4250,
+      lastPayoutAt: yesterday,
+    },
+    {
+      id: createStaffId("staff", "faith"),
+      name: "Faith W.",
+      phone: "254733114499",
+      role: "bartender",
+      pin: "4499",
+      isActive: true,
+      hiredAt: "2025-07-19T09:00:00.000Z",
+      assignedZones: [zones[2]?.id].filter(Boolean),
+      assignedTables: [10, 11, 12],
+      mpesaPayoutEnabled: true,
+      totalEarnings: 109500,
+      pendingPayout: 2950,
+      lastPayoutAt: yesterday,
+    },
+    {
+      id: createStaffId("staff", "peter"),
+      name: "Peter O.",
+      phone: "254744920011",
+      role: "kitchen",
+      pin: "9011",
+      isActive: true,
+      hiredAt: "2025-05-03T09:00:00.000Z",
+      assignedZones: [zones[1]?.id].filter(Boolean),
+      assignedTables: [5, 6, 7, 8],
+      mpesaPayoutEnabled: false,
+      totalEarnings: 98500,
+      pendingPayout: 1200,
+    },
+    {
+      id: createStaffId("staff", "amina"),
+      name: "Amina N.",
+      phone: "254701884422",
+      role: "host",
+      pin: "8422",
+      isActive: true,
+      hiredAt: "2026-01-11T09:00:00.000Z",
+      assignedZones: [zones[0]?.id].filter(Boolean),
+      assignedTables: [1, 2, 3],
+      mpesaPayoutEnabled: true,
+      totalEarnings: 87400,
+      pendingPayout: 1750,
+    },
+    {
+      id: createStaffId("staff", "kevin"),
+      name: "Kevin O.",
+      phone: "254798556611",
+      role: "manager",
+      pin: "6611",
+      isActive: true,
+      hiredAt: "2025-03-22T09:00:00.000Z",
+      assignedZones: zones.map((zone) => zone.id),
+      assignedTables: Array.from({ length: 12 }, (_, index) => index + 1),
+      mpesaPayoutEnabled: true,
+      totalEarnings: 142600,
+      pendingPayout: 0,
+      lastPayoutAt: yesterday,
+    },
+  ];
+
+  const shifts: StaffShift[] = [
+    {
+      id: "shift-grace-today",
+      staffId: members[0].id,
+      date: today,
+      startTime: "12:00",
+      endTime: "21:00",
+      clockInAt: `${today}T12:02:00.000Z`,
+      breakMinutes: 30,
+      status: "active",
+    },
+    {
+      id: "shift-james-today",
+      staffId: members[1].id,
+      date: today,
+      startTime: "15:00",
+      endTime: "23:00",
+      clockInAt: `${today}T15:21:00.000Z`,
+      breakMinutes: 15,
+      status: "late",
+    },
+    {
+      id: "shift-faith-today",
+      staffId: members[2].id,
+      date: today,
+      startTime: "14:00",
+      endTime: "22:00",
+      clockInAt: `${today}T13:55:00.000Z`,
+      breakMinutes: 20,
+      status: "active",
+    },
+    {
+      id: "shift-peter-today",
+      staffId: members[3].id,
+      date: today,
+      startTime: "11:00",
+      endTime: "20:00",
+      clockInAt: `${today}T10:52:00.000Z`,
+      breakMinutes: 35,
+      status: "active",
+    },
+    {
+      id: "shift-amina-today",
+      staffId: members[4].id,
+      date: today,
+      startTime: "12:00",
+      endTime: "20:00",
+      breakMinutes: 0,
+      status: "scheduled",
+    },
+    {
+      id: "shift-kevin-today",
+      staffId: members[5].id,
+      date: today,
+      startTime: "10:00",
+      endTime: "19:00",
+      clockInAt: `${today}T09:48:00.000Z`,
+      breakMinutes: 20,
+      status: "active",
+    },
+    {
+      id: "shift-grace-yesterday",
+      staffId: members[0].id,
+      date: yesterday,
+      startTime: "13:00",
+      endTime: "22:00",
+      clockInAt: `${yesterday}T12:56:00.000Z`,
+      clockOutAt: `${yesterday}T22:06:00.000Z`,
+      breakMinutes: 30,
+      status: "completed",
+    },
+    {
+      id: "shift-james-yesterday",
+      staffId: members[1].id,
+      date: yesterday,
+      startTime: "13:00",
+      endTime: "22:00",
+      clockInAt: `${yesterday}T13:07:00.000Z`,
+      clockOutAt: `${yesterday}T22:11:00.000Z`,
+      breakMinutes: 20,
+      status: "completed",
+    },
+    {
+      id: "shift-faith-tomorrow",
+      staffId: members[2].id,
+      date: tomorrow,
+      startTime: "16:00",
+      endTime: "23:00",
+      breakMinutes: 15,
+      status: "scheduled",
+    },
+    {
+      id: "shift-amina-tomorrow",
+      staffId: members[4].id,
+      date: tomorrow,
+      startTime: "11:00",
+      endTime: "19:00",
+      breakMinutes: 0,
+      status: "scheduled",
+    },
+    {
+      id: "shift-grace-friday",
+      staffId: members[0].id,
+      date: friday,
+      startTime: "17:00",
+      endTime: "23:00",
+      breakMinutes: 20,
+      status: "scheduled",
+    },
+    {
+      id: "shift-james-friday",
+      staffId: members[1].id,
+      date: friday,
+      startTime: "17:00",
+      endTime: "23:00",
+      breakMinutes: 20,
+      status: "scheduled",
+    },
+  ];
+
+  const shiftsByStaff = new Map(
+    shifts
+      .filter((shift) => shift.date === today)
+      .map((shift) => [shift.staffId, shift] as const),
+  );
+  members.forEach((member) => {
+    member.shift = shiftsByStaff.get(member.id);
+  });
+
+  const payouts: StaffPayout[] = [
+    {
+      id: "payout-grace-pending",
+      staffId: members[0].id,
+      amount: 3600,
+      currency: "KES",
+      mpesaPhone: members[0].phone,
+      status: "pending",
+      type: "tip",
+      createdAt: now.toISOString(),
+      period: `${today.slice(0, 7)}`,
+    },
+    {
+      id: "payout-james-pending",
+      staffId: members[1].id,
+      amount: 4250,
+      currency: "KES",
+      mpesaPhone: members[1].phone,
+      status: "pending",
+      type: "tip",
+      createdAt: now.toISOString(),
+      period: `${today.slice(0, 7)}`,
+    },
+    {
+      id: "payout-faith-sent",
+      staffId: members[2].id,
+      amount: 8200,
+      currency: "KES",
+      mpesaPhone: members[2].phone,
+      mpesaReference: "MPSA-FAITH-8200",
+      status: "sent",
+      type: "bonus",
+      createdAt: yesterday,
+      processedAt: yesterday,
+      period: `${today.slice(0, 7)}`,
+    },
+    {
+      id: "payout-peter-failed",
+      staffId: members[3].id,
+      amount: 1200,
+      currency: "KES",
+      mpesaPhone: members[3].phone,
+      status: "failed",
+      type: "incentive",
+      createdAt: yesterday,
+      period: `${today.slice(0, 7)}`,
+    },
+    {
+      id: "payout-amina-processing",
+      staffId: members[4].id,
+      amount: 1750,
+      currency: "KES",
+      mpesaPhone: members[4].phone,
+      status: "processing",
+      type: "tip",
+      createdAt: now.toISOString(),
+      period: `${today.slice(0, 7)}`,
+    },
+    {
+      id: "payout-kevin-salary",
+      staffId: members[5].id,
+      amount: 28000,
+      currency: "KES",
+      mpesaPhone: members[5].phone,
+      mpesaReference: "MPSA-KEVIN-28000",
+      status: "sent",
+      type: "salary",
+      createdAt: "2026-05-29T06:00:00.000Z",
+      processedAt: "2026-05-29T06:04:00.000Z",
+      period: `${today.slice(0, 7)}`,
+    },
+  ];
+
+  const notifications: StaffNotification[] = [
+    {
+      id: "notification-order-ready",
+      staffId: members[0].id,
+      type: "order_ready",
+      title: "Order ready for Table 8",
+      message: "Nyama choma platter is ready for pickup at the pass.",
+      createdAt: now.toISOString(),
+      actionUrl: "/dashboard/orders",
+      metadata: { tableNumber: 8 },
+    },
+    {
+      id: "notification-payment",
+      staffId: members[1].id,
+      type: "payment_received",
+      title: "KES 6,850 received",
+      message: "M-Pesa payment cleared for Table 11, including a KES 750 tip.",
+      createdAt: now.toISOString(),
+      metadata: { tableNumber: 11, amount: 6850 },
+    },
+    {
+      id: "notification-tip",
+      staffId: members[2].id,
+      type: "tip_received",
+      title: "Bar tip received",
+      message:
+        "A lounge customer added a KES 600 tip after the second cocktail round.",
+      createdAt: now.toISOString(),
+      metadata: { amount: 600 },
+    },
+    {
+      id: "notification-table-seated",
+      staffId: members[4].id,
+      type: "table_seated",
+      title: "Large walk-in seated",
+      message:
+        "A 6-top has been seated in the terrace section. Coordinate with Grace for service.",
+      createdAt: now.toISOString(),
+      metadata: { covers: 6, zone: "Terrace" },
+    },
+    {
+      id: "notification-ai",
+      staffId: members[5].id,
+      type: "ai_suggestion",
+      title: "AI staffing suggestion",
+      message:
+        "Friday 7–9pm is still trending understaffed by 1 front-of-house teammate.",
+      createdAt: now.toISOString(),
+    },
+    {
+      id: "notification-schedule",
+      staffId: members[1].id,
+      type: "schedule_change",
+      title: "Schedule updated",
+      message:
+        "Your Friday shift now starts at 5:00pm to cover the dinner rush.",
+      createdAt: now.toISOString(),
+    },
+    {
+      id: "notification-payout",
+      staffId: members[5].id,
+      type: "payout_sent",
+      title: "Salary payout sent",
+      message: "Kevin's monthly salary was sent to M-Pesa successfully.",
+      createdAt: "2026-05-29T06:04:00.000Z",
+      readAt: "2026-05-29T06:12:00.000Z",
+    },
+  ];
+
+  const challenges: StaffPerformanceChallenge[] = [
+    {
+      id: "challenge-most-tables",
+      title: "Rush Hour Table Sprint",
+      description:
+        "Serve 18 tables this week to unlock a KES 3,500 dinner rush bonus.",
+      metric: "tables_served",
+      target: 18,
+      reward: 3500,
+      startDate: yesterday,
+      endDate: tomorrow,
+      participants: [
+        { staffId: members[0].id, progress: 14 },
+        { staffId: members[1].id, progress: 16 },
+        { staffId: members[2].id, progress: 11 },
+        { staffId: members[4].id, progress: 9 },
+      ],
+    },
+    {
+      id: "challenge-ratings",
+      title: "4.7+ Guest Love",
+      description:
+        "Keep average guest ratings above 4.7 to unlock a KES 2,000 recognition bonus.",
+      metric: "avg_rating",
+      target: 4.7,
+      reward: 2000,
+      startDate: today,
+      endDate: friday,
+      participants: [
+        { staffId: members[0].id, progress: 4.6 },
+        { staffId: members[1].id, progress: 4.8 },
+        { staffId: members[2].id, progress: 4.5 },
+      ],
+    },
+  ];
+
+  const insights = generateAIStaffInsights(members, shifts);
+
+  return {
+    staffMembers: members,
+    staffShifts: shifts,
+    staffNotifications: notifications,
+    staffPayouts: payouts,
+    staffChallenges: challenges,
+    staffInsights: insights,
+  };
+}
+
 export function createMerchantDemoData(now = new Date()): MerchantSnapshot {
   const catalogue = buildCatalogue();
   const menus = buildMenus(now);
@@ -915,6 +1508,7 @@ export function createMerchantDemoData(now = new Date()): MerchantSnapshot {
   const reservations = buildReservations(now);
   const reviews = buildReviews(payments);
   const settings = buildSettings();
+  const staffDemo = generateStaffDemoData(now);
 
   return {
     catalogue,
@@ -928,6 +1522,12 @@ export function createMerchantDemoData(now = new Date()): MerchantSnapshot {
     reservations,
     reviews,
     settings,
+    staffMembers: staffDemo.staffMembers,
+    staffShifts: staffDemo.staffShifts,
+    staffNotifications: staffDemo.staffNotifications,
+    staffPayouts: staffDemo.staffPayouts,
+    staffChallenges: staffDemo.staffChallenges,
+    staffInsights: staffDemo.staffInsights,
   };
 }
 
@@ -937,7 +1537,7 @@ function canUseStorage() {
   );
 }
 
-function readStorage<T>(key: string, fallback: T): T {
+export function readStorage<T>(key: string, fallback: T): T {
   if (!canUseStorage()) return fallback;
   try {
     const raw = window.localStorage.getItem(key);
@@ -947,7 +1547,7 @@ function readStorage<T>(key: string, fallback: T): T {
   }
 }
 
-function writeStorage<T>(key: string, value: T) {
+export function writeStorage<T>(key: string, value: T) {
   if (!canUseStorage()) return;
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
@@ -996,6 +1596,21 @@ export function loadMerchantSnapshot(): MerchantSnapshot {
     reservations: readStorage(STORAGE_KEYS.reservations, fallback.reservations),
     reviews: readStorage(STORAGE_KEYS.reviews, fallback.reviews),
     settings: readStorage(STORAGE_KEYS.settings, fallback.settings),
+    staffMembers: readStorage(STORAGE_KEYS.staffMembers, fallback.staffMembers),
+    staffShifts: readStorage(STORAGE_KEYS.staffShifts, fallback.staffShifts),
+    staffNotifications: readStorage(
+      STORAGE_KEYS.staffNotifications,
+      fallback.staffNotifications,
+    ),
+    staffPayouts: readStorage(STORAGE_KEYS.staffPayouts, fallback.staffPayouts),
+    staffChallenges: readStorage(
+      STORAGE_KEYS.staffChallenges,
+      fallback.staffChallenges,
+    ),
+    staffInsights: readStorage(
+      STORAGE_KEYS.staffInsights,
+      fallback.staffInsights,
+    ),
   };
 }
 
@@ -1033,6 +1648,34 @@ export function saveMerchantReviews(reviews: MerchantReview[]) {
 
 export function saveMerchantSettings(settings: MerchantSettings) {
   writeStorage(STORAGE_KEYS.settings, settings);
+}
+
+export function saveMerchantStaffMembers(staffMembers: StaffMember[]) {
+  writeStorage(STORAGE_KEYS.staffMembers, staffMembers);
+}
+
+export function saveMerchantStaffShifts(staffShifts: StaffShift[]) {
+  writeStorage(STORAGE_KEYS.staffShifts, staffShifts);
+}
+
+export function saveMerchantStaffNotifications(
+  staffNotifications: StaffNotification[],
+) {
+  writeStorage(STORAGE_KEYS.staffNotifications, staffNotifications);
+}
+
+export function saveMerchantStaffPayouts(staffPayouts: StaffPayout[]) {
+  writeStorage(STORAGE_KEYS.staffPayouts, staffPayouts);
+}
+
+export function saveMerchantStaffChallenges(
+  staffChallenges: StaffPerformanceChallenge[],
+) {
+  writeStorage(STORAGE_KEYS.staffChallenges, staffChallenges);
+}
+
+export function saveMerchantStaffInsights(staffInsights: AIStaffInsight[]) {
+  writeStorage(STORAGE_KEYS.staffInsights, staffInsights);
 }
 
 export function flattenTransactions(tables: MerchantTable[]) {

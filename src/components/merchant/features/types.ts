@@ -250,3 +250,108 @@ export type LoyaltyCustomer = {
   tier: "Bronze" | "Silver" | "Gold" | "Platinum";
   lastVisit: string;
 };
+
+export type StaffRole =
+  | "waiter"
+  | "bartender"
+  | "kitchen"
+  | "host"
+  | "manager"
+  | "admin";
+
+export type StaffMember = {
+  id: string;
+  name: string;
+  phone: string;
+  role: StaffRole;
+  pin: string;
+  isActive: boolean;
+  hiredAt: string;
+  avatar?: string;
+  assignedZones?: string[];
+  assignedTables?: number[];
+  shift?: StaffShift;
+  mpesaPayoutEnabled: boolean;
+  totalEarnings: number;
+  pendingPayout: number;
+  lastPayoutAt?: string;
+};
+
+export type StaffShift = {
+  id: string;
+  staffId: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  clockInAt?: string;
+  clockOutAt?: string;
+  breakMinutes: number;
+  status: "scheduled" | "active" | "completed" | "absent" | "late";
+};
+
+export type StaffNotification = {
+  id: string;
+  staffId: string;
+  type:
+    | "order_ready"
+    | "table_seated"
+    | "payment_received"
+    | "tip_received"
+    | "walkout"
+    | "schedule_change"
+    | "ai_suggestion"
+    | "payout_sent";
+  title: string;
+  message: string;
+  createdAt: string;
+  readAt?: string;
+  actionUrl?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type StaffPayout = {
+  id: string;
+  staffId: string;
+  amount: number;
+  currency: string;
+  mpesaPhone: string;
+  mpesaReference?: string;
+  status: "pending" | "processing" | "sent" | "failed";
+  type: "tip" | "salary" | "bonus" | "incentive";
+  createdAt: string;
+  processedAt?: string;
+  period?: string;
+};
+
+export type StaffPerformanceChallenge = {
+  id: string;
+  title: string;
+  description: string;
+  metric:
+    | "tables_served"
+    | "avg_rating"
+    | "tip_percentage"
+    | "speed"
+    | "upsell_rate";
+  target: number;
+  reward: number;
+  startDate: string;
+  endDate: string;
+  participants: { staffId: string; progress: number }[];
+};
+
+export type AIStaffInsight = {
+  id: string;
+  type:
+    | "scheduling"
+    | "performance"
+    | "training"
+    | "cost_saving"
+    | "upsell_coaching";
+  title: string;
+  insight: string;
+  recommendation: string;
+  confidence: number;
+  createdAt: string;
+  dismissed?: boolean;
+};
