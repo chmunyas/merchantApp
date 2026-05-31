@@ -1,8 +1,10 @@
 import type {
   CatalogueItem,
+  Menu,
   MenuSchedule,
   OrderTicket,
   Reservation,
+  Zone,
 } from "@/components/merchant/features/types";
 
 export const MERCHANT_NAME = "Sade's Atelier";
@@ -16,6 +18,9 @@ export const STAFF_NAMES = [
 
 export const STORAGE_KEYS = {
   catalogue: "fxengine.merchant.catalogue",
+  menus: "fxengine.merchant.menus",
+  zones: "fxengine.merchant.zones",
+  categoryOrder: "fxengine.merchant.categoryOrder",
   menuSchedules: "fxengine.merchant.menuSchedules",
   tables: "fxengine.merchant.tables",
   orders: "fxengine.merchant.orders",
@@ -117,6 +122,9 @@ export type MerchantSettings = {
 
 export type MerchantSnapshot = {
   catalogue: CatalogueItem[];
+  menus: Menu[];
+  zones: Zone[];
+  categoryOrder: string[];
   menuSchedules: MenuSchedule[];
   tables: MerchantTable[];
   orders: OrderTicket[];
@@ -245,6 +253,7 @@ function buildCatalogue(): CatalogueItem[] {
           ],
         },
       ],
+      linkedProductIds: ["cat-chapati", "cat-tusker", "cat-sukuma"],
     },
     {
       id: "cat-tilapia",
@@ -257,6 +266,7 @@ function buildCatalogue(): CatalogueItem[] {
       available: true,
       description:
         "Whole tilapia fried crisp and finished with lemon-herb butter and chilli mango relish.",
+      linkedProductIds: ["cat-sukuma", "cat-soda", "cat-chapati"],
     },
     {
       id: "cat-pilau",
@@ -269,6 +279,7 @@ function buildCatalogue(): CatalogueItem[] {
       available: true,
       description:
         "Fragrant basmati pilau tossed with coconut cream, caramelised onions, and toasted cashews.",
+      linkedProductIds: ["cat-wings", "cat-soda", "cat-cake"],
     },
     {
       id: "cat-wings",
@@ -281,6 +292,7 @@ function buildCatalogue(): CatalogueItem[] {
       available: true,
       description:
         "Sticky tamarind-glazed wings with charred lime and a smoky house dip.",
+      linkedProductIds: ["cat-spritz", "cat-soda", "cat-cake"],
     },
     {
       id: "cat-sukuma",
@@ -293,6 +305,7 @@ function buildCatalogue(): CatalogueItem[] {
       available: true,
       description:
         "Flash-charred greens with garlic oil, sesame, and fresh lemon.",
+      linkedProductIds: ["cat-nyama", "cat-tilapia"],
     },
     {
       id: "cat-chapati",
@@ -305,6 +318,7 @@ function buildCatalogue(): CatalogueItem[] {
       available: true,
       description:
         "Soft layered chapatis served warm with whipped garlic butter.",
+      linkedProductIds: ["cat-nyama", "cat-tilapia", "cat-dawa"],
     },
     {
       id: "cat-tusker",
@@ -316,6 +330,7 @@ function buildCatalogue(): CatalogueItem[] {
       image: createImage("Tusker", "1d4ed8"),
       available: true,
       description: "Crisp local lager served ice-cold from the tap.",
+      linkedProductIds: ["cat-nyama", "cat-wings", "cat-chapati"],
     },
     {
       id: "cat-soda",
@@ -327,6 +342,7 @@ function buildCatalogue(): CatalogueItem[] {
       image: createImage("Soda", "7c3aed"),
       available: false,
       description: "Sparkling passion fruit soda with fresh mint and citrus.",
+      linkedProductIds: ["cat-pilau", "cat-cake"],
     },
     {
       id: "cat-spritz",
@@ -348,6 +364,7 @@ function buildCatalogue(): CatalogueItem[] {
           ],
         },
       ],
+      linkedProductIds: ["cat-wings", "cat-cake", "cat-mandazi"],
     },
     {
       id: "cat-dawa",
@@ -360,6 +377,7 @@ function buildCatalogue(): CatalogueItem[] {
       available: true,
       description:
         "Honey, lime, and vodka shaken with crushed ice for a modern Nairobi classic.",
+      linkedProductIds: ["cat-nyama", "cat-chapati"],
     },
     {
       id: "cat-cake",
@@ -372,6 +390,7 @@ function buildCatalogue(): CatalogueItem[] {
       available: true,
       description:
         "Moist carrot cake layered with cardamom cream cheese frosting.",
+      linkedProductIds: ["cat-soda", "cat-spritz"],
     },
     {
       id: "cat-mandazi",
@@ -384,8 +403,65 @@ function buildCatalogue(): CatalogueItem[] {
       available: true,
       description:
         "Warm mandazi bites with vanilla gelato and salted caramel drizzle.",
+      linkedProductIds: ["cat-dawa", "cat-spritz"],
     },
   ];
+}
+
+function buildMenus(now = new Date()): Menu[] {
+  return [
+    {
+      id: "menu-all-day",
+      name: "All Day Classics",
+      description: "Core dining menu for the main floor.",
+      categories: ["Mains", "Sides", "Drinks", "Desserts"],
+      isActive: true,
+      createdAt: now.toISOString(),
+    },
+    {
+      id: "menu-bar",
+      name: "Bar & Cocktails",
+      description: "Lounge drinks and late-evening pours.",
+      categories: ["Drinks", "Cocktails"],
+      isActive: true,
+      createdAt: new Date(now.getTime() - 86_400_000).toISOString(),
+    },
+    {
+      id: "menu-dessert",
+      name: "Dessert Corner",
+      description: "Sweet endings and coffee pairings.",
+      categories: ["Desserts", "Drinks"],
+      isActive: false,
+      createdAt: new Date(now.getTime() - 172_800_000).toISOString(),
+    },
+  ];
+}
+
+function buildZones(): Zone[] {
+  return [
+    {
+      id: "zone-terrace",
+      name: "Terrace",
+      menuIds: ["menu-all-day", "menu-bar"],
+      tableRange: [1, 4],
+    },
+    {
+      id: "zone-dining",
+      name: "Dining Room",
+      menuIds: ["menu-all-day"],
+      tableRange: [5, 8],
+    },
+    {
+      id: "zone-lounge",
+      name: "Lounge",
+      menuIds: ["menu-bar", "menu-dessert"],
+      tableRange: [9, 12],
+    },
+  ];
+}
+
+function buildCategoryOrder(): string[] {
+  return ["Mains", "Sides", "Drinks", "Cocktails", "Desserts"];
 }
 
 function buildMenuSchedules(): MenuSchedule[] {
@@ -768,6 +844,9 @@ function buildTables(
 
 export function createMerchantDemoData(now = new Date()): MerchantSnapshot {
   const catalogue = buildCatalogue();
+  const menus = buildMenus(now);
+  const zones = buildZones();
+  const categoryOrder = buildCategoryOrder();
   const menuSchedules = buildMenuSchedules();
   const payments = buildPayments(catalogue, now);
   const tables = buildTables(catalogue, payments);
@@ -780,6 +859,9 @@ export function createMerchantDemoData(now = new Date()): MerchantSnapshot {
 
   return {
     catalogue,
+    menus,
+    zones,
+    categoryOrder,
     menuSchedules,
     tables,
     orders,
@@ -831,6 +913,12 @@ export function loadMerchantSnapshot(): MerchantSnapshot {
 
   return {
     catalogue: readStorage(STORAGE_KEYS.catalogue, fallback.catalogue),
+    menus: readStorage(STORAGE_KEYS.menus, fallback.menus),
+    zones: readStorage(STORAGE_KEYS.zones, fallback.zones),
+    categoryOrder: readStorage(
+      STORAGE_KEYS.categoryOrder,
+      fallback.categoryOrder,
+    ),
     menuSchedules: readStorage(
       STORAGE_KEYS.menuSchedules,
       fallback.menuSchedules,
@@ -849,6 +937,18 @@ export function saveMerchantTables(tables: MerchantTable[]) {
 
 export function saveMerchantCatalogue(catalogue: CatalogueItem[]) {
   writeStorage(STORAGE_KEYS.catalogue, catalogue);
+}
+
+export function saveMerchantMenus(menus: Menu[]) {
+  writeStorage(STORAGE_KEYS.menus, menus);
+}
+
+export function saveMerchantZones(zones: Zone[]) {
+  writeStorage(STORAGE_KEYS.zones, zones);
+}
+
+export function saveMerchantCategoryOrder(categoryOrder: string[]) {
+  writeStorage(STORAGE_KEYS.categoryOrder, categoryOrder);
 }
 
 export function saveMerchantMenuSchedules(menuSchedules: MenuSchedule[]) {
@@ -885,4 +985,80 @@ export function createTableQrValue(
     table: tableNumber,
     route: `/pay?table=${tableNumber}`,
   });
+}
+
+export function getActiveMenus(menus: Menu[]) {
+  return menus.filter((menu) => menu.isActive);
+}
+
+export function getTableZone(zones: Zone[], tableNumber: number) {
+  return (
+    zones.find(
+      (zone) =>
+        tableNumber >= zone.tableRange[0] && tableNumber <= zone.tableRange[1],
+    ) ?? null
+  );
+}
+
+export function getOrderedCategories(
+  categories: string[],
+  categoryOrder: string[],
+) {
+  const unique = Array.from(new Set(categories.filter(Boolean)));
+  const indexMap = new Map(
+    categoryOrder.map((category, index) => [category, index]),
+  );
+  return unique.sort((left, right) => {
+    const leftIndex = indexMap.get(left);
+    const rightIndex = indexMap.get(right);
+    if (leftIndex != null && rightIndex != null) return leftIndex - rightIndex;
+    if (leftIndex != null) return -1;
+    if (rightIndex != null) return 1;
+    return left.localeCompare(right);
+  });
+}
+
+export function getVisibleCatalogueForTable({
+  catalogue,
+  menus,
+  zones,
+  tableNumber,
+  activeSchedule,
+}: {
+  catalogue: CatalogueItem[];
+  menus: Menu[];
+  zones: Zone[];
+  tableNumber: number;
+  activeSchedule?: MenuSchedule | null;
+}) {
+  let allowedCategories = new Set(
+    catalogue.map((item) => item.category).filter(Boolean),
+  );
+
+  const activeMenus = getActiveMenus(menus);
+  if (activeMenus.length) {
+    allowedCategories = new Set(
+      activeMenus.flatMap((menu) => menu.categories).filter(Boolean),
+    );
+  }
+
+  const zone = getTableZone(zones, tableNumber);
+  if (zone) {
+    const zoneCategories = activeMenus
+      .filter((menu) => zone.menuIds.includes(menu.id))
+      .flatMap((menu) => menu.categories)
+      .filter(Boolean);
+    allowedCategories = new Set(zoneCategories);
+  }
+
+  if (activeSchedule) {
+    const scheduleCategories = new Set(activeSchedule.categories);
+    allowedCategories = new Set(
+      Array.from(allowedCategories).filter((category) =>
+        scheduleCategories.has(category),
+      ),
+    );
+  }
+
+  return catalogue.filter((item) => allowedCategories.has(item.category));
 }

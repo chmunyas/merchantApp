@@ -22,12 +22,18 @@ import {
 } from "lucide-react";
 import type {
   CatalogueItem,
+  Menu,
   MenuSchedule,
   ModifierOption,
+  Zone,
 } from "@/components/merchant/features/types";
 import {
   ensureMerchantDemoData,
   getActiveMenuSchedule,
+  getOrderedCategories,
+  getTableZone,
+  getVisibleCatalogueForTable,
+  type MerchantSnapshot,
 } from "@/lib/merchant-dashboard";
 import {
   executePayment,
@@ -101,6 +107,8 @@ type TableData = {
   quickCharge?: number;
   catalogue?: CatalogueItem[];
 };
+
+type EncodedTableData = Partial<TableData> & { table?: number };
 
 type SplitMode = "full" | "equal" | "by-item" | "custom";
 
@@ -273,6 +281,28 @@ function getDemoTable(): TableData {
   };
 }
 
+function normaliseTableData(
+  payload: EncodedTableData,
+  merchantData: MerchantSnapshot,
+): TableData | null {
+  const tableNumber = Number(payload.tableNumber ?? payload.table);
+  if (!Number.isFinite(tableNumber) || tableNumber <= 0) return null;
+
+  return {
+    tableNumber,
+    merchant: payload.merchant || "Mama Oliech Restaurant",
+    till: payload.till || "874521",
+    server: payload.server || "Grace M.",
+    openedAt: payload.openedAt || new Date().toISOString(),
+    items: payload.items || [],
+    quickCharge: payload.quickCharge,
+    catalogue:
+      payload.catalogue && payload.catalogue.length > 0
+        ? payload.catalogue
+        : merchantData.catalogue,
+  };
+}
+
 function mapOptionToSelection(
   modifierId: string,
   modifierName: string,
@@ -323,6 +353,8 @@ type PageState =
 function TablePayPage() {
   const [state, setState] = useState<PageState>("loading");
   const [tableData, setTableData] = useState<TableData | null>(null);
+  const [merchantSnapshot, setMerchantSnapshot] =
+    useState<MerchantSnapshot | null>(null);
   const [splitMode, setSplitMode] = useState<SplitMode>("full");
   const [splitCount, setSplitCount] = useState(2);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
@@ -364,6 +396,7 @@ function TablePayPage() {
     const tableParam = params.get("t");
     qrScannedAtRef.current = new Date().toISOString();
     const merchantData = ensureMerchantDemoData();
+    setMerchantSnapshot(merchantData);
     setMenuSchedules(merchantData.menuSchedules);
 
     const withMerchantCatalogue = (data: TableData) => ({
@@ -376,8 +409,11 @@ function TablePayPage() {
 
     if (tableParam) {
       try {
-        const data = JSON.parse(atob(tableParam)) as TableData;
-        setTableData(withMerchantCatalogue(data));
+        const data = JSON.parse(atob(tableParam)) as EncodedTableData;
+        setTableData(
+          normaliseTableData(data, merchantData) ||
+            withMerchantCatalogue(getDemoTable()),
+        );
         setState("bill");
       } catch {
         // Invalid - use demo
@@ -593,6 +629,9 @@ function TablePayPage() {
             orderItems={orderItems}
             setOrderItems={setOrderItems}
             activeSchedule={activeSchedule}
+            menus={merchantSnapshot?.menus || []}
+            zones={merchantSnapshot?.zones || []}
+            categoryOrder={merchantSnapshot?.categoryOrder || []}
             onBack={() => setState("bill")}
             onPlace={placeOrder}
             t={t}
@@ -836,6 +875,9 @@ function OrderView({
   orderItems,
   setOrderItems,
   activeSchedule,
+  menus,
+  zones,
+  categoryOrder,
   onBack,
   onPlace,
   t,
@@ -844,17 +886,26 @@ function OrderView({
   orderItems: OrderSelection[];
   setOrderItems: (items: OrderSelection[]) => void;
   activeSchedule: MenuSchedule | null;
+  menus: Menu[];
+  zones: Zone[];
+  categoryOrder: string[];
   onBack: () => void;
   onPlace: () => void;
   t: Record<string, string>;
 }) {
   const menu = table.catalogue || [];
-  const visibleMenu = activeSchedule
-    ? menu.filter((item) => activeSchedule.categories.includes(item.category))
-    : menu;
-  const categories = [
-    ...new Set(visibleMenu.map((i) => i.category || "Other")),
-  ];
+  const visibleMenu = getVisibleCatalogueForTable({
+    catalogue: menu,
+    menus,
+    zones,
+    tableNumber: table.tableNumber,
+    activeSchedule,
+  });
+  const categories = getOrderedCategories(
+    visibleMenu.map((item) => item.category || "Other"),
+    categoryOrder,
+  );
+  const activeZone = getTableZone(zones, table.tableNumber);
   const [filterCat, setFilterCat] = useState<string>("All");
   const filteredMenu =
     filterCat === "All"
@@ -864,11 +915,30 @@ function OrderView({
   const [selectedModifierOptions, setSelectedModifierOptions] = useState<
     Record<string, string>
   >({});
+  const [lastAddedItemId, setLastAddedItemId] = useState<string | null>(null);
 
   const orderTotal = orderItems.reduce(
     (sum, item) => sum + getSelectionUnitPrice(item) * item.quantity,
     0,
   );
+  const suggestedItems = useMemo(() => {
+    if (!lastAddedItemId) return [];
+    const sourceItem = visibleMenu.find((item) => item.id === lastAddedItemId);
+    if (!sourceItem?.linkedProductIds?.length) return [];
+    return sourceItem.linkedProductIds
+      .map((linkedId) => visibleMenu.find((item) => item.id === linkedId))
+      .filter(
+        (item): item is CatalogueItem =>
+          item != null && (item.available ?? true) !== false,
+      )
+      .slice(0, 3);
+  }, [lastAddedItemId, visibleMenu]);
+
+  useEffect(() => {
+    if (filterCat !== "All" && !categories.includes(filterCat)) {
+      setFilterCat("All");
+    }
+  }, [categories, filterCat]);
 
   function setDefaultModifierSelections(item: CatalogueItem) {
     const defaults = Object.fromEntries(
@@ -894,6 +964,7 @@ function OrderView({
             : entry,
         ),
       );
+      setLastAddedItemId(item.id);
       return;
     }
 
@@ -913,6 +984,7 @@ function OrderView({
         selectedOptions,
       },
     ]);
+    setLastAddedItemId(item.id);
   }
 
   function addItem(item: CatalogueItem) {
@@ -971,6 +1043,12 @@ function OrderView({
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">
           {activeSchedule.name} is active · Showing{" "}
           {activeSchedule.categories.join(", ")}
+        </div>
+      ) : null}
+      {activeZone ? (
+        <div className="rounded-2xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-700">
+          Zone detected: {activeZone.name} · Tables {activeZone.tableRange[0]}–
+          {activeZone.tableRange[1]}
         </div>
       ) : null}
 
@@ -1166,6 +1244,29 @@ function OrderView({
           </button>
         </div>
       )}
+
+      {suggestedItems.length > 0 ? (
+        <div className="space-y-2">
+          <p className="text-sm font-semibold">Goes well with...</p>
+          <div className="flex gap-3 overflow-x-auto pb-1">
+            {suggestedItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => addItem(item)}
+                className="min-w-[180px] rounded-2xl border border-border bg-card p-3 text-left"
+              >
+                <p className="text-sm font-semibold">{item.name}</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {item.category}
+                </p>
+                <p className="mt-3 text-sm font-mono font-bold">
+                  KES {item.price.toLocaleString()}
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {modifierItem ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4">

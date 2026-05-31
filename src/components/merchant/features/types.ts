@@ -158,6 +158,7 @@ export type CatalogueItem = {
   available?: boolean;
   description?: string;
   modifiers?: ItemModifier[];
+  linkedProductIds?: string[];
 };
 
 export type ModifierOption = {
@@ -179,6 +180,22 @@ export type MenuSchedule = {
   startTime: string;
   endTime: string;
   categories: string[];
+};
+
+export type Menu = {
+  id: string;
+  name: string;
+  description?: string;
+  categories: string[];
+  isActive: boolean;
+  createdAt: string;
+};
+
+export type Zone = {
+  id: string;
+  name: string;
+  menuIds: string[];
+  tableRange: [number, number];
 };
 
 export type OrderTicket = {
