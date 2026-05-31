@@ -268,7 +268,11 @@ function inferCsvField(header: string): CsvImportField {
 }
 
 function escapeCsvValue(value: string | number | boolean | null | undefined) {
-  const text = String(value ?? "");
+  let text = String(value ?? "");
+  // Prevent CSV formula injection in spreadsheet apps
+  if (/^[=+\-@\t\r]/.test(text)) {
+    text = `'${text}`;
+  }
   return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
@@ -905,6 +909,15 @@ function DashboardMenuPage() {
       !externalDraft.content.trim()
     ) {
       toast.error("Add a name and menu source");
+      return;
+    }
+
+    // Validate URL type is HTTPS
+    if (
+      externalDraft.type === "url" &&
+      !externalDraft.content.trim().startsWith("https://")
+    ) {
+      toast.error("URL must start with https://");
       return;
     }
 

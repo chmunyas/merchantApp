@@ -949,7 +949,11 @@ function readStorage<T>(key: string, fallback: T): T {
 
 function writeStorage<T>(key: string, value: T) {
   if (!canUseStorage()) return;
-  window.localStorage.setItem(key, JSON.stringify(value));
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    console.warn("[merchant-dashboard] Storage quota exceeded for key:", key);
+  }
 }
 
 export function ensureMerchantDemoData() {
@@ -1116,7 +1120,9 @@ export function getVisibleCatalogueForTable({
       .filter((menu) => zone.menuIds.includes(menu.id))
       .flatMap((menu) => menu.categories)
       .filter(Boolean);
-    allowedCategories = new Set(zoneCategories);
+    if (zoneCategories.length) {
+      allowedCategories = new Set(zoneCategories);
+    }
   }
 
   if (activeSchedule) {

@@ -475,7 +475,10 @@ function TablePayPage() {
   }, []);
 
   const t = TRANSLATIONS[lang];
-  const externalMenus = merchantSnapshot?.externalMenus || [];
+  const externalMenus = useMemo(
+    () => merchantSnapshot?.externalMenus || [],
+    [merchantSnapshot?.externalMenus],
+  );
   const activeExternalMenu =
     externalMenus.find((menu) => menu.id === selectedExternalMenuId) ||
     externalMenus[0] ||
@@ -1580,6 +1583,7 @@ function ExternalMenuViewer({
                 <iframe
                   src={activeMenu.content}
                   title={activeMenu.name}
+                  sandbox="allow-same-origin"
                   className="h-full w-full rounded-2xl bg-white"
                 />
               </object>
@@ -1587,6 +1591,7 @@ function ExternalMenuViewer({
               <iframe
                 src={activeMenu.content}
                 title={activeMenu.name}
+                sandbox="allow-same-origin allow-scripts"
                 className="h-full w-full rounded-2xl bg-white"
               />
             )
@@ -2295,7 +2300,7 @@ function SuccessState({
     `Total: KES ${myTotal.toLocaleString()}`,
     `━━━━━━━━━━━━━━━`,
     `Ref: ${receiptRef}`,
-    `Time: ${receiptTime}`,
+    `Time: ${receiptTime} (${elapsedSec}s)`,
     `Method: M-Pesa via PesaSwap`,
     ``,
     `Powered by PesaSwap`,
