@@ -10,7 +10,7 @@
 // --- Configuration ---
 
 export const PESASWAP_CONFIG = {
-  publishableKey: import.meta.env.VITE_PESASWAP_PUBLISHABLE_KEY || "pk_snd_ba315f1daeef482cbabdd8317d8120fc",
+  publishableKey: import.meta.env.VITE_PESASWAP_PUBLISHABLE_KEY || "",
   backendUrl: import.meta.env.VITE_BACKEND_URL || "",
   sandboxUrl: "https://sandbox.Pesaswap.io",
   prodUrl: "https://app.Pesaswap.io",
@@ -19,7 +19,12 @@ export const PESASWAP_CONFIG = {
 
 // --- Types ---
 
-export type PaymentMethod = "mpesa" | "card" | "apple_pay" | "google_pay" | "saved_card";
+export type PaymentMethod =
+  | "mpesa"
+  | "card"
+  | "apple_pay"
+  | "google_pay"
+  | "saved_card";
 
 export type PaymentFlow = "mpesa_stk_push" | "one_tap_saved" | "full_checkout";
 
@@ -100,7 +105,12 @@ export type CreatePaymentResponse = {
 export type RefundRequest = {
   payment_id: string;
   amount?: number; // partial refund; omit for full
-  reason: "customer_request" | "item_quality" | "overcharge" | "duplicate" | "other";
+  reason:
+    | "customer_request"
+    | "item_quality"
+    | "overcharge"
+    | "duplicate"
+    | "other";
   items?: Array<{ id: string; name: string; price: number; qty: number }>;
   refunded_by: string;
   metadata?: Record<string, string>;
@@ -140,12 +150,22 @@ export function buildPaymentMetadata(params: {
   flow: "tapgo" | "table" | "invoice" | "quick_charge";
   customer: { phone: string; name?: string; loyaltyId?: string };
   table?: { number: number; server: string; orderId?: string };
-  items?: Array<{ name: string; qty: number; price: number; category?: string }>;
-  split?: { type: "full" | "equal" | "custom" | "by_item"; totalParties?: number; index?: number };
+  items?: Array<{
+    name: string;
+    qty: number;
+    price: number;
+    category?: string;
+  }>;
+  split?: {
+    type: "full" | "equal" | "custom" | "by_item";
+    totalParties?: number;
+    index?: number;
+  };
   tip?: { amount: number; recipient: string };
   qrScannedAt?: string;
 }): PaymentMetadata {
-  const { merchant, flow, customer, table, items, split, tip, qrScannedAt } = params;
+  const { merchant, flow, customer, table, items, split, tip, qrScannedAt } =
+    params;
 
   return {
     merchant_id: merchant.id,
@@ -171,7 +191,11 @@ export function buildPaymentMetadata(params: {
     tip_amount: tip?.amount || 0,
     tip_recipient: tip?.recipient,
 
-    idempotency_key: generateIdempotencyKey(flow, table?.number, customer.phone),
+    idempotency_key: generateIdempotencyKey(
+      flow,
+      table?.number,
+      customer.phone,
+    ),
     device_fingerprint: getDeviceFingerprint(),
     qr_scanned_at: qrScannedAt,
   };
@@ -186,27 +210,44 @@ class PesaSwapClient {
     this.backendUrl = backendUrl || PESASWAP_CONFIG.backendUrl;
   }
 
-  async createPayment(request: CreatePaymentRequest): Promise<CreatePaymentResponse> {
+  async createPayment(
+    request: CreatePaymentRequest,
+  ): Promise<CreatePaymentResponse> {
     const response = await fetch(`${this.backendUrl}/api/payments/create`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Idempotency-Key": String((request.metadata as PaymentMetadata).idempotency_key || Date.now()),
+        "Idempotency-Key": String(
+          (request.metadata as PaymentMetadata).idempotency_key || Date.now(),
+        ),
       },
       body: JSON.stringify(request),
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: "Payment creation failed" }));
-      throw new PaymentError(error.message || "Failed to create payment", "creation_failed");
+      const error = await response
+        .json()
+        .catch(() => ({ message: "Payment creation failed" }));
+      throw new PaymentError(
+        error.message || "Failed to create payment",
+        "creation_failed",
+      );
     }
 
     return response.json();
   }
 
-  async getPaymentStatus(paymentId: string): Promise<{ status: PaymentStatus; amount: number }> {
-    const response = await fetch(`${this.backendUrl}/api/payments/${paymentId}/status`);
-    if (!response.ok) throw new PaymentError("Failed to get payment status", "status_check_failed");
+  async getPaymentStatus(
+    paymentId: string,
+  ): Promise<{ status: PaymentStatus; amount: number }> {
+    const response = await fetch(
+      `${this.backendUrl}/api/payments/${paymentId}/status`,
+    );
+    if (!response.ok)
+      throw new PaymentError(
+        "Failed to get payment status",
+        "status_check_failed",
+      );
     return response.json();
   }
 
@@ -221,8 +262,13 @@ class PesaSwapClient {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: "Refund failed" }));
-      throw new PaymentError(error.message || "Refund processing failed", "refund_failed");
+      const error = await response
+        .json()
+        .catch(() => ({ message: "Refund failed" }));
+      throw new PaymentError(
+        error.message || "Refund processing failed",
+        "refund_failed",
+      );
     }
 
     return response.json();
@@ -230,10 +276,17 @@ class PesaSwapClient {
 
   async getCustomerPaymentMethods(phone: string): Promise<{
     has_saved: boolean;
-    methods: Array<{ id: string; type: PaymentMethod; last4?: string; label: string }>;
+    methods: Array<{
+      id: string;
+      type: PaymentMethod;
+      last4?: string;
+      label: string;
+    }>;
     default_method?: string;
   }> {
-    const response = await fetch(`${this.backendUrl}/api/customers/payment-methods?phone=${encodeURIComponent(phone)}`);
+    const response = await fetch(
+      `${this.backendUrl}/api/customers/payment-methods?phone=${encodeURIComponent(phone)}`,
+    );
     if (!response.ok) return { has_saved: false, methods: [] };
     return response.json();
   }
@@ -265,7 +318,8 @@ export function loadHyperLoader(): Promise<void> {
     script.src = PESASWAP_CONFIG.hyperLoaderUrl;
     script.async = true;
     script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Failed to load PesaSwap HyperLoader"));
+    script.onerror = () =>
+      reject(new Error("Failed to load PesaSwap HyperLoader"));
     document.head.appendChild(script);
   });
 
@@ -360,11 +414,18 @@ export async function mpesaStkPay(
 export async function mountCheckoutWidget(
   clientSecret: string,
   containerId: string,
-  options?: { theme?: "midnight" | "default" | "flat"; layout?: "tabs" | "accordion" },
+  options?: {
+    theme?: "midnight" | "default" | "flat";
+    layout?: "tabs" | "accordion";
+  },
 ): Promise<{
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   widgets: any;
-  confirmPayment: () => Promise<{ success: boolean; status: PaymentStatus; error?: string }>;
+  confirmPayment: () => Promise<{
+    success: boolean;
+    status: PaymentStatus;
+    error?: string;
+  }>;
 }> {
   await loadHyperLoader();
   const hyper = getHyperInstance();
@@ -393,9 +454,16 @@ export async function mountCheckoutWidget(
       });
 
       if (error) {
-        return { success: false, status: "failed" as PaymentStatus, error: error.message };
+        return {
+          success: false,
+          status: "failed" as PaymentStatus,
+          error: error.message,
+        };
       }
-      return { success: true, status: status || ("succeeded" as PaymentStatus) };
+      return {
+        success: true,
+        status: status || ("succeeded" as PaymentStatus),
+      };
     },
   };
 }
@@ -423,7 +491,14 @@ export async function executePayment(params: {
   payment_id?: string;
   error?: string;
 }> {
-  const { amount, currency = "KES", metadata, phone, preferredFlow, onStatusChange } = params;
+  const {
+    amount,
+    currency = "KES",
+    metadata,
+    phone,
+    preferredFlow,
+    onStatusChange,
+  } = params;
 
   const client = new PesaSwapClient();
 
@@ -466,7 +541,10 @@ export async function executePayment(params: {
 
       case "full_checkout":
         if (params.checkoutContainerId) {
-          const checkout = await mountCheckoutWidget(payment.client_secret, params.checkoutContainerId);
+          const checkout = await mountCheckoutWidget(
+            payment.client_secret,
+            params.checkoutContainerId,
+          );
           result = await checkout.confirmPayment();
         } else {
           // Fallback to M-Pesa if no container for widget
@@ -476,25 +554,39 @@ export async function executePayment(params: {
         break;
 
       default:
-        result = { success: false, status: "failed", error: "Unknown payment flow" };
+        result = {
+          success: false,
+          status: "failed",
+          error: "Unknown payment flow",
+        };
     }
 
     // 4. Verify server-side status (never trust client alone)
     if (result.success) {
-      const verified = await pollPaymentStatus(client, payment.payment_id, 30000);
+      const verified = await pollPaymentStatus(
+        client,
+        payment.payment_id,
+        30000,
+      );
       onStatusChange?.(verified.status);
       return {
         success: verified.status === "succeeded",
         status: verified.status,
         payment_id: payment.payment_id,
-        error: verified.status !== "succeeded" ? "Payment not confirmed by server" : undefined,
+        error:
+          verified.status !== "succeeded"
+            ? "Payment not confirmed by server"
+            : undefined,
       };
     }
 
     onStatusChange?.(result.status);
     return { ...result, payment_id: payment.payment_id };
   } catch (error) {
-    const message = error instanceof PaymentError ? error.message : "Payment failed unexpectedly";
+    const message =
+      error instanceof PaymentError
+        ? error.message
+        : "Payment failed unexpectedly";
     onStatusChange?.("failed");
     return { success: false, status: "failed", error: message };
   }
@@ -513,7 +605,11 @@ async function pollPaymentStatus(
   while (Date.now() - start < timeoutMs) {
     try {
       const { status } = await client.getPaymentStatus(paymentId);
-      if (status === "succeeded" || status === "failed" || status === "cancelled") {
+      if (
+        status === "succeeded" ||
+        status === "failed" ||
+        status === "cancelled"
+      ) {
         return { status };
       }
     } catch {
@@ -532,11 +628,16 @@ export function formatKenyanPhone(phone: string): string {
   const cleaned = phone.replace(/\D/g, "");
   if (cleaned.startsWith("254")) return `+${cleaned}`;
   if (cleaned.startsWith("0")) return `+254${cleaned.slice(1)}`;
-  if (cleaned.startsWith("7") || cleaned.startsWith("1")) return `+254${cleaned}`;
+  if (cleaned.startsWith("7") || cleaned.startsWith("1"))
+    return `+254${cleaned}`;
   return `+254${cleaned}`;
 }
 
-function generateIdempotencyKey(flow: string, tableNumber?: number, phone?: string): string {
+function generateIdempotencyKey(
+  flow: string,
+  tableNumber?: number,
+  phone?: string,
+): string {
   const timestamp = Math.floor(Date.now() / 1000); // 1-second granularity prevents rapid double-tap
   const parts = [flow, tableNumber || "direct", phone || "anon", timestamp];
   return parts.join("-");

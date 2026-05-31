@@ -1,0 +1,15 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "pesaswap-merchant-app"
+main = "dist/server/server.js"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "dist/client"
+
+[vars]
+PESASWAP_URL = "https://app.Pesaswap.io"
+
+# Secrets (set via `wrangler secret put`):
+# - PESASWAP_API_KEY
+# - PESASWAP_WEBHOOK_SECRET
