@@ -1,6 +1,6 @@
 # PesaSwap FX Engine — Product & Engineering Specification
 
-> **Version:** 2.0 | **Updated:** 2026-05-31
+> **Version:** 3.0 | **Updated:** 2026-05-31
 > **Philosophy:** Zero-to-One (Thiel) | Apple Simplicity | Japanese Quality (Monozukuri)
 
 ---
@@ -121,23 +121,72 @@ ELSE IF currency=KES AND amount<150K AND has_phone → M-Pesa STK (3s)
 ELSE → Full Checkout Widget (15s)
 ```
 
-### C. Restaurant Operations (Table Service)
+### C. Customer Table Ordering (Single-Screen Experience)
 
-| #   | Feature                    | Location | What It Does                                                 |
-| --- | -------------------------- | -------- | ------------------------------------------------------------ |
-| C1  | **QR Table Ordering**      | `/table` | Customer scans QR at table → sees menu → orders → pays       |
-| C2  | **Menu Browsing**          | `/table` | Category tabs, photos, descriptions, dietary tags, modifiers |
-| C3  | **Item Modifiers**         | `/table` | Size/extras selection with live price calculation            |
-| C4  | **Bill Splitting**         | `/table` | Equal split, by-item, custom amounts                         |
-| C5  | **Tipping**                | `/table` | Percentage or custom tip with staff attribution              |
-| C6  | **Order More**             | `/table` | Add items to existing bill mid-meal                          |
-| C7  | **Multi-Language**         | `/table` | EN/SW/FR/AR with auto-detect from phone language             |
-| C8  | **Upsell Suggestions**     | `/table` | "Goes well with..." after adding item to cart                |
-| C9  | **External Menu Viewer**   | `/table` | PDF/URL menus embedded (wine list, specials)                 |
-| C10 | **Receipt & Share**        | `/table` | Digital receipt with full breakdown, share via phone         |
-| C11 | **Availability Awareness** | `/table` | Sold-out items shown grayed (can't order)                    |
-| C12 | **Zone-Filtered Menu**     | `/table` | Table number → zone → only relevant menu shows               |
-| C13 | **Schedule-Filtered Menu** | `/table` | Time of day → only current menu categories visible           |
+> Route: `/table/{tableNumber}` — e.g., `/table/5`
+> Mobile-first, bottom nav: 🍽️ Menu | 🛒 Cart | 📋 Bill | 💳 Pay
+
+| #   | Feature                    | Nav Tab  | What It Does                                                        |
+| --- | -------------------------- | -------- | ------------------------------------------------------------------- |
+| C1  | **QR → Instant Menu**      | Menu     | Scan QR at table → see zone-appropriate menu in <2 seconds          |
+| C2  | **Category Browsing**      | Menu     | Horizontal scrollable chips, items as photo cards with dietary tags |
+| C3  | **Item Modifiers**         | Menu     | Bottom-sheet overlay for size/extras with live price recalculation  |
+| C4  | **Add to Cart**            | Menu     | One-tap quick-add with cart badge count update                      |
+| C5  | **Cart Management**        | Cart     | Adjust quantities, special instructions per item, remove items      |
+| C6  | **Live Cart Total**        | Cart     | Running total with currency conversion visible                      |
+| C7  | **Place Order**            | Cart     | Submit to kitchen/bar with destination routing per item             |
+| C8  | **Order More**             | Bill     | Add items to existing bill mid-meal (return to Menu tab)            |
+| C9  | **Bill Review**            | Bill     | Full itemized bill with timestamps and order status                 |
+| C10 | **One-Screen Payment**     | Pay      | Split + Tip + M-Pesa phone all visible on ONE screen (no 3 steps)   |
+| C11 | **Bill Splitting**         | Pay      | Equal split, by-item, custom amounts                                |
+| C12 | **Tip Staff by Name**      | Pay      | Shows server name, "tip goes directly to {name}'s M-Pesa"           |
+| C13 | **M-Pesa Payment**         | Pay      | STK push to customer's phone, confirm with PIN                      |
+| C14 | **Post-Payment Review**    | Success  | 5-star rating + quick tags (Food/Service/Speed/Atmosphere/Value)    |
+| C15 | **Receipt & Share**        | Success  | Digital receipt, share via WhatsApp/copy link                       |
+| C16 | **Pre-Order Mode**         | Menu     | `/table/5?preorder=true` — browse menu, pick arrival date/time      |
+| C17 | **Cart Persistence**       | (auto)   | Cart saved per-table in localStorage, survives page refresh         |
+| C18 | **Multi-Language**         | (header) | EN/SW/FR/AR with auto-detect from phone language                    |
+| C19 | **Zone-Filtered Menu**     | (auto)   | Table number → zone → only relevant menu shows                      |
+| C20 | **Schedule-Filtered Menu** | (auto)   | Time of day → only current menu categories visible                  |
+| C21 | **Upsell Suggestions**     | Cart     | "Goes well with..." recommendations based on cart contents          |
+| C22 | **External Menu Viewer**   | Menu     | PDF/URL menus embedded (wine list, specials)                        |
+| C23 | **Availability Awareness** | Menu     | Sold-out items shown grayed (can't order)                           |
+
+**Customer Flow (end to end):**
+
+```
+Scan QR at Table 5
+       ↓
+/table/5 loads → Zone detected → Menu filtered
+       ↓
+Browse menu → Add items (modifiers) → Cart builds
+       ↓
+Review cart → Place order → Kitchen/Bar receives ticket
+       ↓
+Order confirmed → Bill shows items → Can order more
+       ↓
+Ready to pay → ONE screen: Split + Tip (to named server) + Phone
+       ↓
+M-Pesa STK push → Confirm on phone → Done in 3 seconds
+       ↓
+⭐⭐⭐⭐⭐ Rate experience → Quick tags → Submit review
+       ↓
+Receipt → Share via WhatsApp → Done
+```
+
+**Pre-Order Flow:**
+
+```
+Customer browses /table/5?preorder=true (before arriving)
+       ↓
+Menu visible → Add items → Pick date/time
+       ↓
+Cart saved to localStorage as pre-order
+       ↓
+Customer arrives → Scans actual QR at table
+       ↓
+Pre-order items auto-populate cart → Confirm → Kitchen receives
+```
 
 ### D. Menu Management (Dashboard)
 
@@ -171,7 +220,7 @@ ELSE → Full Checkout Widget (15s)
 | --- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | E1  | **Overview**  | Revenue today, transaction count, avg ticket, active tables, 7-day trend chart, QR adoption rate, payment method mix, live table map, recent transactions |
 | E2  | **Payments**  | Full transaction ledger, filters (status/date/method), refund actions                                                                                     |
-| E3  | **Staff**     | Staff list, performance metrics, shift management, tip attribution                                                                                        |
+| E3  | **Staff**     | Staff management (5 tabs: Team/Performance/Shifts/Payouts/AI)                                                                                             |
 | E4  | **Analytics** | Revenue trends, peak hours, category performance, customer segments                                                                                       |
 | E5  | **Menu**      | Full menu management (21 features above)                                                                                                                  |
 | E6  | **Reviews**   | Customer review aggregation, sentiment, response management                                                                                               |
@@ -189,6 +238,100 @@ ELSE → Full Checkout Widget (15s)
 | F6  | **AI Insights**   | Revenue predictions, anomaly alerts, recommendations | Glance → decide       |
 | F7  | **Wallets**       | Multi-currency balances, reconciliation              | Verify → settle       |
 | F8  | **Scan**          | QR scanner for payments and table identification     | Point → done          |
+
+### F2. Staff App (M-Pesa Enabled — inspired by Sunday for Staff)
+
+> Route: `/dashboard/staff` — 5 tabs: Team | Performance | Shifts | Payouts | Notifications & AI
+> Designed for African markets: M-Pesa number = bank account, PIN-based auth, KES throughout
+
+#### Tab 1: Team Management
+
+| #    | Feature                | What It Does                                                                   |
+| ---- | ---------------------- | ------------------------------------------------------------------------------ |
+| F2.1 | **Staff Directory**    | All staff with photo/initials, name, role badge, phone, active/inactive status |
+| F2.2 | **Add Staff Member**   | Name, M-Pesa phone (254XXXXXXXXX), role, PIN, zone assignment                  |
+| F2.3 | **Role-Based Access**  | 6 roles: waiter, bartender, kitchen, host, manager, admin                      |
+| F2.4 | **Zone Assignment**    | Assign staff to specific zones/table ranges                                    |
+| F2.5 | **PIN Authentication** | 4-digit PIN for staff app access (no email/password needed)                    |
+| F2.6 | **Quick Actions**      | Edit, deactivate, view profile, send payout — per staff member                 |
+| F2.7 | **Today's Stats**      | Each card shows: current shift, tables served today, tips earned               |
+
+#### Tab 2: Performance & Gamification
+
+| #     | Feature                    | What It Does                                                                          |
+| ----- | -------------------------- | ------------------------------------------------------------------------------------- |
+| F2.8  | **Leaderboard**            | Ranked by: tips, tables served, avg rating, speed, tip percentage                     |
+| F2.9  | **Performance Challenges** | Time-bound campaigns with KES rewards (e.g., "50 tables this week = KES 2,000")       |
+| F2.10 | **Achievement Badges**     | Top Tipper 🏆, Fastest Service ⚡, Most Tables 🔥, Best Rating ⭐, Upsell Champion 💎 |
+| F2.11 | **Period Filtering**       | View stats for today / this week / this month                                         |
+| F2.12 | **Challenge Creation**     | Managers create challenges: choose metric, target, reward, duration                   |
+| F2.13 | **Progress Tracking**      | Live progress bars per participant toward challenge goals                             |
+
+#### Tab 3: Shift Scheduling
+
+| #     | Feature                    | What It Does                                                |
+| ----- | -------------------------- | ----------------------------------------------------------- |
+| F2.14 | **Weekly Calendar**        | Mon-Sun grid with staff on Y-axis, shifts as colored blocks |
+| F2.15 | **Shift Creation**         | Set date, start/end time, break duration, assign to staff   |
+| F2.16 | **Clock In/Out**           | Staff clock in via app; late detection alerts manager       |
+| F2.17 | **Today's Roster**         | Quick view: who's currently on shift, who's coming next     |
+| F2.18 | **Break Management**       | Track break duration, alert if exceeded                     |
+| F2.19 | **Absence Tracking**       | Mark no-shows, trigger notifications to available staff     |
+| F2.20 | **AI Staffing Suggestion** | "Based on last month, you need 3 servers on Friday 7-9pm"   |
+
+#### Tab 4: M-Pesa Payouts
+
+| #     | Feature                    | What It Does                                                            |
+| ----- | -------------------------- | ----------------------------------------------------------------------- |
+| F2.21 | **M-Pesa as Bank Account** | Staff phone number IS their payout destination — no separate bank setup |
+| F2.22 | **Individual Payout**      | Send specific amount to one staff member via M-Pesa STK push            |
+| F2.23 | **Batch Payout**           | One-click: send all pending tips to all staff simultaneously            |
+| F2.24 | **Auto-Payout Settings**   | Configure: daily (end of shift), weekly (Sunday), or manual             |
+| F2.25 | **Payout History**         | Full ledger: amount, type (tip/salary/bonus/incentive), status, date    |
+| F2.26 | **Payout Summary Cards**   | Total disbursed this period, pending amount, breakdown by type          |
+| F2.27 | **Payment Types**          | Tips, salary advances, challenge bonuses, incentive rewards             |
+| F2.28 | **Failed Payout Recovery** | Auto-retry failed M-Pesa transactions, alert on persistent failure      |
+
+#### Tab 5: Notifications & AI
+
+| #     | Feature                  | What It Does                                                             |
+| ----- | ------------------------ | ------------------------------------------------------------------------ |
+| F2.29 | **Real-Time Feed**       | Live notifications: order ready, payment received, tip received, walkout |
+| F2.30 | **Walkout Reporting**    | Report walkout: table number, estimated amount, time, description        |
+| F2.31 | **AI Performance Coach** | "Amina's turn time increased 40% — consider checking in"                 |
+| F2.32 | **AI Scheduling**        | "Friday 7-9pm consistently understaffed by 1 server"                     |
+| F2.33 | **AI Training Pairs**    | "James has highest upsell rate — pair with new staff"                    |
+| F2.34 | **AI Revenue Insights**  | "Tip pool would increase 23% if all achieve 4.5+ rating"                 |
+| F2.35 | **Notification Prefs**   | Per staff: toggle order alerts, payment alerts, schedule changes         |
+
+**Staff Payout Flow (M-Pesa):**
+
+```
+Tips accumulate per staff member (from customer payments)
+       ↓
+Manager reviews → Batch Payout or Individual Payout
+       ↓
+System sends M-Pesa STK push to 254XXXXXXXXX
+       ↓
+Staff confirms on phone → KES arrives instantly
+       ↓
+Payout logged: amount, reference, timestamp, type
+```
+
+**Staff Performance Challenge Flow:**
+
+```
+Manager creates challenge:
+  "Serve 50+ tables this week → earn KES 2,000 bonus"
+       ↓
+Challenge appears in all eligible staff's Performance tab
+       ↓
+Progress bars update in real-time as tables are served
+       ↓
+Challenge completes → Winners get bonus added to pending payout
+       ↓
+Next batch payout includes bonus → M-Pesa → Staff phone
+```
 
 ### G. Intelligence & Real-Time
 
@@ -264,21 +407,27 @@ PESASWAP_WEBHOOK_SECRET=                 # HMAC verification for callbacks
 
 **Goal:** Order food, pay fast, get back to his conversation.
 
-| Journey      | Steps                                                            | Time   | Delight Moment                            |
-| ------------ | ---------------------------------------------------------------- | ------ | ----------------------------------------- |
-| First visit  | Scan QR → Browse menu (in Swahili!) → Add items → Pay via M-Pesa | 45 sec | "No app download, menu in my language"    |
-| Return visit | Scan QR → One-tap pay (saved M-Pesa) → Done                      | 5 sec  | "It remembered me. One tap."              |
-| Group dinner | Scan → Order → Split by item → Each person pays their share      | 2 min  | "No awkward 'who owes what' conversation" |
+| Journey      | Steps                                                                       | Time   | Delight Moment                                |
+| ------------ | --------------------------------------------------------------------------- | ------ | --------------------------------------------- |
+| First visit  | Scan QR → Browse menu (in Swahili!) → Add items → Order → Pay via M-Pesa    | 90 sec | "No app download, menu in my language"        |
+| Return visit | Scan QR → Cart remembered → One-tap pay (saved M-Pesa) → Done               | 10 sec | "It remembered my last order and my phone"    |
+| Group dinner | Scan → Order → Split by item → Each person pays their share → Rate & review | 2 min  | "No awkward 'who owes what' conversation"     |
+| Pre-order    | Browse menu at home → Add items → Pick arrival time → Arrive → Order ready  | 5 min  | "Food starts cooking when I walk in the door" |
+| Tip & review | Pay screen → See server name → Tap 10% → ⭐⭐⭐⭐⭐ → "Great service!"      | 15 sec | "My tip goes straight to Grace's M-Pesa"      |
 
-### Persona 3: Waiter (David)
+### Persona 3: Waiter/Staff (David)
 
-**Goal:** Serve tables efficiently, earn good tips, avoid mistakes.
+**Goal:** Serve tables efficiently, earn good tips directly to M-Pesa, track performance.
 
-| Journey          | Steps                                                    | Time   | Delight Moment                                      |
-| ---------------- | -------------------------------------------------------- | ------ | --------------------------------------------------- |
-| Take order       | Customer ordered via QR → Kitchen ticket auto-created    | 0 sec  | "I didn't have to write anything down"              |
-| Check status     | Glance at app → See which orders are ready               | 3 sec  | "I know exactly when to go to the kitchen"          |
-| Handle complaint | Tap refund → Enter reason → AI shows precedent → Approve | 10 sec | "The system told me 'similar cases got 50% refund'" |
+| Journey          | Steps                                                          | Time   | Delight Moment                                      |
+| ---------------- | -------------------------------------------------------------- | ------ | --------------------------------------------------- |
+| Start shift      | Enter PIN → Clock in → See assigned tables/zone                | 5 sec  | "I know my zone and what's expected today"          |
+| Take order       | Customer ordered via QR → Kitchen ticket auto-created          | 0 sec  | "I didn't have to write anything down"              |
+| Check status     | Glance at notifications → See which orders are ready           | 3 sec  | "I know exactly when to go to the kitchen"          |
+| Receive tip      | Customer tips at payment → notification: "KES 150 tip from T5" | 0 sec  | "I see my tip the moment they pay"                  |
+| End shift        | Clock out → See day's earnings → Tips auto-sent to M-Pesa      | 10 sec | "Money is already on my phone"                      |
+| Challenge        | "Serve 50 tables this week = KES 2,000 bonus" → Track progress | —      | "Gamification makes work fun + extra income"        |
+| Handle complaint | Tap refund → Enter reason → AI shows precedent → Approve       | 10 sec | "The system told me 'similar cases got 50% refund'" |
 
 ### Persona 4: Kitchen Manager (Grace)
 
@@ -294,16 +443,21 @@ PESASWAP_WEBHOOK_SECRET=                 # HMAC verification for callbacks
 
 ## What Makes This 10x Better (Not 10% Better)
 
-| Competitor Approach                | PesaSwap Approach                                     | Why 10x                            |
-| ---------------------------------- | ----------------------------------------------------- | ---------------------------------- |
-| Separate POS + payment + menu apps | **One unified system**                                | No integration hell, no data silos |
-| Customer downloads app to pay      | **QR → web (zero install)**                           | 100% adoption on day one           |
-| Static menu on paper/PDF           | **Smart menu (zones, schedules, language, sold-out)** | Menu adapts to context             |
-| Manual refund process              | **AI-assisted with precedent search**                 | Consistent, fast, fair             |
-| Payments logged as flat records    | **Temporal + decision traces**                        | Full "why" not just "what"         |
-| Same experience for everyone       | **Context-aware (time, customer, zone, device)**      | Feels personalized                 |
-| Monthly reports                    | **Real-time intelligence**                            | Act now, not next month            |
-| One payment method                 | **Smart routing (M-Pesa/card/saved) in <100ms**       | Always fastest path                |
+| Competitor Approach                 | PesaSwap Approach                                     | Why 10x                            |
+| ----------------------------------- | ----------------------------------------------------- | ---------------------------------- |
+| Separate POS + payment + menu apps  | **One unified system**                                | No integration hell, no data silos |
+| Customer downloads app to pay       | **QR → web (zero install)**                           | 100% adoption on day one           |
+| Static menu on paper/PDF            | **Smart menu (zones, schedules, language, sold-out)** | Menu adapts to context             |
+| Manual refund process               | **AI-assisted with precedent search**                 | Consistent, fast, fair             |
+| Payments logged as flat records     | **Temporal + decision traces**                        | Full "why" not just "what"         |
+| Same experience for everyone        | **Context-aware (time, customer, zone, device)**      | Feels personalized                 |
+| Monthly reports                     | **Real-time intelligence**                            | Act now, not next month            |
+| One payment method                  | **Smart routing (M-Pesa/card/saved) in <100ms**       | Always fastest path                |
+| Staff tips via bank transfer (days) | **Tips to M-Pesa instantly**                          | Money on phone same day            |
+| Paper staff schedules               | **AI-powered shift scheduling**                       | Right staff, right time, always    |
+| Staff performance = guesswork       | **Gamified challenges with real KES rewards**         | Motivated team, measurable results |
+| 3-step payment (split→tip→pay)      | **One-screen payment (all visible at once)**          | 3x faster checkout                 |
+| No pre-ordering                     | **Pre-order before arriving**                         | Kitchen ready when you walk in     |
 
 ---
 
@@ -337,10 +491,13 @@ npm run dev                   # → http://localhost:5173
 
 # Key routes to explore:
 # /              — FX wallet & converter
-# /table?t=5    — Customer table ordering (demo)
-# /pay          — QR tap-to-pay
-# /merchant     — Mobile merchant app
-# /dashboard    — Desktop management (7 pages)
+# /table/5       — Customer table ordering (Table 5, single-screen UX)
+# /table/5?preorder=true — Pre-order mode
+# /table         — Table entry landing (manual number or QR scan)
+# /pay           — QR tap-to-pay
+# /merchant      — Mobile merchant app
+# /dashboard     — Desktop management (7 pages)
+# /dashboard/staff — Staff app (5 tabs: Team/Performance/Shifts/Payouts/AI)
 ```
 
 ---
@@ -355,14 +512,15 @@ src/
 │   ├── beneficiaries.tsx      # Payout recipients
 │   ├── payments.tsx           # Transaction ledger
 │   ├── pay.tsx                # QR tap-to-pay flow
-│   ├── table.tsx              # Customer table ordering (2,450 lines)
+│   ├── table.tsx              # Table entry landing page
+│   ├── table.$tableId.tsx     # Customer ordering (single-screen, ~2,300 lines)
 │   ├── merchant.tsx           # Merchant app shell
 │   ├── reports.tsx            # Reports/analytics
 │   ├── dashboard.tsx          # Dashboard layout (sidebar)
 │   └── dashboard/
 │       ├── index.tsx          # Overview (KPIs, charts, live tables)
 │       ├── payments.tsx       # Payment management
-│       ├── staff.tsx          # Staff performance
+│       ├── staff.tsx          # Staff app (5 tabs, ~2,800 lines)
 │       ├── analytics.tsx      # Deep analytics
 │       ├── menu.tsx           # Menu management (2,900 lines)
 │       ├── reviews.tsx        # Customer reviews
@@ -371,7 +529,7 @@ src/
 │   ├── MerchantApp.tsx        # Mobile app shell (1,268 lines)
 │   ├── MerchantFlows.tsx      # QR invoicing, settlement, PWA
 │   └── features/
-│       ├── types.ts           # All domain types (252 lines)
+│       ├── types.ts           # All domain types (~350 lines)
 │       ├── hooks.ts           # Shared React hooks
 │       ├── utils.ts           # Formatting, calculations
 │       ├── TapGoPOS.tsx       # Point-of-sale terminal
@@ -383,7 +541,7 @@ src/
 │   ├── pesaswap-payments.ts   # Payment SDK abstraction (17.5KB)
 │   ├── realtime.ts            # WebSocket + polling (10KB)
 │   ├── use-payment.ts         # Payment state machine hook
-│   ├── merchant-dashboard.ts  # Dashboard data layer (1,132 lines)
+│   ├── merchant-dashboard.ts  # Dashboard + staff data layer (~1,500 lines)
 │   └── env-validation.ts      # Environment validation
 ├── api/
 │   └── payments.ts            # Server API routes (18.4KB)
