@@ -19,6 +19,7 @@ import { Route as ConverterRouteImport } from "./routes/converter";
 import { Route as BeneficiariesRouteImport } from "./routes/beneficiaries";
 import { Route as IndexRouteImport } from "./routes/index";
 import { Route as DashboardIndexRouteImport } from "./routes/dashboard/index";
+import { Route as TableTableIdRouteImport } from "./routes/table.$tableId";
 import { Route as DashboardStaffRouteImport } from "./routes/dashboard/staff";
 import { Route as DashboardSettingsRouteImport } from "./routes/dashboard/settings";
 import { Route as DashboardReviewsRouteImport } from "./routes/dashboard/reviews";
@@ -76,6 +77,11 @@ const DashboardIndexRoute = DashboardIndexRouteImport.update({
   path: "/",
   getParentRoute: () => DashboardRoute,
 } as any);
+const TableTableIdRoute = TableTableIdRouteImport.update({
+  id: "/$tableId",
+  path: "/$tableId",
+  getParentRoute: () => TableRoute,
+} as any);
 const DashboardStaffRoute = DashboardStaffRouteImport.update({
   id: "/staff",
   path: "/staff",
@@ -116,13 +122,14 @@ export interface FileRoutesByFullPath {
   "/pay": typeof PayRoute;
   "/payments": typeof PaymentsRoute;
   "/reports": typeof ReportsRoute;
-  "/table": typeof TableRoute;
+  "/table": typeof TableRouteWithChildren;
   "/dashboard/analytics": typeof DashboardAnalyticsRoute;
   "/dashboard/menu": typeof DashboardMenuRoute;
   "/dashboard/payments": typeof DashboardPaymentsRoute;
   "/dashboard/reviews": typeof DashboardReviewsRoute;
   "/dashboard/settings": typeof DashboardSettingsRoute;
   "/dashboard/staff": typeof DashboardStaffRoute;
+  "/table/$tableId": typeof TableTableIdRoute;
   "/dashboard/": typeof DashboardIndexRoute;
 }
 export interface FileRoutesByTo {
@@ -133,13 +140,14 @@ export interface FileRoutesByTo {
   "/pay": typeof PayRoute;
   "/payments": typeof PaymentsRoute;
   "/reports": typeof ReportsRoute;
-  "/table": typeof TableRoute;
+  "/table": typeof TableRouteWithChildren;
   "/dashboard/analytics": typeof DashboardAnalyticsRoute;
   "/dashboard/menu": typeof DashboardMenuRoute;
   "/dashboard/payments": typeof DashboardPaymentsRoute;
   "/dashboard/reviews": typeof DashboardReviewsRoute;
   "/dashboard/settings": typeof DashboardSettingsRoute;
   "/dashboard/staff": typeof DashboardStaffRoute;
+  "/table/$tableId": typeof TableTableIdRoute;
   "/dashboard": typeof DashboardIndexRoute;
 }
 export interface FileRoutesById {
@@ -152,13 +160,14 @@ export interface FileRoutesById {
   "/pay": typeof PayRoute;
   "/payments": typeof PaymentsRoute;
   "/reports": typeof ReportsRoute;
-  "/table": typeof TableRoute;
+  "/table": typeof TableRouteWithChildren;
   "/dashboard/analytics": typeof DashboardAnalyticsRoute;
   "/dashboard/menu": typeof DashboardMenuRoute;
   "/dashboard/payments": typeof DashboardPaymentsRoute;
   "/dashboard/reviews": typeof DashboardReviewsRoute;
   "/dashboard/settings": typeof DashboardSettingsRoute;
   "/dashboard/staff": typeof DashboardStaffRoute;
+  "/table/$tableId": typeof TableTableIdRoute;
   "/dashboard/": typeof DashboardIndexRoute;
 }
 export interface FileRouteTypes {
@@ -179,6 +188,7 @@ export interface FileRouteTypes {
     | "/dashboard/reviews"
     | "/dashboard/settings"
     | "/dashboard/staff"
+    | "/table/$tableId"
     | "/dashboard/";
   fileRoutesByTo: FileRoutesByTo;
   to:
@@ -196,6 +206,7 @@ export interface FileRouteTypes {
     | "/dashboard/reviews"
     | "/dashboard/settings"
     | "/dashboard/staff"
+    | "/table/$tableId"
     | "/dashboard";
   id:
     | "__root__"
@@ -214,6 +225,7 @@ export interface FileRouteTypes {
     | "/dashboard/reviews"
     | "/dashboard/settings"
     | "/dashboard/staff"
+    | "/table/$tableId"
     | "/dashboard/";
   fileRoutesById: FileRoutesById;
 }
@@ -226,7 +238,7 @@ export interface RootRouteChildren {
   PayRoute: typeof PayRoute;
   PaymentsRoute: typeof PaymentsRoute;
   ReportsRoute: typeof ReportsRoute;
-  TableRoute: typeof TableRoute;
+  TableRoute: typeof TableRouteWithChildren;
 }
 
 declare module "@tanstack/react-router" {
@@ -301,6 +313,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof DashboardIndexRouteImport;
       parentRoute: typeof DashboardRoute;
     };
+    "/table/$tableId": {
+      id: "/table/$tableId";
+      path: "/$tableId";
+      fullPath: "/table/$tableId";
+      preLoaderRoute: typeof TableTableIdRouteImport;
+      parentRoute: typeof TableRoute;
+    };
     "/dashboard/staff": {
       id: "/dashboard/staff";
       path: "/staff";
@@ -370,6 +389,16 @@ const DashboardRouteWithChildren = DashboardRoute._addFileChildren(
   DashboardRouteChildren,
 );
 
+interface TableRouteChildren {
+  TableTableIdRoute: typeof TableTableIdRoute;
+}
+
+const TableRouteChildren: TableRouteChildren = {
+  TableTableIdRoute: TableTableIdRoute,
+};
+
+const TableRouteWithChildren = TableRoute._addFileChildren(TableRouteChildren);
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BeneficiariesRoute: BeneficiariesRoute,
@@ -379,7 +408,7 @@ const rootRouteChildren: RootRouteChildren = {
   PayRoute: PayRoute,
   PaymentsRoute: PaymentsRoute,
   ReportsRoute: ReportsRoute,
-  TableRoute: TableRoute,
+  TableRoute: TableRouteWithChildren,
 };
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
