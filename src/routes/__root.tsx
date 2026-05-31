@@ -115,11 +115,13 @@ function RootShell({ children }: { children: React.ReactNode }) {
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const router = useRouter();
-  const isPayPage =
-    router.state.location.pathname.startsWith("/pay") ||
-    router.state.location.pathname.startsWith("/table");
+  const pathname = router.state.location.pathname;
+  const isStandaloneLayout =
+    pathname.startsWith("/dashboard") ||
+    pathname.startsWith("/pay") ||
+    pathname.startsWith("/table");
 
-  if (isPayPage) {
+  if (isStandaloneLayout) {
     return (
       <QueryClientProvider client={queryClient}>
         <ErrorBoundary>

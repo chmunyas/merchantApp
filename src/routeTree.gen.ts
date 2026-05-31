@@ -8,212 +8,388 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
-import { Route as rootRouteImport } from './routes/__root'
-import { Route as TableRouteImport } from './routes/table'
-import { Route as ReportsRouteImport } from './routes/reports'
-import { Route as PaymentsRouteImport } from './routes/payments'
-import { Route as PayRouteImport } from './routes/pay'
-import { Route as MerchantRouteImport } from './routes/merchant'
-import { Route as ConverterRouteImport } from './routes/converter'
-import { Route as BeneficiariesRouteImport } from './routes/beneficiaries'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as rootRouteImport } from "./routes/__root";
+import { Route as TableRouteImport } from "./routes/table";
+import { Route as ReportsRouteImport } from "./routes/reports";
+import { Route as PaymentsRouteImport } from "./routes/payments";
+import { Route as PayRouteImport } from "./routes/pay";
+import { Route as MerchantRouteImport } from "./routes/merchant";
+import { Route as DashboardRouteImport } from "./routes/dashboard";
+import { Route as ConverterRouteImport } from "./routes/converter";
+import { Route as BeneficiariesRouteImport } from "./routes/beneficiaries";
+import { Route as IndexRouteImport } from "./routes/index";
+import { Route as DashboardIndexRouteImport } from "./routes/dashboard/index";
+import { Route as DashboardStaffRouteImport } from "./routes/dashboard/staff";
+import { Route as DashboardSettingsRouteImport } from "./routes/dashboard/settings";
+import { Route as DashboardReviewsRouteImport } from "./routes/dashboard/reviews";
+import { Route as DashboardPaymentsRouteImport } from "./routes/dashboard/payments";
+import { Route as DashboardMenuRouteImport } from "./routes/dashboard/menu";
+import { Route as DashboardAnalyticsRouteImport } from "./routes/dashboard/analytics";
 
 const TableRoute = TableRouteImport.update({
-  id: '/table',
-  path: '/table',
+  id: "/table",
+  path: "/table",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const ReportsRoute = ReportsRouteImport.update({
-  id: '/reports',
-  path: '/reports',
+  id: "/reports",
+  path: "/reports",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const PaymentsRoute = PaymentsRouteImport.update({
-  id: '/payments',
-  path: '/payments',
+  id: "/payments",
+  path: "/payments",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const PayRoute = PayRouteImport.update({
-  id: '/pay',
-  path: '/pay',
+  id: "/pay",
+  path: "/pay",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const MerchantRoute = MerchantRouteImport.update({
-  id: '/merchant',
-  path: '/merchant',
+  id: "/merchant",
+  path: "/merchant",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
+const DashboardRoute = DashboardRouteImport.update({
+  id: "/dashboard",
+  path: "/dashboard",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const ConverterRoute = ConverterRouteImport.update({
-  id: '/converter',
-  path: '/converter',
+  id: "/converter",
+  path: "/converter",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const BeneficiariesRoute = BeneficiariesRouteImport.update({
-  id: '/beneficiaries',
-  path: '/beneficiaries',
+  id: "/beneficiaries",
+  path: "/beneficiaries",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+  id: "/",
+  path: "/",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
+const DashboardIndexRoute = DashboardIndexRouteImport.update({
+  id: "/",
+  path: "/",
+  getParentRoute: () => DashboardRoute,
+} as any);
+const DashboardStaffRoute = DashboardStaffRouteImport.update({
+  id: "/staff",
+  path: "/staff",
+  getParentRoute: () => DashboardRoute,
+} as any);
+const DashboardSettingsRoute = DashboardSettingsRouteImport.update({
+  id: "/settings",
+  path: "/settings",
+  getParentRoute: () => DashboardRoute,
+} as any);
+const DashboardReviewsRoute = DashboardReviewsRouteImport.update({
+  id: "/reviews",
+  path: "/reviews",
+  getParentRoute: () => DashboardRoute,
+} as any);
+const DashboardPaymentsRoute = DashboardPaymentsRouteImport.update({
+  id: "/payments",
+  path: "/payments",
+  getParentRoute: () => DashboardRoute,
+} as any);
+const DashboardMenuRoute = DashboardMenuRouteImport.update({
+  id: "/menu",
+  path: "/menu",
+  getParentRoute: () => DashboardRoute,
+} as any);
+const DashboardAnalyticsRoute = DashboardAnalyticsRouteImport.update({
+  id: "/analytics",
+  path: "/analytics",
+  getParentRoute: () => DashboardRoute,
+} as any);
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
-  '/beneficiaries': typeof BeneficiariesRoute
-  '/converter': typeof ConverterRoute
-  '/merchant': typeof MerchantRoute
-  '/pay': typeof PayRoute
-  '/payments': typeof PaymentsRoute
-  '/reports': typeof ReportsRoute
-  '/table': typeof TableRoute
+  "/": typeof IndexRoute;
+  "/beneficiaries": typeof BeneficiariesRoute;
+  "/converter": typeof ConverterRoute;
+  "/dashboard": typeof DashboardRouteWithChildren;
+  "/merchant": typeof MerchantRoute;
+  "/pay": typeof PayRoute;
+  "/payments": typeof PaymentsRoute;
+  "/reports": typeof ReportsRoute;
+  "/table": typeof TableRoute;
+  "/dashboard/analytics": typeof DashboardAnalyticsRoute;
+  "/dashboard/menu": typeof DashboardMenuRoute;
+  "/dashboard/payments": typeof DashboardPaymentsRoute;
+  "/dashboard/reviews": typeof DashboardReviewsRoute;
+  "/dashboard/settings": typeof DashboardSettingsRoute;
+  "/dashboard/staff": typeof DashboardStaffRoute;
+  "/dashboard/": typeof DashboardIndexRoute;
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
-  '/beneficiaries': typeof BeneficiariesRoute
-  '/converter': typeof ConverterRoute
-  '/merchant': typeof MerchantRoute
-  '/pay': typeof PayRoute
-  '/payments': typeof PaymentsRoute
-  '/reports': typeof ReportsRoute
-  '/table': typeof TableRoute
+  "/": typeof IndexRoute;
+  "/beneficiaries": typeof BeneficiariesRoute;
+  "/converter": typeof ConverterRoute;
+  "/merchant": typeof MerchantRoute;
+  "/pay": typeof PayRoute;
+  "/payments": typeof PaymentsRoute;
+  "/reports": typeof ReportsRoute;
+  "/table": typeof TableRoute;
+  "/dashboard/analytics": typeof DashboardAnalyticsRoute;
+  "/dashboard/menu": typeof DashboardMenuRoute;
+  "/dashboard/payments": typeof DashboardPaymentsRoute;
+  "/dashboard/reviews": typeof DashboardReviewsRoute;
+  "/dashboard/settings": typeof DashboardSettingsRoute;
+  "/dashboard/staff": typeof DashboardStaffRoute;
+  "/dashboard": typeof DashboardIndexRoute;
 }
 export interface FileRoutesById {
-  __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
-  '/beneficiaries': typeof BeneficiariesRoute
-  '/converter': typeof ConverterRoute
-  '/merchant': typeof MerchantRoute
-  '/pay': typeof PayRoute
-  '/payments': typeof PaymentsRoute
-  '/reports': typeof ReportsRoute
-  '/table': typeof TableRoute
+  __root__: typeof rootRouteImport;
+  "/": typeof IndexRoute;
+  "/beneficiaries": typeof BeneficiariesRoute;
+  "/converter": typeof ConverterRoute;
+  "/dashboard": typeof DashboardRouteWithChildren;
+  "/merchant": typeof MerchantRoute;
+  "/pay": typeof PayRoute;
+  "/payments": typeof PaymentsRoute;
+  "/reports": typeof ReportsRoute;
+  "/table": typeof TableRoute;
+  "/dashboard/analytics": typeof DashboardAnalyticsRoute;
+  "/dashboard/menu": typeof DashboardMenuRoute;
+  "/dashboard/payments": typeof DashboardPaymentsRoute;
+  "/dashboard/reviews": typeof DashboardReviewsRoute;
+  "/dashboard/settings": typeof DashboardSettingsRoute;
+  "/dashboard/staff": typeof DashboardStaffRoute;
+  "/dashboard/": typeof DashboardIndexRoute;
 }
 export interface FileRouteTypes {
-  fileRoutesByFullPath: FileRoutesByFullPath
+  fileRoutesByFullPath: FileRoutesByFullPath;
   fullPaths:
-    | '/'
-    | '/beneficiaries'
-    | '/converter'
-    | '/merchant'
-    | '/pay'
-    | '/payments'
-    | '/reports'
-    | '/table'
-  fileRoutesByTo: FileRoutesByTo
+    | "/"
+    | "/beneficiaries"
+    | "/converter"
+    | "/dashboard"
+    | "/merchant"
+    | "/pay"
+    | "/payments"
+    | "/reports"
+    | "/table"
+    | "/dashboard/analytics"
+    | "/dashboard/menu"
+    | "/dashboard/payments"
+    | "/dashboard/reviews"
+    | "/dashboard/settings"
+    | "/dashboard/staff"
+    | "/dashboard/";
+  fileRoutesByTo: FileRoutesByTo;
   to:
-    | '/'
-    | '/beneficiaries'
-    | '/converter'
-    | '/merchant'
-    | '/pay'
-    | '/payments'
-    | '/reports'
-    | '/table'
+    | "/"
+    | "/beneficiaries"
+    | "/converter"
+    | "/merchant"
+    | "/pay"
+    | "/payments"
+    | "/reports"
+    | "/table"
+    | "/dashboard/analytics"
+    | "/dashboard/menu"
+    | "/dashboard/payments"
+    | "/dashboard/reviews"
+    | "/dashboard/settings"
+    | "/dashboard/staff"
+    | "/dashboard";
   id:
-    | '__root__'
-    | '/'
-    | '/beneficiaries'
-    | '/converter'
-    | '/merchant'
-    | '/pay'
-    | '/payments'
-    | '/reports'
-    | '/table'
-  fileRoutesById: FileRoutesById
+    | "__root__"
+    | "/"
+    | "/beneficiaries"
+    | "/converter"
+    | "/dashboard"
+    | "/merchant"
+    | "/pay"
+    | "/payments"
+    | "/reports"
+    | "/table"
+    | "/dashboard/analytics"
+    | "/dashboard/menu"
+    | "/dashboard/payments"
+    | "/dashboard/reviews"
+    | "/dashboard/settings"
+    | "/dashboard/staff"
+    | "/dashboard/";
+  fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
-  BeneficiariesRoute: typeof BeneficiariesRoute
-  ConverterRoute: typeof ConverterRoute
-  MerchantRoute: typeof MerchantRoute
-  PayRoute: typeof PayRoute
-  PaymentsRoute: typeof PaymentsRoute
-  ReportsRoute: typeof ReportsRoute
-  TableRoute: typeof TableRoute
+  IndexRoute: typeof IndexRoute;
+  BeneficiariesRoute: typeof BeneficiariesRoute;
+  ConverterRoute: typeof ConverterRoute;
+  DashboardRoute: typeof DashboardRouteWithChildren;
+  MerchantRoute: typeof MerchantRoute;
+  PayRoute: typeof PayRoute;
+  PaymentsRoute: typeof PaymentsRoute;
+  ReportsRoute: typeof ReportsRoute;
+  TableRoute: typeof TableRoute;
 }
 
-declare module '@tanstack/react-router' {
+declare module "@tanstack/react-router" {
   interface FileRoutesByPath {
-    '/table': {
-      id: '/table'
-      path: '/table'
-      fullPath: '/table'
-      preLoaderRoute: typeof TableRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/reports': {
-      id: '/reports'
-      path: '/reports'
-      fullPath: '/reports'
-      preLoaderRoute: typeof ReportsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/payments': {
-      id: '/payments'
-      path: '/payments'
-      fullPath: '/payments'
-      preLoaderRoute: typeof PaymentsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/pay': {
-      id: '/pay'
-      path: '/pay'
-      fullPath: '/pay'
-      preLoaderRoute: typeof PayRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/merchant': {
-      id: '/merchant'
-      path: '/merchant'
-      fullPath: '/merchant'
-      preLoaderRoute: typeof MerchantRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/converter': {
-      id: '/converter'
-      path: '/converter'
-      fullPath: '/converter'
-      preLoaderRoute: typeof ConverterRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/beneficiaries': {
-      id: '/beneficiaries'
-      path: '/beneficiaries'
-      fullPath: '/beneficiaries'
-      preLoaderRoute: typeof BeneficiariesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
+    "/table": {
+      id: "/table";
+      path: "/table";
+      fullPath: "/table";
+      preLoaderRoute: typeof TableRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/reports": {
+      id: "/reports";
+      path: "/reports";
+      fullPath: "/reports";
+      preLoaderRoute: typeof ReportsRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/payments": {
+      id: "/payments";
+      path: "/payments";
+      fullPath: "/payments";
+      preLoaderRoute: typeof PaymentsRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/pay": {
+      id: "/pay";
+      path: "/pay";
+      fullPath: "/pay";
+      preLoaderRoute: typeof PayRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/merchant": {
+      id: "/merchant";
+      path: "/merchant";
+      fullPath: "/merchant";
+      preLoaderRoute: typeof MerchantRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/dashboard": {
+      id: "/dashboard";
+      path: "/dashboard";
+      fullPath: "/dashboard";
+      preLoaderRoute: typeof DashboardRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/converter": {
+      id: "/converter";
+      path: "/converter";
+      fullPath: "/converter";
+      preLoaderRoute: typeof ConverterRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/beneficiaries": {
+      id: "/beneficiaries";
+      path: "/beneficiaries";
+      fullPath: "/beneficiaries";
+      preLoaderRoute: typeof BeneficiariesRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/": {
+      id: "/";
+      path: "/";
+      fullPath: "/";
+      preLoaderRoute: typeof IndexRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/dashboard/": {
+      id: "/dashboard/";
+      path: "/";
+      fullPath: "/dashboard/";
+      preLoaderRoute: typeof DashboardIndexRouteImport;
+      parentRoute: typeof DashboardRoute;
+    };
+    "/dashboard/staff": {
+      id: "/dashboard/staff";
+      path: "/staff";
+      fullPath: "/dashboard/staff";
+      preLoaderRoute: typeof DashboardStaffRouteImport;
+      parentRoute: typeof DashboardRoute;
+    };
+    "/dashboard/settings": {
+      id: "/dashboard/settings";
+      path: "/settings";
+      fullPath: "/dashboard/settings";
+      preLoaderRoute: typeof DashboardSettingsRouteImport;
+      parentRoute: typeof DashboardRoute;
+    };
+    "/dashboard/reviews": {
+      id: "/dashboard/reviews";
+      path: "/reviews";
+      fullPath: "/dashboard/reviews";
+      preLoaderRoute: typeof DashboardReviewsRouteImport;
+      parentRoute: typeof DashboardRoute;
+    };
+    "/dashboard/payments": {
+      id: "/dashboard/payments";
+      path: "/payments";
+      fullPath: "/dashboard/payments";
+      preLoaderRoute: typeof DashboardPaymentsRouteImport;
+      parentRoute: typeof DashboardRoute;
+    };
+    "/dashboard/menu": {
+      id: "/dashboard/menu";
+      path: "/menu";
+      fullPath: "/dashboard/menu";
+      preLoaderRoute: typeof DashboardMenuRouteImport;
+      parentRoute: typeof DashboardRoute;
+    };
+    "/dashboard/analytics": {
+      id: "/dashboard/analytics";
+      path: "/analytics";
+      fullPath: "/dashboard/analytics";
+      preLoaderRoute: typeof DashboardAnalyticsRouteImport;
+      parentRoute: typeof DashboardRoute;
+    };
   }
 }
+
+interface DashboardRouteChildren {
+  DashboardAnalyticsRoute: typeof DashboardAnalyticsRoute;
+  DashboardMenuRoute: typeof DashboardMenuRoute;
+  DashboardPaymentsRoute: typeof DashboardPaymentsRoute;
+  DashboardReviewsRoute: typeof DashboardReviewsRoute;
+  DashboardSettingsRoute: typeof DashboardSettingsRoute;
+  DashboardStaffRoute: typeof DashboardStaffRoute;
+  DashboardIndexRoute: typeof DashboardIndexRoute;
+}
+
+const DashboardRouteChildren: DashboardRouteChildren = {
+  DashboardAnalyticsRoute: DashboardAnalyticsRoute,
+  DashboardMenuRoute: DashboardMenuRoute,
+  DashboardPaymentsRoute: DashboardPaymentsRoute,
+  DashboardReviewsRoute: DashboardReviewsRoute,
+  DashboardSettingsRoute: DashboardSettingsRoute,
+  DashboardStaffRoute: DashboardStaffRoute,
+  DashboardIndexRoute: DashboardIndexRoute,
+};
+
+const DashboardRouteWithChildren = DashboardRoute._addFileChildren(
+  DashboardRouteChildren,
+);
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BeneficiariesRoute: BeneficiariesRoute,
   ConverterRoute: ConverterRoute,
+  DashboardRoute: DashboardRouteWithChildren,
   MerchantRoute: MerchantRoute,
   PayRoute: PayRoute,
   PaymentsRoute: PaymentsRoute,
   ReportsRoute: ReportsRoute,
   TableRoute: TableRoute,
-}
+};
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
-  ._addFileTypes<FileRouteTypes>()
+  ._addFileTypes<FileRouteTypes>();
 
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
+import type { getRouter } from "./router.tsx";
+import type { createStart } from "@tanstack/react-start";
+declare module "@tanstack/react-start" {
   interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
+    ssr: true;
+    router: Awaited<ReturnType<typeof getRouter>>;
   }
 }
