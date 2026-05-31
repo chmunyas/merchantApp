@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+dist/
+
+# Environment variables (secrets - never commit)
+.env
+.env.local
+.env.production
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build cache
+.vite/
