@@ -2,22 +2,28 @@ import { createFileRoute } from "@tanstack/react-router";
 import {
   Camera,
   Clock3,
+  Download,
   Eye,
+  Globe,
   ImageIcon,
+  Link2,
   MapPinned,
   Pencil,
   Plus,
   Search,
   Trash2,
+  Upload,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
 
 import type {
   CatalogueItem,
+  ExternalMenu,
   ItemModifier,
   Menu,
   MenuSchedule,
+  SupportedMenuLocale,
   Zone,
 } from "@/components/merchant/features/types";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +50,7 @@ import {
   loadMerchantSnapshot,
   saveMerchantCatalogue,
   saveMerchantCategoryOrder,
+  saveMerchantExternalMenus,
   saveMerchantMenus,
   saveMerchantMenuSchedules,
   saveMerchantZones,
@@ -55,7 +62,7 @@ export const Route = createFileRoute("/dashboard/menu")({
   component: DashboardMenuPage,
 });
 
-type MenuTab = "items" | "menus" | "zones" | "schedules";
+type MenuTab = "items" | "menus" | "zones" | "schedules" | "external";
 type ScheduleDraft = MenuSchedule;
 type MenuDraft = Omit<Menu, "id" | "createdAt">;
 type ZoneDraft = {
@@ -64,6 +71,23 @@ type ZoneDraft = {
   menuIds: string[];
   tableStart: number;
   tableEnd: number;
+};
+type TranslationDraft = Record<
+  SupportedMenuLocale,
+  { name: string; description: string }
+>;
+type CsvImportField =
+  | "ignore"
+  | "name"
+  | "price"
+  | "category"
+  | "description"
+  | "dietary";
+type CsvColumnMapping = Record<string, CsvImportField>;
+type ExternalMenuDraft = {
+  name: string;
+  type: "pdf" | "url";
+  content: string;
 };
 
 type ItemSwitchProps = {
@@ -74,6 +98,32 @@ type ItemSwitchProps = {
 const dietaryOptions = ["vegan", "vegetarian", "gluten-free", "halal"];
 const defaultCategories = ["Mains", "Sides", "Drinks", "Cocktails", "Desserts"];
 const weekDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const menuLocales: SupportedMenuLocale[] = ["en", "sw", "fr", "ar"];
+const csvImportFields: Array<{ value: CsvImportField; label: string }> = [
+  { value: "ignore", label: "Ignore" },
+  { value: "name", label: "Name" },
+  { value: "price", label: "Price" },
+  { value: "category", label: "Category" },
+  { value: "description", label: "Description" },
+  { value: "dietary", label: "Dietary" },
+];
+
+function emptyTranslationDraft(): TranslationDraft {
+  return {
+    en: { name: "", description: "" },
+    sw: { name: "", description: "" },
+    fr: { name: "", description: "" },
+    ar: { name: "", description: "" },
+  };
+}
+
+function emptyExternalMenuDraft(): ExternalMenuDraft {
+  return {
+    name: "",
+    type: "url",
+    content: "",
+  };
+}
 
 function emptyDraftItem(): CatalogueItem {
   return {
@@ -127,13 +177,145 @@ function cloneModifiers(modifiers?: ItemModifier[]) {
   }));
 }
 
-function readImageAsDataUrl(file: File) {
+function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ""));
     reader.onerror = () => reject(new Error("Image upload failed"));
     reader.readAsDataURL(file);
   });
+}
+
+function readFileAsText(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("File upload failed"));
+    reader.readAsText(file);
+  });
+}
+
+function parseCsv(content: string) {
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentField = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index];
+    const nextChar = content[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        currentField += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      currentRow.push(currentField.trim());
+      currentField = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && nextChar === "\n") index += 1;
+      currentRow.push(currentField.trim());
+      if (currentRow.some((field) => field.length > 0)) {
+        rows.push(currentRow);
+      }
+      currentRow = [];
+      currentField = "";
+      continue;
+    }
+
+    currentField += char;
+  }
+
+  if (currentField.length > 0 || currentRow.length > 0) {
+    currentRow.push(currentField.trim());
+    if (currentRow.some((field) => field.length > 0)) {
+      rows.push(currentRow);
+    }
+  }
+
+  const [headers = [], ...dataRows] = rows;
+  return {
+    headers,
+    rows: dataRows,
+  };
+}
+
+function inferCsvField(header: string): CsvImportField {
+  const normalized = header.trim().toLowerCase();
+  if (normalized.includes("name") || normalized.includes("item")) return "name";
+  if (normalized.includes("price") || normalized.includes("amount"))
+    return "price";
+  if (normalized.includes("category")) return "category";
+  if (normalized.includes("description") || normalized.includes("desc"))
+    return "description";
+  if (
+    normalized.includes("dietary") ||
+    normalized.includes("allergen") ||
+    normalized.includes("tag")
+  ) {
+    return "dietary";
+  }
+  return "ignore";
+}
+
+function escapeCsvValue(value: string | number | boolean | null | undefined) {
+  const text = String(value ?? "");
+  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function hasTranslations(item: CatalogueItem) {
+  return menuLocales.some((locale) => {
+    const translation = item.translations?.[locale];
+    return Boolean(
+      translation?.name?.trim() || translation?.description?.trim(),
+    );
+  });
+}
+
+function buildTranslationDraft(item: CatalogueItem): TranslationDraft {
+  const draft = emptyTranslationDraft();
+  menuLocales.forEach((locale) => {
+    const translation = item.translations?.[locale];
+    draft[locale] = {
+      name:
+        locale === "en"
+          ? translation?.name || item.name
+          : translation?.name || "",
+      description:
+        locale === "en"
+          ? translation?.description || item.description || ""
+          : translation?.description || "",
+    };
+  });
+  return draft;
+}
+
+function normaliseTranslationDraft(draft: TranslationDraft) {
+  const translations: NonNullable<CatalogueItem["translations"]> = {};
+
+  menuLocales.forEach((locale) => {
+    const translation = draft[locale];
+    const name = translation.name.trim();
+    const description = translation.description.trim();
+
+    if (!name && !description) return;
+
+    translations[locale] = {
+      name,
+      description: description || undefined,
+    };
+  });
+
+  return Object.keys(translations).length ? translations : undefined;
 }
 
 function formatScheduleDays(days: number[]) {
@@ -181,6 +363,13 @@ function DashboardMenuPage() {
   const [itemDialogOpen, setItemDialogOpen] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [draftItem, setDraftItem] = useState<CatalogueItem>(emptyDraftItem());
+  const [translationDialogOpen, setTranslationDialogOpen] = useState(false);
+  const [translationItemId, setTranslationItemId] = useState<string | null>(
+    null,
+  );
+  const [translationDraft, setTranslationDraft] = useState<TranslationDraft>(
+    emptyTranslationDraft(),
+  );
   const [menuDialogOpen, setMenuDialogOpen] = useState(false);
   const [editingMenuId, setEditingMenuId] = useState<string | null>(null);
   const [menuDraft, setMenuDraft] = useState<MenuDraft>(emptyMenuDraft());
@@ -196,6 +385,15 @@ function DashboardMenuPage() {
   const [previewTableNumber, setPreviewTableNumber] = useState(7);
   const [previewCategory, setPreviewCategory] = useState("All");
   const [pairingsSearch, setPairingsSearch] = useState("");
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
+  const [csvRows, setCsvRows] = useState<string[][]>([]);
+  const [csvMapping, setCsvMapping] = useState<CsvColumnMapping>({});
+  const [externalDialogOpen, setExternalDialogOpen] = useState(false);
+  const [externalDraft, setExternalDraft] = useState<ExternalMenuDraft>(
+    emptyExternalMenuDraft(),
+  );
+  const csvInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     ensureMerchantDemoData();
@@ -235,6 +433,27 @@ function DashboardMenuPage() {
       );
     });
   }, [snapshot, category, search]);
+
+  const csvPreviewRows = useMemo(() => {
+    return csvRows.slice(0, 5).map((row) => {
+      const mapped = {
+        name: "",
+        price: "",
+        category: "",
+        description: "",
+        dietary: "",
+      };
+
+      csvHeaders.forEach((header, index) => {
+        const field = csvMapping[header];
+        if (field && field !== "ignore") {
+          mapped[field] = row[index] || "";
+        }
+      });
+
+      return mapped;
+    });
+  }, [csvHeaders, csvMapping, csvRows]);
 
   const previewItems = useMemo(() => {
     if (!snapshot) return [];
@@ -305,6 +524,12 @@ function DashboardMenuPage() {
     refreshSnapshot({ ...snapshot, menuSchedules: nextSchedules });
   }
 
+  function persistExternalMenus(nextExternalMenus: ExternalMenu[]) {
+    if (!snapshot) return;
+    saveMerchantExternalMenus(nextExternalMenus);
+    refreshSnapshot({ ...snapshot, externalMenus: nextExternalMenus });
+  }
+
   function persistCategoryOrder(nextOrder: string[]) {
     if (!snapshot) return;
     saveMerchantCategoryOrder(nextOrder);
@@ -329,6 +554,12 @@ function DashboardMenuPage() {
     });
     setPairingsSearch("");
     setItemDialogOpen(true);
+  }
+
+  function openTranslationsDialog(item: CatalogueItem) {
+    setTranslationItemId(item.id);
+    setTranslationDraft(buildTranslationDraft(item));
+    setTranslationDialogOpen(true);
   }
 
   function saveItem() {
@@ -505,11 +736,199 @@ function DashboardMenuPage() {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const image = await readImageAsDataUrl(file);
+      const image = await readFileAsDataUrl(file);
       setDraftItem((current) => ({ ...current, image }));
     } catch {
       toast.error("Could not upload image");
     }
+  }
+
+  function saveTranslations() {
+    if (!snapshot || !translationItemId) return;
+
+    const englishName = translationDraft.en.name.trim();
+    if (!englishName) {
+      toast.error("English name is required");
+      return;
+    }
+
+    persistCatalogue(
+      snapshot.catalogue.map((item) =>
+        item.id === translationItemId
+          ? {
+              ...item,
+              name: englishName,
+              description: translationDraft.en.description.trim() || undefined,
+              translations: normaliseTranslationDraft(translationDraft),
+            }
+          : item,
+      ),
+    );
+    setTranslationDialogOpen(false);
+    toast.success("Translations saved");
+  }
+
+  async function handleCsvFileImport(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await readFileAsText(file);
+      const parsed = parseCsv(text);
+      if (!parsed.headers.length || !parsed.rows.length) {
+        toast.error("CSV file is empty");
+        return;
+      }
+
+      setCsvHeaders(parsed.headers);
+      setCsvRows(parsed.rows);
+      setCsvMapping(
+        Object.fromEntries(
+          parsed.headers.map((header) => [header, inferCsvField(header)]),
+        ),
+      );
+      setImportDialogOpen(true);
+    } catch {
+      toast.error("Could not import CSV");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  function confirmCsvImport() {
+    if (!snapshot) return;
+
+    const now = new Date().toISOString();
+    const importedItems: CatalogueItem[] = [];
+
+    csvRows.forEach((row, rowIndex) => {
+      const mapped: Partial<Record<CsvImportField, string>> = {};
+      csvHeaders.forEach((header, index) => {
+        const field = csvMapping[header];
+        if (field && field !== "ignore") {
+          mapped[field] = row[index] || "";
+        }
+      });
+
+      const name = mapped.name?.trim() || "";
+      const price = Number((mapped.price || "").replace(/[^\d.-]/g, ""));
+      if (!name || !Number.isFinite(price)) return;
+
+      const categoryValue = mapped.category?.trim() || "Imported";
+      importedItems.push({
+        id: `csv-item-${Date.now()}-${rowIndex}`,
+        name,
+        price,
+        category: categoryValue,
+        description: mapped.description?.trim() || undefined,
+        dietary: mapped.dietary
+          ? mapped.dietary
+              .split(/[|,;/]/)
+              .map((entry) => entry.trim())
+              .filter(Boolean)
+          : undefined,
+        destination:
+          categoryValue === "Drinks" || categoryValue === "Cocktails"
+            ? "bar"
+            : "kitchen",
+        available: true,
+        syncSource: "csv-import",
+        syncedAt: now,
+      });
+    });
+
+    if (!importedItems.length) {
+      toast.error("No valid rows found");
+      return;
+    }
+
+    persistCatalogue([...importedItems, ...snapshot.catalogue]);
+    setImportDialogOpen(false);
+    setCsvHeaders([]);
+    setCsvRows([]);
+    setCsvMapping({});
+    toast.success(`${importedItems.length} items imported`);
+  }
+
+  function exportCatalogueCsv() {
+    if (!snapshot || typeof window === "undefined") return;
+    const rows = [
+      [
+        "name",
+        "price",
+        "category",
+        "description",
+        "dietary",
+        "destination",
+        "available",
+      ],
+      ...snapshot.catalogue.map((item) => [
+        item.name,
+        item.price,
+        item.category,
+        item.description || "",
+        (item.dietary || []).join("|"),
+        item.destination || "",
+        item.available ?? true,
+      ]),
+    ];
+    const content = rows
+      .map((row) => row.map(escapeCsvValue).join(","))
+      .join("\n");
+    const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "merchant-catalogue.csv";
+    link.click();
+    window.URL.revokeObjectURL(url);
+  }
+
+  async function handleExternalPdfUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const content = await readFileAsDataUrl(file);
+      setExternalDraft((current) => ({ ...current, content }));
+    } catch {
+      toast.error("Could not upload PDF");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  function saveExternalMenu() {
+    if (
+      !snapshot ||
+      !externalDraft.name.trim() ||
+      !externalDraft.content.trim()
+    ) {
+      toast.error("Add a name and menu source");
+      return;
+    }
+
+    persistExternalMenus([
+      {
+        id: `external-${Date.now()}`,
+        name: externalDraft.name.trim(),
+        type: externalDraft.type,
+        content: externalDraft.content.trim(),
+        createdAt: new Date().toISOString(),
+      },
+      ...snapshot.externalMenus,
+    ]);
+    setExternalDialogOpen(false);
+    setExternalDraft(emptyExternalMenuDraft());
+    toast.success("External menu added");
+  }
+
+  function deleteExternalMenu(id: string) {
+    if (!snapshot) return;
+    persistExternalMenus(
+      snapshot.externalMenus.filter((externalMenu) => externalMenu.id !== id),
+    );
+    toast.success("External menu removed");
   }
 
   function toggleLinkedProduct(id: string) {
@@ -746,7 +1165,7 @@ function DashboardMenuPage() {
           </div>
         </div>
 
-        <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <div className="rounded-2xl border border-border p-4">
             <p className="text-xs text-muted-foreground">Items</p>
             <p className="mt-2 text-2xl font-semibold">
@@ -771,6 +1190,12 @@ function DashboardMenuPage() {
               {snapshot.menuSchedules.length}
             </p>
           </div>
+          <div className="rounded-2xl border border-border p-4">
+            <p className="text-xs text-muted-foreground">External menus</p>
+            <p className="mt-2 text-2xl font-semibold">
+              {snapshot.externalMenus.length}
+            </p>
+          </div>
         </div>
       </div>
 
@@ -784,6 +1209,7 @@ function DashboardMenuPage() {
           <TabsTrigger value="menus">Menus</TabsTrigger>
           <TabsTrigger value="zones">Zones</TabsTrigger>
           <TabsTrigger value="schedules">Schedules</TabsTrigger>
+          <TabsTrigger value="external">External</TabsTrigger>
         </TabsList>
 
         <TabsContent value="items" className="space-y-4">
@@ -838,6 +1264,34 @@ function DashboardMenuPage() {
                     className="pl-9"
                   />
                 </div>
+                <div className="rounded-2xl border border-border bg-background p-1">
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className="px-2 text-xs font-medium text-muted-foreground">
+                      Import/Export
+                    </span>
+                    <input
+                      ref={csvInputRef}
+                      type="file"
+                      accept=".csv,text/csv"
+                      className="hidden"
+                      onChange={handleCsvFileImport}
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={() => csvInputRef.current?.click()}
+                      className="gap-2"
+                    >
+                      <Upload className="h-4 w-4" /> Import CSV
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={exportCatalogueCsv}
+                      className="gap-2"
+                    >
+                      <Download className="h-4 w-4" /> Export CSV
+                    </Button>
+                  </div>
+                </div>
                 <Button
                   variant="outline"
                   onClick={() => setReorderMode((current) => !current)}
@@ -867,6 +1321,16 @@ function DashboardMenuPage() {
                         >
                           {item.name}
                         </h3>
+                        {hasTranslations(item) ? (
+                          <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">
+                            🌐 Translated
+                          </span>
+                        ) : null}
+                        {item.syncSource ? (
+                          <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                            Imported
+                          </span>
+                        ) : null}
                         {!isAvailable ? (
                           <span className="rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-semibold text-white">
                             Sold out
@@ -931,6 +1395,11 @@ function DashboardMenuPage() {
                         {item.linkedProductIds.length === 1 ? "" : "s"}
                       </span>
                     ) : null}
+                    {item.syncedAt ? (
+                      <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+                        Synced {new Date(item.syncedAt).toLocaleDateString()}
+                      </span>
+                    ) : null}
                   </div>
 
                   {(item.dietary || []).length ? (
@@ -946,19 +1415,50 @@ function DashboardMenuPage() {
                     </div>
                   ) : null}
 
-                  <div className="mt-4 flex items-center justify-between rounded-2xl bg-slate-50 p-3">
-                    <div>
-                      <p className="text-sm font-medium">Availability</p>
-                      <p className="text-xs text-muted-foreground">
-                        Shown to customers instantly
-                      </p>
+                  <div className="mt-4 space-y-3 rounded-2xl bg-slate-50 p-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium">Availability</p>
+                        <p className="text-xs text-muted-foreground">
+                          Shown to customers instantly
+                        </p>
+                      </div>
+                      <Switch
+                        checked={isAvailable}
+                        onCheckedChange={(available) =>
+                          toggleAvailability(item.id, available)
+                        }
+                      />
                     </div>
-                    <Switch
-                      checked={isAvailable}
-                      onCheckedChange={(available) =>
-                        toggleAvailability(item.id, available)
-                      }
-                    />
+                    <div className="flex items-center justify-between rounded-2xl border border-dashed border-slate-200 bg-white px-3 py-2">
+                      <div>
+                        <p className="text-sm font-medium">Translations</p>
+                        <p className="text-xs text-muted-foreground">
+                          EN, SW, FR, AR content
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openTranslationsDialog(item)}
+                        className="gap-2"
+                      >
+                        <Globe className="h-4 w-4" />
+                        Translations
+                      </Button>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">Sync status</p>
+                      {item.syncSource ? (
+                        <p className="text-xs text-muted-foreground">
+                          Source: {item.syncSource}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          Managed locally
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
@@ -1346,6 +1846,79 @@ function DashboardMenuPage() {
             </div>
           </div>
         </TabsContent>
+
+        <TabsContent value="external" className="space-y-4">
+          <div className="flex justify-end">
+            <Button
+              onClick={() => {
+                setExternalDraft(emptyExternalMenuDraft());
+                setExternalDialogOpen(true);
+              }}
+              className="gap-2"
+            >
+              <Plus className="h-4 w-4" /> Add External Menu
+            </Button>
+          </div>
+
+          {snapshot.externalMenus.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-10 text-center text-sm text-muted-foreground">
+              Add PDF or URL menus for full catalogues like wine lists and
+              banquet menus.
+            </div>
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-2">
+              {snapshot.externalMenus.map((externalMenu) => (
+                <div
+                  key={externalMenu.id}
+                  className={cn(
+                    "rounded-2xl border border-border bg-card p-5",
+                    externalMenu.type === "pdf"
+                      ? "border-l-4 border-l-red-500"
+                      : "border-l-4 border-l-blue-500",
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-semibold">
+                          {externalMenu.name}
+                        </h3>
+                        <span
+                          className={cn(
+                            "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                            externalMenu.type === "pdf"
+                              ? "bg-red-100 text-red-700"
+                              : "bg-blue-100 text-blue-700",
+                          )}
+                        >
+                          {externalMenu.type.toUpperCase()}
+                        </span>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        Added{" "}
+                        {new Date(externalMenu.createdAt).toLocaleDateString()}
+                      </p>
+                      <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Link2 className="h-3.5 w-3.5" />
+                        {externalMenu.type === "pdf"
+                          ? "Embedded PDF menu"
+                          : externalMenu.content}
+                      </p>
+                    </div>
+
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => deleteExternalMenu(externalMenu.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </TabsContent>
       </Tabs>
 
       <Dialog open={itemDialogOpen} onOpenChange={setItemDialogOpen}>
@@ -1665,6 +2238,276 @@ function DashboardMenuPage() {
             <Button onClick={saveItem}>
               {editingItemId ? "Update item" : "Save item"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={translationDialogOpen}
+        onOpenChange={setTranslationDialogOpen}
+      >
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Item translations</DialogTitle>
+            <DialogDescription>
+              Manage localized names and descriptions for customer ordering.
+            </DialogDescription>
+          </DialogHeader>
+          <Tabs defaultValue="en" className="space-y-4">
+            <TabsList className="grid w-full grid-cols-4">
+              {menuLocales.map((locale) => (
+                <TabsTrigger key={locale} value={locale}>
+                  {locale.toUpperCase()}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+            {menuLocales.map((locale) => (
+              <TabsContent key={locale} value={locale} className="space-y-4">
+                <label className="space-y-2 text-sm font-medium">
+                  <span>Name</span>
+                  <Input
+                    value={translationDraft[locale].name}
+                    onChange={(event) =>
+                      setTranslationDraft((current) => ({
+                        ...current,
+                        [locale]: {
+                          ...current[locale],
+                          name: event.target.value,
+                        },
+                      }))
+                    }
+                    placeholder={`${locale.toUpperCase()} item name`}
+                  />
+                </label>
+                <label className="space-y-2 text-sm font-medium">
+                  <span>Description</span>
+                  <textarea
+                    value={translationDraft[locale].description}
+                    onChange={(event) =>
+                      setTranslationDraft((current) => ({
+                        ...current,
+                        [locale]: {
+                          ...current[locale],
+                          description: event.target.value,
+                        },
+                      }))
+                    }
+                    placeholder={`${locale.toUpperCase()} description`}
+                    className="min-h-28 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+                  />
+                </label>
+              </TabsContent>
+            ))}
+          </Tabs>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setTranslationDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button onClick={saveTranslations}>Save translations</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Import CSV</DialogTitle>
+            <DialogDescription>
+              Map CSV columns to your catalogue fields and review the first five
+              rows before importing.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-6 py-2 lg:grid-cols-[0.95fr_1.05fr]">
+            <div className="space-y-3 rounded-2xl border border-border p-4">
+              <div>
+                <h3 className="text-sm font-semibold">Field mapping</h3>
+                <p className="text-xs text-muted-foreground">
+                  Choose how each CSV column should be interpreted.
+                </p>
+              </div>
+              <div className="space-y-3">
+                {csvHeaders.map((header) => (
+                  <div
+                    key={header}
+                    className="grid gap-3 rounded-xl bg-slate-50 p-3 sm:grid-cols-2"
+                  >
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground">
+                        CSV column
+                      </p>
+                      <p className="text-sm font-semibold">{header}</p>
+                    </div>
+                    <label className="space-y-2 text-sm font-medium">
+                      <span>Our field</span>
+                      <select
+                        value={csvMapping[header] || "ignore"}
+                        onChange={(event) =>
+                          setCsvMapping((current) => ({
+                            ...current,
+                            [header]: event.target.value as CsvImportField,
+                          }))
+                        }
+                        className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm"
+                      >
+                        {csvImportFields.map((field) => (
+                          <option key={field.value} value={field.value}>
+                            {field.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-3 rounded-2xl border border-border p-4">
+              <div>
+                <h3 className="text-sm font-semibold">Preview</h3>
+                <p className="text-xs text-muted-foreground">
+                  Showing first 5 rows with current mapping.
+                </p>
+              </div>
+              <div className="overflow-hidden rounded-2xl border border-border">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-100 text-xs uppercase tracking-wide text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2">Name</th>
+                      <th className="px-3 py-2">Price</th>
+                      <th className="px-3 py-2">Category</th>
+                      <th className="px-3 py-2">Description</th>
+                      <th className="px-3 py-2">Dietary</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {csvPreviewRows.map((row, index) => (
+                      <tr
+                        key={`${row.name}-${index}`}
+                        className="odd:bg-white even:bg-slate-50"
+                      >
+                        <td className="px-3 py-2">{row.name || "—"}</td>
+                        <td className="px-3 py-2">{row.price || "—"}</td>
+                        <td className="px-3 py-2">{row.category || "—"}</td>
+                        <td className="px-3 py-2">{row.description || "—"}</td>
+                        <td className="px-3 py-2">{row.dietary || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setImportDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button onClick={confirmCsvImport}>Confirm Import</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={externalDialogOpen} onOpenChange={setExternalDialogOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Add external menu</DialogTitle>
+            <DialogDescription>
+              Upload a PDF menu or embed a hosted menu URL for customers.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <Input
+              value={externalDraft.name}
+              onChange={(event) =>
+                setExternalDraft((current) => ({
+                  ...current,
+                  name: event.target.value,
+                }))
+              }
+              placeholder="Menu name"
+            />
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              {(["pdf", "url"] as const).map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() =>
+                    setExternalDraft((current) => ({
+                      ...current,
+                      type,
+                      content: "",
+                    }))
+                  }
+                  className={cn(
+                    "rounded-2xl border px-4 py-3 text-left",
+                    externalDraft.type === type
+                      ? type === "pdf"
+                        ? "border-red-500 bg-red-50 text-red-700"
+                        : "border-blue-500 bg-blue-50 text-blue-700"
+                      : "border-border",
+                  )}
+                >
+                  <p className="font-semibold">{type.toUpperCase()}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {type === "pdf"
+                      ? "Upload a brochure or menu PDF"
+                      : "Embed a live web link"}
+                  </p>
+                </button>
+              ))}
+            </div>
+
+            {externalDraft.type === "pdf" ? (
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium">PDF file</span>
+                <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border bg-slate-50 p-6 text-center">
+                  <span className="text-sm font-medium">
+                    {externalDraft.content
+                      ? "PDF ready to save"
+                      : "Click to upload PDF"}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    Accepts .pdf files only
+                  </span>
+                  <input
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    className="hidden"
+                    onChange={handleExternalPdfUpload}
+                  />
+                </label>
+              </label>
+            ) : (
+              <Input
+                value={externalDraft.content}
+                onChange={(event) =>
+                  setExternalDraft((current) => ({
+                    ...current,
+                    content: event.target.value,
+                  }))
+                }
+                placeholder="https://example.com/full-menu"
+              />
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setExternalDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button onClick={saveExternalMenu}>Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

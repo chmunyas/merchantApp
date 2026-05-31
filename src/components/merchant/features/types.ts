@@ -147,6 +147,13 @@ export type TableOrder = {
   quickCharge?: number;
 };
 
+export type SupportedMenuLocale = "en" | "sw" | "fr" | "ar";
+
+export type CatalogueItemTranslation = {
+  name: string;
+  description?: string;
+};
+
 export type CatalogueItem = {
   id: string;
   name: string;
@@ -159,6 +166,9 @@ export type CatalogueItem = {
   description?: string;
   modifiers?: ItemModifier[];
   linkedProductIds?: string[];
+  translations?: Partial<Record<SupportedMenuLocale, CatalogueItemTranslation>>;
+  syncSource?: string;
+  syncedAt?: string;
 };
 
 export type ModifierOption = {
@@ -196,6 +206,14 @@ export type Zone = {
   name: string;
   menuIds: string[];
   tableRange: [number, number];
+};
+
+export type ExternalMenu = {
+  id: string;
+  name: string;
+  type: "pdf" | "url";
+  content: string;
+  createdAt: string;
 };
 
 export type OrderTicket = {

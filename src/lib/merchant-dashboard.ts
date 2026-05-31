@@ -1,5 +1,6 @@
 import type {
   CatalogueItem,
+  ExternalMenu,
   Menu,
   MenuSchedule,
   OrderTicket,
@@ -22,6 +23,7 @@ export const STORAGE_KEYS = {
   zones: "fxengine.merchant.zones",
   categoryOrder: "fxengine.merchant.categoryOrder",
   menuSchedules: "fxengine.merchant.menuSchedules",
+  externalMenus: "fxengine.merchant.externalMenus",
   tables: "fxengine.merchant.tables",
   orders: "fxengine.merchant.orders",
   reservations: "fxengine.merchant.reservations",
@@ -126,6 +128,7 @@ export type MerchantSnapshot = {
   zones: Zone[];
   categoryOrder: string[];
   menuSchedules: MenuSchedule[];
+  externalMenus: ExternalMenu[];
   tables: MerchantTable[];
   orders: OrderTicket[];
   reservations: Reservation[];
@@ -234,6 +237,23 @@ function buildCatalogue(): CatalogueItem[] {
       available: true,
       description:
         "Charcoal-grilled beef platter served with kachumbari, pili pili salsa, and warm chapati.",
+      translations: {
+        sw: {
+          name: "Sahani ya Nyama Choma",
+          description:
+            "Sahani ya nyama ya ng'ombe iliyochomwa na kachumbari, salsa ya pili pili na chapati ya moto.",
+        },
+        fr: {
+          name: "Plateau de Nyama Choma",
+          description:
+            "Plateau de boeuf grillé au charbon servi avec kachumbari, salsa pimentée et chapati chaud.",
+        },
+        ar: {
+          name: "طبق نياما تشوما",
+          description:
+            "طبق لحم بقري مشوي على الفحم يقدم مع كاتشومباري وصلصة فلفل حار وتشاباتي دافئ.",
+        },
+      },
       modifiers: [
         {
           id: "nyama-size",
@@ -266,6 +286,18 @@ function buildCatalogue(): CatalogueItem[] {
       available: true,
       description:
         "Whole tilapia fried crisp and finished with lemon-herb butter and chilli mango relish.",
+      translations: {
+        sw: {
+          name: "Tilapia ya Ziwa Victoria",
+          description:
+            "Samaki mzima wa tilapia uliokaangwa na kuongezewa siagi ya limau na relish ya embe yenye pilipili.",
+        },
+        fr: {
+          name: "Tilapia du Lac Victoria",
+          description:
+            "Tilapia entier frit et servi avec beurre citronné aux herbes et relish mangue-piment.",
+        },
+      },
       linkedProductIds: ["cat-sukuma", "cat-soda", "cat-chapati"],
     },
     {
@@ -330,6 +362,20 @@ function buildCatalogue(): CatalogueItem[] {
       image: createImage("Tusker", "1d4ed8"),
       available: true,
       description: "Crisp local lager served ice-cold from the tap.",
+      translations: {
+        sw: {
+          name: "Tusker Lager",
+          description: "Bia baridi ya kienyeji inayotolewa kutoka kwenye tapu.",
+        },
+        fr: {
+          name: "Bière Tusker",
+          description: "Bière locale bien fraîche servie pression.",
+        },
+        ar: {
+          name: "توسكر لاجر",
+          description: "بيرة محلية منعشة تقدم باردة مباشرة من الصنبور.",
+        },
+      },
       linkedProductIds: ["cat-nyama", "cat-wings", "cat-chapati"],
     },
     {
@@ -489,6 +535,18 @@ function buildMenuSchedules(): MenuSchedule[] {
       startTime: "16:00",
       endTime: "23:00",
       categories: ["Mains", "Sides", "Cocktails", "Desserts", "Drinks"],
+    },
+  ];
+}
+
+function buildExternalMenus(now = new Date()): ExternalMenu[] {
+  return [
+    {
+      id: "external-wine-list",
+      name: "Wine List",
+      type: "url",
+      content: "https://example.com",
+      createdAt: minusTime(now, 2, 3).toISOString(),
     },
   ];
 }
@@ -848,6 +906,7 @@ export function createMerchantDemoData(now = new Date()): MerchantSnapshot {
   const zones = buildZones();
   const categoryOrder = buildCategoryOrder();
   const menuSchedules = buildMenuSchedules();
+  const externalMenus = buildExternalMenus(now);
   const payments = buildPayments(catalogue, now);
   const tables = buildTables(catalogue, payments);
   const orders = buildOrders(
@@ -863,6 +922,7 @@ export function createMerchantDemoData(now = new Date()): MerchantSnapshot {
     zones,
     categoryOrder,
     menuSchedules,
+    externalMenus,
     tables,
     orders,
     reservations,
@@ -923,6 +983,10 @@ export function loadMerchantSnapshot(): MerchantSnapshot {
       STORAGE_KEYS.menuSchedules,
       fallback.menuSchedules,
     ),
+    externalMenus: readStorage(
+      STORAGE_KEYS.externalMenus,
+      fallback.externalMenus,
+    ),
     tables: readStorage(STORAGE_KEYS.tables, fallback.tables),
     orders: readStorage(STORAGE_KEYS.orders, fallback.orders),
     reservations: readStorage(STORAGE_KEYS.reservations, fallback.reservations),
@@ -953,6 +1017,10 @@ export function saveMerchantCategoryOrder(categoryOrder: string[]) {
 
 export function saveMerchantMenuSchedules(menuSchedules: MenuSchedule[]) {
   writeStorage(STORAGE_KEYS.menuSchedules, menuSchedules);
+}
+
+export function saveMerchantExternalMenus(externalMenus: ExternalMenu[]) {
+  writeStorage(STORAGE_KEYS.externalMenus, externalMenus);
 }
 
 export function saveMerchantReviews(reviews: MerchantReview[]) {

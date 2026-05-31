@@ -22,9 +22,11 @@ import {
 } from "lucide-react";
 import type {
   CatalogueItem,
+  ExternalMenu,
   Menu,
   MenuSchedule,
   ModifierOption,
+  SupportedMenuLocale,
   Zone,
 } from "@/components/merchant/features/types";
 import {
@@ -79,6 +81,7 @@ type TableItem = {
   destination?: "kitchen" | "bar";
   image?: string;
   description?: string;
+  translations?: CatalogueItem["translations"];
   modifiers?: CatalogueItem["modifiers"];
   selectedModifiers?: SelectedModifier[];
 };
@@ -94,6 +97,7 @@ type OrderSelection = {
   destination?: "kitchen" | "bar";
   image?: string;
   description?: string;
+  translations?: CatalogueItem["translations"];
   selectedOptions: SelectedModifier[];
 };
 
@@ -124,7 +128,19 @@ const TIP_OPTIONS: TipOption[] = [
 
 // --- Multi-language ---
 
-type Lang = "en" | "sw" | "fr";
+type Lang = SupportedMenuLocale;
+
+const TABLE_LANGUAGE_KEY = "fxengine.table.language";
+const LANGUAGE_OPTIONS: Array<{
+  code: Lang;
+  label: string;
+  icon: string;
+}> = [
+  { code: "en", label: "English", icon: "🇬🇧" },
+  { code: "sw", label: "Kiswahili", icon: "🇰🇪" },
+  { code: "fr", label: "Français", icon: "🇫🇷" },
+  { code: "ar", label: "العربية", icon: "🇦🇪" },
+];
 
 const TRANSLATIONS: Record<Lang, Record<string, string>> = {
   en: {
@@ -165,6 +181,11 @@ const TRANSLATIONS: Record<Lang, Record<string, string>> = {
     dairyFree: "Dairy-free",
     orderSent: "Order sent to",
     preparing: "Being prepared",
+    language: "Language",
+    viewFullMenu: "📄 View Full Menu",
+    externalMenu: "Full Menu",
+    noExternalMenus: "No external menus available right now.",
+    close: "Close",
   },
   sw: {
     tablePay: "Lipa Meza",
@@ -204,6 +225,11 @@ const TRANSLATIONS: Record<Lang, Record<string, string>> = {
     dairyFree: "Bila maziwa",
     orderSent: "Agizo limetumwa",
     preparing: "Linaandaliwa",
+    language: "Lugha",
+    viewFullMenu: "📄 Tazama Menyu Kamili",
+    externalMenu: "Menyu Kamili",
+    noExternalMenus: "Hakuna menyu za nje kwa sasa.",
+    close: "Funga",
   },
   fr: {
     tablePay: "Paiement Table",
@@ -243,6 +269,55 @@ const TRANSLATIONS: Record<Lang, Record<string, string>> = {
     dairyFree: "Sans lactose",
     orderSent: "Commande envoyée à",
     preparing: "En préparation",
+    language: "Langue",
+    viewFullMenu: "📄 Voir le menu complet",
+    externalMenu: "Menu complet",
+    noExternalMenus: "Aucun menu externe disponible pour le moment.",
+    close: "Fermer",
+  },
+  ar: {
+    tablePay: "دفع الطاولة",
+    yourBill: "فاتورتك",
+    payNow: "ادفع الآن",
+    orderMore: "اطلب المزيد",
+    splitPayment: "تقسيم الدفع",
+    tip: "إكرامية",
+    total: "الإجمالي",
+    subtotal: "المجموع الفرعي",
+    howToPay: "كيف تريد تقسيم الدفع؟",
+    full: "ادفع الكل",
+    equal: "تقسيم متساوٍ",
+    byItem: "حسب الصنف",
+    custom: "مبلغ مخصص",
+    continue: "متابعة",
+    back: "رجوع",
+    addToOrder: "أضف للطلب",
+    placeOrder: "إرسال الطلب",
+    kitchen: "المطبخ",
+    bar: "البار",
+    noTip: "بدون إكرامية",
+    customTip: "إكرامية مخصصة",
+    mostGuestsTip: "معظم الضيوف يتركون 10–15٪ إكرامية — شكرًا لك!",
+    roundUp: "تقريب إلى",
+    paymentComplete: "اكتمل الدفع",
+    rateExperience: "كيف كانت تجربتك؟",
+    shareReceipt: "مشاركة الإيصال",
+    server: "النادل",
+    table: "الطاولة",
+    items: "أصناف",
+    vegan: "نباتي",
+    vegetarian: "نباتي",
+    glutenFree: "خالٍ من الغلوتين",
+    halal: "حلال",
+    containsNuts: "يحتوي على مكسرات",
+    dairyFree: "خالٍ من الألبان",
+    orderSent: "تم إرسال الطلب إلى",
+    preparing: "جارٍ التحضير",
+    language: "اللغة",
+    viewFullMenu: "📄 عرض القائمة الكاملة",
+    externalMenu: "القائمة الكاملة",
+    noExternalMenus: "لا توجد قوائم خارجية متاحة الآن.",
+    close: "إغلاق",
   },
 };
 
@@ -336,6 +411,22 @@ function getSelectionUnitPrice(selection: OrderSelection) {
   );
 }
 
+function resolveLang(value?: string | null): Lang {
+  if (value === "sw" || value === "fr" || value === "ar") return value;
+  return "en";
+}
+
+function getLocalizedMenuCopy(
+  item: Pick<CatalogueItem, "name" | "description" | "translations">,
+  lang: Lang,
+) {
+  const translation = item.translations?.[lang];
+  return {
+    name: translation?.name?.trim() || item.name,
+    description: translation?.description?.trim() || item.description,
+  };
+}
+
 // --- Main Page ---
 
 type PageState =
@@ -364,6 +455,10 @@ function TablePayPage() {
   const [phone, setPhone] = useState("");
   const [payerName, setPayerName] = useState("");
   const [lang, setLang] = useState<Lang>("en");
+  const [externalMenuOpen, setExternalMenuOpen] = useState(false);
+  const [selectedExternalMenuId, setSelectedExternalMenuId] = useState<
+    string | null
+  >(null);
   // Order-at-table state
   const [orderItems, setOrderItems] = useState<OrderSelection[]>([]);
   const [orderSentTo, setOrderSentTo] = useState<string[]>([]);
@@ -380,14 +475,37 @@ function TablePayPage() {
   }, []);
 
   const t = TRANSLATIONS[lang];
+  const externalMenus = merchantSnapshot?.externalMenus || [];
+  const activeExternalMenu =
+    externalMenus.find((menu) => menu.id === selectedExternalMenuId) ||
+    externalMenus[0] ||
+    null;
 
   // Detect browser language
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const browserLang = navigator.language.slice(0, 2);
-    if (browserLang === "sw") setLang("sw");
-    else if (browserLang === "fr") setLang("fr");
+    const storedLang = window.localStorage.getItem(TABLE_LANGUAGE_KEY);
+    if (storedLang) {
+      setLang(resolveLang(storedLang));
+      return;
+    }
+    setLang(resolveLang(navigator.language.slice(0, 2)));
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(TABLE_LANGUAGE_KEY, lang);
+  }, [lang]);
+
+  useEffect(() => {
+    if (!externalMenus.length) {
+      setSelectedExternalMenuId(null);
+      return;
+    }
+    if (!externalMenus.some((menu) => menu.id === selectedExternalMenuId)) {
+      setSelectedExternalMenuId(externalMenus[0].id);
+    }
+  }, [externalMenus, selectedExternalMenuId]);
 
   // Parse URL for table QR data
   useEffect(() => {
@@ -398,6 +516,7 @@ function TablePayPage() {
     const merchantData = ensureMerchantDemoData();
     setMerchantSnapshot(merchantData);
     setMenuSchedules(merchantData.menuSchedules);
+    setSelectedExternalMenuId(merchantData.externalMenus[0]?.id || null);
 
     const withMerchantCatalogue = (data: TableData) => ({
       ...data,
@@ -576,6 +695,7 @@ function TablePayPage() {
         destination: selection.destination,
         image: selection.image,
         description: selection.description,
+        translations: selection.translations,
         selectedModifiers: selection.selectedOptions,
       });
     });
@@ -599,17 +719,30 @@ function TablePayPage() {
               PesaSwap {t.tablePay}
             </span>
           </div>
-          {/* Language toggle */}
-          <div className="flex items-center justify-center gap-1 mt-1">
-            {(["en", "sw", "fr"] as Lang[]).map((l) => (
-              <button
-                key={l}
-                onClick={() => setLang(l)}
-                className={`px-2 py-0.5 rounded text-[9px] font-semibold ${lang === l ? "bg-foreground text-background" : "text-muted-foreground"}`}
+          <div className="mt-2 flex flex-col items-center gap-2">
+            <label className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-[11px] font-medium">
+              <span>🌐</span>
+              <span>{t.language}</span>
+              <select
+                value={lang}
+                onChange={(event) => setLang(event.target.value as Lang)}
+                className="bg-transparent text-[11px] font-semibold outline-none"
               >
-                {l === "en" ? "EN" : l === "sw" ? "SW" : "FR"}
+                {LANGUAGE_OPTIONS.map((option) => (
+                  <option key={option.code} value={option.code}>
+                    {option.icon} {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {externalMenus.length > 0 ? (
+              <button
+                onClick={() => setExternalMenuOpen(true)}
+                className="rounded-full border border-border bg-card px-3 py-1.5 text-[11px] font-semibold"
+              >
+                {t.viewFullMenu}
               </button>
-            ))}
+            ) : null}
           </div>
         </div>
 
@@ -621,6 +754,7 @@ function TablePayPage() {
             onProceed={() => setState("split")}
             onOrder={() => setState("order")}
             t={t}
+            lang={lang}
           />
         )}
         {state === "order" && tableData && (
@@ -635,6 +769,7 @@ function TablePayPage() {
             onBack={() => setState("bill")}
             onPlace={placeOrder}
             t={t}
+            lang={lang}
           />
         )}
         {state === "order-sent" && (
@@ -706,6 +841,17 @@ function TablePayPage() {
           />
         )}
       </div>
+
+      {externalMenuOpen ? (
+        <ExternalMenuViewer
+          menus={externalMenus}
+          activeMenu={activeExternalMenu}
+          selectedMenuId={selectedExternalMenuId}
+          onSelect={setSelectedExternalMenuId}
+          onClose={() => setExternalMenuOpen(false)}
+          t={t}
+        />
+      ) : null}
     </div>
   );
 }
@@ -729,12 +875,14 @@ function BillView({
   onProceed,
   onOrder,
   t,
+  lang,
 }: {
   table: TableData;
   total: number;
   onProceed: () => void;
   onOrder: () => void;
   t: Record<string, string>;
+  lang: Lang;
 }) {
   const [expanded, setExpanded] = useState(true);
   const elapsed = Math.round(
@@ -786,7 +934,9 @@ function BillView({
                   className="px-4 py-2.5 flex items-center justify-between"
                 >
                   <div>
-                    <p className="text-sm font-medium">{item.name}</p>
+                    <p className="text-sm font-medium">
+                      {getLocalizedMenuCopy(item, lang).name}
+                    </p>
                     <div className="flex items-center gap-1">
                       <p className="text-[10px] text-muted-foreground">
                         {item.category} · Qty: {item.qty}
@@ -816,6 +966,11 @@ function BillView({
                         {item.selectedModifiers
                           .map((option) => option.optionLabel)
                           .join(" · ")}
+                      </p>
+                    ) : null}
+                    {getLocalizedMenuCopy(item, lang).description ? (
+                      <p className="text-[10px] text-muted-foreground">
+                        {getLocalizedMenuCopy(item, lang).description}
                       </p>
                     ) : null}
                   </div>
@@ -881,6 +1036,7 @@ function OrderView({
   onBack,
   onPlace,
   t,
+  lang,
 }: {
   table: TableData;
   orderItems: OrderSelection[];
@@ -892,6 +1048,7 @@ function OrderView({
   onBack: () => void;
   onPlace: () => void;
   t: Record<string, string>;
+  lang: Lang;
 }) {
   const menu = table.catalogue || [];
   const visibleMenu = getVisibleCatalogueForTable({
@@ -981,6 +1138,7 @@ function OrderView({
         destination: item.destination,
         image: item.image,
         description: item.description,
+        translations: item.translations,
         selectedOptions,
       },
     ]);
@@ -1080,6 +1238,7 @@ function OrderView({
           </div>
         ) : null}
         {filteredMenu.map((item) => {
+          const localizedItem = getLocalizedMenuCopy(item, lang);
           const itemSelections = orderItems.filter(
             (entry) => entry.itemId === item.id,
           );
@@ -1102,7 +1261,7 @@ function OrderView({
                   item.category === "Cocktails"
                     ? "🍺"
                     : "🍳"}{" "}
-                  {item.name}
+                  {localizedItem.name}
                 </p>
                 <div className="flex items-center gap-1.5">
                   <p className="text-[10px] font-mono text-muted-foreground">
@@ -1141,9 +1300,9 @@ function OrderView({
                     </span>
                   ) : null}
                 </div>
-                {item.description ? (
+                {localizedItem.description ? (
                   <p className="mt-1 text-[10px] text-muted-foreground">
-                    {item.description}
+                    {localizedItem.description}
                   </p>
                 ) : null}
                 {!isAvailable ? (
@@ -1188,45 +1347,55 @@ function OrderView({
       {orderItems.length > 0 && (
         <div className="rounded-2xl bg-foreground text-background p-4 space-y-2">
           <div className="space-y-2">
-            {orderItems.map((item) => (
-              <div key={item.key} className="rounded-xl bg-white/10 p-2">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold">{item.name}</p>
-                    {item.selectedOptions.length ? (
-                      <p className="text-[10px] text-white/70">
-                        {item.selectedOptions
-                          .map((option) => option.optionLabel)
-                          .join(" · ")}
+            {orderItems.map((item) => {
+              const localizedItem = getLocalizedMenuCopy(item, lang);
+              return (
+                <div key={item.key} className="rounded-xl bg-white/10 p-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold">
+                        {localizedItem.name}
                       </p>
-                    ) : null}
+                      {item.selectedOptions.length ? (
+                        <p className="text-[10px] text-white/70">
+                          {item.selectedOptions
+                            .map((option) => option.optionLabel)
+                            .join(" · ")}
+                        </p>
+                      ) : null}
+                      {localizedItem.description ? (
+                        <p className="text-[10px] text-white/70">
+                          {localizedItem.description}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => changeQuantity(item.key, -1)}
+                        className="size-6 rounded-full border border-white/30 flex items-center justify-center"
+                      >
+                        <Minus className="size-3" />
+                      </button>
+                      <span className="text-xs font-bold w-4 text-center">
+                        {item.quantity}
+                      </span>
+                      <button
+                        onClick={() => changeQuantity(item.key, 1)}
+                        className="size-6 rounded-full bg-emerald-500 text-white flex items-center justify-center"
+                      >
+                        <Plus className="size-3" />
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => changeQuantity(item.key, -1)}
-                      className="size-6 rounded-full border border-white/30 flex items-center justify-center"
-                    >
-                      <Minus className="size-3" />
-                    </button>
-                    <span className="text-xs font-bold w-4 text-center">
-                      {item.quantity}
-                    </span>
-                    <button
-                      onClick={() => changeQuantity(item.key, 1)}
-                      className="size-6 rounded-full bg-emerald-500 text-white flex items-center justify-center"
-                    >
-                      <Plus className="size-3" />
-                    </button>
-                  </div>
+                  <p className="mt-1 text-[10px] font-mono text-white/80">
+                    KES{" "}
+                    {(
+                      getSelectionUnitPrice(item) * item.quantity
+                    ).toLocaleString()}
+                  </p>
                 </div>
-                <p className="mt-1 text-[10px] font-mono text-white/80">
-                  KES{" "}
-                  {(
-                    getSelectionUnitPrice(item) * item.quantity
-                  ).toLocaleString()}
-                </p>
-              </div>
-            ))}
+              );
+            })}
           </div>
           <div className="flex items-center justify-between">
             <span className="text-sm font-semibold">
@@ -1249,21 +1418,24 @@ function OrderView({
         <div className="space-y-2">
           <p className="text-sm font-semibold">Goes well with...</p>
           <div className="flex gap-3 overflow-x-auto pb-1">
-            {suggestedItems.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => addItem(item)}
-                className="min-w-[180px] rounded-2xl border border-border bg-card p-3 text-left"
-              >
-                <p className="text-sm font-semibold">{item.name}</p>
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  {item.category}
-                </p>
-                <p className="mt-3 text-sm font-mono font-bold">
-                  KES {item.price.toLocaleString()}
-                </p>
-              </button>
-            ))}
+            {suggestedItems.map((item) => {
+              const localizedItem = getLocalizedMenuCopy(item, lang);
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => addItem(item)}
+                  className="min-w-[180px] rounded-2xl border border-border bg-card p-3 text-left"
+                >
+                  <p className="text-sm font-semibold">{localizedItem.name}</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {item.category}
+                  </p>
+                  <p className="mt-3 text-sm font-mono font-bold">
+                    KES {item.price.toLocaleString()}
+                  </p>
+                </button>
+              );
+            })}
           </div>
         </div>
       ) : null}
@@ -1273,7 +1445,9 @@ function OrderView({
           <div className="w-full max-w-sm rounded-3xl bg-background p-5 shadow-2xl">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-lg font-bold">{modifierItem.name}</p>
+                <p className="text-lg font-bold">
+                  {getLocalizedMenuCopy(modifierItem, lang).name}
+                </p>
                 <p className="text-xs text-muted-foreground">
                   Choose your options before adding to order.
                 </p>
@@ -1289,7 +1463,7 @@ function OrderView({
             {modifierItem.image ? (
               <img
                 src={modifierItem.image}
-                alt={modifierItem.name}
+                alt={getLocalizedMenuCopy(modifierItem, lang).name}
                 className="mt-4 h-32 w-full rounded-2xl object-cover"
               />
             ) : (
@@ -1342,6 +1516,87 @@ function OrderView({
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function ExternalMenuViewer({
+  menus,
+  activeMenu,
+  selectedMenuId,
+  onSelect,
+  onClose,
+  t,
+}: {
+  menus: ExternalMenu[];
+  activeMenu: ExternalMenu | null;
+  selectedMenuId: string | null;
+  onSelect: (menuId: string) => void;
+  onClose: () => void;
+  t: Record<string, string>;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3">
+      <div className="flex h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl bg-background shadow-2xl">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <div>
+            <p className="text-lg font-semibold">{t.externalMenu}</p>
+            <p className="text-xs text-muted-foreground">
+              {menus.length > 0
+                ? `${menus.length} menu${menus.length === 1 ? "" : "s"} available`
+                : t.noExternalMenus}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold"
+          >
+            {t.close}
+          </button>
+        </div>
+
+        {menus.length > 0 ? (
+          <div className="flex flex-wrap gap-2 border-b border-border px-4 py-3">
+            {menus.map((menu) => (
+              <button
+                key={menu.id}
+                onClick={() => onSelect(menu.id)}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold ${selectedMenuId === menu.id ? "bg-foreground text-background" : "bg-muted"}`}
+              >
+                {menu.name}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="flex-1 bg-muted/30 p-3">
+          {activeMenu ? (
+            activeMenu.type === "pdf" ? (
+              <object
+                data={activeMenu.content}
+                type="application/pdf"
+                className="h-full w-full rounded-2xl bg-white"
+              >
+                <iframe
+                  src={activeMenu.content}
+                  title={activeMenu.name}
+                  className="h-full w-full rounded-2xl bg-white"
+                />
+              </object>
+            ) : (
+              <iframe
+                src={activeMenu.content}
+                title={activeMenu.name}
+                className="h-full w-full rounded-2xl bg-white"
+              />
+            )
+          ) : (
+            <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-border bg-background text-sm text-muted-foreground">
+              {t.noExternalMenus}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
