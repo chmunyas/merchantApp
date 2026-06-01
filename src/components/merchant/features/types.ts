@@ -441,3 +441,111 @@ export type PurchaseOrder = {
   receivedAt?: string;
   paidAt?: string;
 };
+
+// ─── Services Types ───
+
+export type ServiceCategory = {
+  id: string;
+  name: string;
+  icon?: string;
+  color?: string;
+};
+
+export type ServiceOffering = {
+  id: string;
+  name: string;
+  description?: string;
+  category: string;
+  price: number;
+  priceType: "fixed" | "per_hour" | "from";
+  duration: number;
+  staffIds: string[];
+  materials?: string[];
+  isActive: boolean;
+  image?: string;
+};
+
+export type ServicePackage = {
+  id: string;
+  name: string;
+  description: string;
+  services: string[];
+  price: number;
+  savings: number;
+  isActive: boolean;
+};
+
+export type Booking = {
+  id: string;
+  clientId: string;
+  clientName: string;
+  clientPhone: string;
+  serviceId: string;
+  serviceName: string;
+  staffId?: string;
+  staffName?: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  duration: number;
+  price: number;
+  status:
+    | "scheduled"
+    | "confirmed"
+    | "in_progress"
+    | "completed"
+    | "cancelled"
+    | "no_show";
+  paymentStatus: "unpaid" | "deposit" | "paid";
+  paymentMethod?: "mpesa" | "cash" | "bnpl" | "card";
+  notes?: string;
+  isWalkIn?: boolean;
+  createdAt: string;
+};
+
+export type ServiceClient = {
+  id: string;
+  name: string;
+  phone: string;
+  email?: string;
+  tag: "new" | "regular" | "vip" | "corporate";
+  totalVisits: number;
+  totalSpent: number;
+  lastVisit?: string;
+  notes?: string;
+  loyaltyPoints: number;
+  createdAt: string;
+};
+
+export type JobCard = {
+  id: string;
+  clientId: string;
+  clientName: string;
+  clientPhone: string;
+  title: string;
+  description: string;
+  status:
+    | "received"
+    | "diagnosed"
+    | "quoted"
+    | "approved"
+    | "in_progress"
+    | "done"
+    | "invoiced"
+    | "paid";
+  estimatedCost: number;
+  actualCost?: number;
+  materials: { name: string; qty: number; unitCost: number }[];
+  laborHours: number;
+  laborRate: number;
+  photos: {
+    url: string;
+    label: string;
+    stage: "before" | "during" | "after";
+  }[];
+  assignedStaff: string;
+  startedAt?: string;
+  completedAt?: string;
+  invoiceId?: string;
+  createdAt: string;
+};

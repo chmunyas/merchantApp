@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-router";
 import {
   BarChart3,
+  BriefcaseBusiness,
   CreditCard,
   LayoutDashboard,
   Menu,
@@ -30,6 +31,7 @@ const navItems = [
   { to: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { to: "/dashboard/payments", label: "Payments", icon: CreditCard },
   { to: "/dashboard/retail", label: "Retail", icon: ShoppingBag },
+  { to: "/dashboard/services", label: "Services", icon: BriefcaseBusiness },
   { to: "/dashboard/staff", label: "Staff", icon: Users },
   { to: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/dashboard/menu", label: "Menu", icon: UtensilsCrossed },

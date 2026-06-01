@@ -1,6 +1,8 @@
 import type {
   AIStaffInsight,
+  Booking,
   CatalogueItem,
+  JobCard,
   ExternalMenu,
   Menu,
   CreditCustomer,
@@ -10,6 +12,10 @@ import type {
   Reservation,
   RetailProduct,
   RetailSale,
+  ServiceCategory,
+  ServiceClient,
+  ServiceOffering,
+  ServicePackage,
   StaffMember,
   StaffNotification,
   StaffPayout,
@@ -3021,4 +3027,1128 @@ export function savePurchaseOrders(purchaseOrders: PurchaseOrder[]) {
 
 export function getRetailStoreSlug(profile?: RetailStoreProfile) {
   return profile?.id || createRetailId("store", profile?.name || MERCHANT_NAME);
+}
+
+export const SERVICES_STORAGE_KEY = "pesaswap.services.data";
+
+export type ServiceBusinessType =
+  | "mechanic"
+  | "salon"
+  | "tutor"
+  | "cleaner"
+  | "plumber"
+  | "general";
+
+export type ServiceBusinessProfile = {
+  id: string;
+  name: string;
+  type: ServiceBusinessType;
+  description: string;
+  location: string;
+  phone: string;
+  whatsapp: string;
+  tillNumber: string;
+  logoUrl: string;
+  website?: string;
+  operatingHours: Array<{
+    day: number;
+    label: string;
+    start: string;
+    end: string;
+  }>;
+};
+
+export type ServiceStaff = {
+  id: string;
+  name: string;
+  role: string;
+  specialty: string;
+  phone: string;
+  color: string;
+  isActive: boolean;
+  avatar?: string;
+  availability: Array<{ day: number; start: string; end: string }>;
+};
+
+export type ServicesSnapshot = {
+  business: ServiceBusinessProfile;
+  staff: ServiceStaff[];
+  categories: ServiceCategory[];
+  services: ServiceOffering[];
+  packages: ServicePackage[];
+  clients: ServiceClient[];
+  bookings: Booking[];
+  jobCards: JobCard[];
+};
+
+export type ServiceAnalytics = {
+  revenueByServiceType: Array<{ name: string; value: number }>;
+  busiestMatrix: Array<{ day: string; hour: string; count: number }>;
+  busiestDays: Array<{ name: string; value: number }>;
+  busiestHours: Array<{ name: string; value: number }>;
+  bookingStatusBreakdown: Array<{ name: string; value: number }>;
+  clientRetentionRate: number;
+  averageJobValue: number;
+  monthlyComparison: { current: number; previous: number; delta: number };
+  aiInsights: string[];
+};
+
+const SERVICE_WEEK_DAYS = [
+  "Mon",
+  "Tue",
+  "Wed",
+  "Thu",
+  "Fri",
+  "Sat",
+  "Sun",
+] as const;
+const ACTIVE_BOOKING_STATUSES: Booking["status"][] = [
+  "scheduled",
+  "confirmed",
+  "in_progress",
+  "completed",
+];
+const SERVICE_OPEN_MINUTES = 8 * 60;
+const SERVICE_CLOSE_MINUTES = 18 * 60;
+
+function serviceStartOfWeek(date: Date) {
+  const next = new Date(date);
+  const day = (next.getDay() + 6) % 7;
+  next.setDate(next.getDate() - day);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function serviceMinutesFromTime(value: string) {
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+function serviceTimeFromMinutes(value: number) {
+  const hours = Math.floor(value / 60);
+  const minutes = value % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function serviceAddMinutes(time: string, duration: number) {
+  return serviceTimeFromMinutes(serviceMinutesFromTime(time) + duration);
+}
+
+function servicePhoto(label: string, background = "1d4ed8") {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="420" viewBox="0 0 600 420"><rect width="600" height="420" fill="#${background}" rx="36"/><text x="50%" y="48%" dominant-baseline="middle" text-anchor="middle" fill="#ffffff" font-size="36" font-family="Arial, sans-serif">${label}</text><text x="50%" y="60%" dominant-baseline="middle" text-anchor="middle" fill="#dbeafe" font-size="18" font-family="Arial, sans-serif">PesaSwap Job Card</text></svg>`;
+  const encode =
+    typeof globalThis.btoa === "function" ? globalThis.btoa(svg) : svg;
+  return `data:image/svg+xml;base64,${encode}`;
+}
+
+function serviceImage(label: string, background: string) {
+  return `https://placehold.co/320x240/${background}/ffffff?text=${encodeURIComponent(label)}`;
+}
+
+function getServiceBookingRevenue(
+  bookings: Booking[],
+  statuses: Booking["status"][],
+) {
+  return bookings
+    .filter((booking) => statuses.includes(booking.status))
+    .reduce((sum, booking) => sum + booking.price, 0);
+}
+
+function buildServiceBusiness(): ServiceBusinessProfile {
+  return {
+    id: "nairobi-auto-care",
+    name: "Nairobi Auto Care",
+    type: "mechanic",
+    description:
+      "Trusted neighbourhood garage for diagnostics, servicing, brakes, tyres, AC work, and fleet maintenance.",
+    location: "Muthithi Road, Westlands, Nairobi",
+    phone: "+254711247365",
+    whatsapp: "+254711247365",
+    tillNumber: "522247",
+    logoUrl: serviceImage("Auto Care", "1e3a8a"),
+    website: "https://pesaswap.africa/book/nairobi-auto-care",
+    operatingHours: [
+      { day: 0, label: "Sun", start: "09:00", end: "14:00" },
+      { day: 1, label: "Mon", start: "08:00", end: "18:00" },
+      { day: 2, label: "Tue", start: "08:00", end: "18:00" },
+      { day: 3, label: "Wed", start: "08:00", end: "18:00" },
+      { day: 4, label: "Thu", start: "08:00", end: "18:00" },
+      { day: 5, label: "Fri", start: "08:00", end: "18:00" },
+      { day: 6, label: "Sat", start: "08:00", end: "17:00" },
+    ],
+  };
+}
+
+function buildServiceStaff(): ServiceStaff[] {
+  const availability = [1, 2, 3, 4, 5, 6].map((day) => ({
+    day,
+    start: "08:00",
+    end: day === 6 ? "17:00" : "18:00",
+  }));
+  return [
+    {
+      id: "staff-kariuki",
+      name: "John Kariuki",
+      role: "Lead mechanic",
+      specialty: "Engine service & scheduled maintenance",
+      phone: "+254722340120",
+      color: "#2563eb",
+      isActive: true,
+      avatar: serviceImage("JK", "2563eb"),
+      availability,
+    },
+    {
+      id: "staff-otieno",
+      name: "Peter Otieno",
+      role: "Brake specialist",
+      specialty: "Brakes, suspension & wheel alignment",
+      phone: "+254733102233",
+      color: "#0f766e",
+      isActive: true,
+      avatar: serviceImage("PO", "0f766e"),
+      availability,
+    },
+    {
+      id: "staff-mutiso",
+      name: "Alex Mutiso",
+      role: "General technician",
+      specialty: "Quick service, batteries & tyres",
+      phone: "+254712881144",
+      color: "#f59e0b",
+      isActive: true,
+      avatar: serviceImage("AM", "f59e0b"),
+      availability,
+    },
+    {
+      id: "staff-wanjiru",
+      name: "Faith Wanjiru",
+      role: "Auto electrician",
+      specialty: "Diagnostics, AC & electrical systems",
+      phone: "+254700112299",
+      color: "#7c3aed",
+      isActive: true,
+      avatar: serviceImage("FW", "7c3aed"),
+      availability: availability.map((entry) => ({
+        ...entry,
+        start: entry.day === 6 ? "09:00" : "08:30",
+      })),
+    },
+  ];
+}
+
+function buildServiceCategories(): ServiceCategory[] {
+  return [
+    { id: "service", name: "Service", icon: "Wrench", color: "#2563eb" },
+    { id: "repair", name: "Repair", icon: "Hammer", color: "#dc2626" },
+    {
+      id: "diagnostics",
+      name: "Diagnostics",
+      icon: "ScanLine",
+      color: "#7c3aed",
+    },
+    {
+      id: "bodywork",
+      name: "Bodywork",
+      icon: "CarFront",
+      color: "#0f766e",
+    },
+  ];
+}
+
+function buildServiceCatalogue(staff: ServiceStaff[]): ServiceOffering[] {
+  const john = staff[0]?.id ?? "staff-kariuki";
+  const peter = staff[1]?.id ?? "staff-otieno";
+  const alex = staff[2]?.id ?? "staff-mutiso";
+  const faith = staff[3]?.id ?? "staff-wanjiru";
+  return [
+    {
+      id: "svc-oil-change",
+      name: "Oil Change",
+      description:
+        "Engine oil, oil filter change, top-up fluids, and 12-point safety check.",
+      category: "Service",
+      price: 3500,
+      priceType: "fixed",
+      duration: 60,
+      staffIds: [john, alex],
+      materials: ["Engine oil", "Oil filter", "Drain plug washer"],
+      isActive: true,
+      image: serviceImage("Oil Change", "2563eb"),
+    },
+    {
+      id: "svc-brake-service",
+      name: "Brake Service",
+      description:
+        "Brake pad inspection, cleaning, machining, and fluid top-up.",
+      category: "Repair",
+      price: 8000,
+      priceType: "fixed",
+      duration: 120,
+      staffIds: [peter, john],
+      materials: ["Brake pads", "Brake cleaner", "Brake fluid"],
+      isActive: true,
+      image: serviceImage("Brakes", "dc2626"),
+    },
+    {
+      id: "svc-wheel-alignment",
+      name: "Wheel Alignment",
+      description:
+        "Front and rear alignment for smooth handling and tyre life.",
+      category: "Service",
+      price: 2500,
+      priceType: "fixed",
+      duration: 45,
+      staffIds: [peter, alex],
+      materials: ["Alignment shims"],
+      isActive: true,
+      image: serviceImage("Alignment", "0f766e"),
+    },
+    {
+      id: "svc-full-service",
+      name: "Full Service",
+      description:
+        "Full periodic service covering oil, filters, brakes, diagnostics, and wash.",
+      category: "Service",
+      price: 12000,
+      priceType: "fixed",
+      duration: 240,
+      staffIds: [john, peter],
+      materials: ["Engine oil", "Oil filter", "Air filter", "Cabin filter"],
+      isActive: true,
+      image: serviceImage("Full Service", "1d4ed8"),
+    },
+    {
+      id: "svc-diagnostics",
+      name: "Diagnostics",
+      description: "OBD scan, electrical checks, and fault-code report.",
+      category: "Diagnostics",
+      price: 2000,
+      priceType: "fixed",
+      duration: 30,
+      staffIds: [faith, john],
+      materials: ["Diagnostic scan"],
+      isActive: true,
+      image: serviceImage("Diagnostics", "7c3aed"),
+    },
+    {
+      id: "svc-ac-repair",
+      name: "AC Repair",
+      description:
+        "Compressor check, gas refill, leak test, and cabin cooling tune-up.",
+      category: "Repair",
+      price: 15000,
+      priceType: "from",
+      duration: 180,
+      staffIds: [faith, john],
+      materials: ["AC gas", "Compressor oil", "UV leak dye"],
+      isActive: true,
+      image: serviceImage("AC Repair", "0ea5e9"),
+    },
+    {
+      id: "svc-battery-replacement",
+      name: "Battery Replacement",
+      description:
+        "Battery supply, fitment, terminal cleanup, and charging test.",
+      category: "Repair",
+      price: 5000,
+      priceType: "fixed",
+      duration: 30,
+      staffIds: [alex, faith],
+      materials: ["Battery", "Terminal grease"],
+      isActive: true,
+      image: serviceImage("Battery", "f59e0b"),
+    },
+    {
+      id: "svc-tire-rotation",
+      name: "Tire Rotation",
+      description: "Tyre rotation, pressure balancing, and quick tread report.",
+      category: "Service",
+      price: 1500,
+      priceType: "fixed",
+      duration: 30,
+      staffIds: [alex, peter],
+      materials: ["Wheel weights"],
+      isActive: true,
+      image: serviceImage("Tyres", "475569"),
+    },
+  ];
+}
+
+function buildServicePackages(services: ServiceOffering[]): ServicePackage[] {
+  const lookup = new Map(services.map((service) => [service.name, service.id]));
+  return [
+    {
+      id: "pkg-full-service-bundle",
+      name: "Full Service Bundle",
+      description:
+        "Oil change, brake service, and wheel alignment for fleet cars and busy commuters.",
+      services: [
+        lookup.get("Oil Change") ?? "svc-oil-change",
+        lookup.get("Brake Service") ?? "svc-brake-service",
+        lookup.get("Wheel Alignment") ?? "svc-wheel-alignment",
+      ],
+      price: 12000,
+      savings: 2000,
+      isActive: true,
+    },
+    {
+      id: "pkg-ac-diagnostic",
+      name: "Cooling Rescue Pack",
+      description:
+        "Diagnostics plus AC repair assessment and gas top-up for city traffic heat.",
+      services: [
+        lookup.get("Diagnostics") ?? "svc-diagnostics",
+        lookup.get("AC Repair") ?? "svc-ac-repair",
+      ],
+      price: 15500,
+      savings: 1500,
+      isActive: true,
+    },
+  ];
+}
+
+function buildServiceClients(now = new Date()): ServiceClient[] {
+  return [
+    {
+      id: "client-wanjiku",
+      name: "Wanjiku Maina",
+      phone: "+254712334455",
+      email: "wanjiku.maina@example.com",
+      tag: "vip",
+      totalVisits: 8,
+      totalSpent: 46200,
+      lastVisit: minusTime(now, 2, 4).toISOString(),
+      notes: "Prefers same-day diagnostics updates on WhatsApp.",
+      loyaltyPoints: 80,
+      createdAt: minusTime(now, 120, 0).toISOString(),
+    },
+    {
+      id: "client-otieno",
+      name: "Otieno Odhiambo",
+      phone: "+254723456701",
+      email: "otieno@example.com",
+      tag: "regular",
+      totalVisits: 5,
+      totalSpent: 25700,
+      lastVisit: minusTime(now, 8, 3).toISOString(),
+      notes: "Fleet rider; likes early morning slots.",
+      loyaltyPoints: 50,
+      createdAt: minusTime(now, 95, 0).toISOString(),
+    },
+    {
+      id: "client-fatma",
+      name: "Fatma Noor",
+      phone: "+254701456789",
+      email: "fatma.noor@example.com",
+      tag: "regular",
+      totalVisits: 4,
+      totalSpent: 19800,
+      lastVisit: minusTime(now, 5, 2).toISOString(),
+      notes: "Needs aircon checked before long drives to Mombasa.",
+      loyaltyPoints: 40,
+      createdAt: minusTime(now, 82, 0).toISOString(),
+    },
+    {
+      id: "client-atieno",
+      name: "Atieno Achieng",
+      phone: "+254722908172",
+      tag: "new",
+      totalVisits: 1,
+      totalSpent: 3500,
+      lastVisit: minusTime(now, 1, 5).toISOString(),
+      notes: "First service booked after QR poster scan.",
+      loyaltyPoints: 10,
+      createdAt: minusTime(now, 18, 0).toISOString(),
+    },
+    {
+      id: "client-kamau",
+      name: "Kamau Karanja",
+      phone: "+254700234123",
+      email: "kamau.k@example.com",
+      tag: "corporate",
+      totalVisits: 12,
+      totalSpent: 124000,
+      lastVisit: minusTime(now, 3, 1).toISOString(),
+      notes: "Runs three delivery vans. Send approvals by SMS and WhatsApp.",
+      loyaltyPoints: 120,
+      createdAt: minusTime(now, 150, 0).toISOString(),
+    },
+    {
+      id: "client-njeri",
+      name: "Njeri Wambui",
+      phone: "+254714555222",
+      tag: "vip",
+      totalVisits: 9,
+      totalSpent: 60200,
+      lastVisit: minusTime(now, 4, 2).toISOString(),
+      notes: "Requests pickup reminders one day before service.",
+      loyaltyPoints: 90,
+      createdAt: minusTime(now, 170, 0).toISOString(),
+    },
+    {
+      id: "client-mwikali",
+      name: "Mwikali Mutua",
+      phone: "+254711334499",
+      tag: "regular",
+      totalVisits: 3,
+      totalSpent: 12000,
+      lastVisit: minusTime(now, 6, 1).toISOString(),
+      notes: "Keeps paperless invoices only.",
+      loyaltyPoints: 30,
+      createdAt: minusTime(now, 60, 0).toISOString(),
+    },
+  ];
+}
+
+function buildServiceBookings(
+  services: ServiceOffering[],
+  clients: ServiceClient[],
+  staff: ServiceStaff[],
+  now = new Date(),
+): Booking[] {
+  const serviceMap = new Map(services.map((service) => [service.id, service]));
+  const clientMap = new Map(clients.map((client) => [client.id, client]));
+  const staffMap = new Map(staff.map((member) => [member.id, member]));
+  const createBooking = (
+    id: string,
+    daysOffset: number,
+    startTime: string,
+    serviceId: string,
+    clientId: string,
+    staffId: string | undefined,
+    status: Booking["status"],
+    paymentStatus: Booking["paymentStatus"],
+    paymentMethod: Booking["paymentMethod"] | undefined,
+    notes?: string,
+    isWalkIn?: boolean,
+  ): Booking => {
+    const service = serviceMap.get(serviceId);
+    const client = clientMap.get(clientId);
+    const member = staffId ? staffMap.get(staffId) : undefined;
+    const baseDate = plusDays(
+      now,
+      daysOffset,
+      Number(startTime.slice(0, 2)),
+      Number(startTime.slice(3, 5)),
+    );
+    const duration = service?.duration ?? 60;
+    return {
+      id,
+      clientId: client?.id ?? clientId,
+      clientName: client?.name ?? "Walk-in Customer",
+      clientPhone: client?.phone ?? "+254700000000",
+      serviceId: service?.id ?? serviceId,
+      serviceName: service?.name ?? "Service",
+      staffId: member?.id,
+      staffName: member?.name,
+      date: toIsoDate(baseDate),
+      startTime,
+      endTime: serviceAddMinutes(startTime, duration),
+      duration,
+      price: service?.price ?? 0,
+      status,
+      paymentStatus,
+      paymentMethod,
+      notes,
+      isWalkIn,
+      createdAt: new Date(
+        baseDate.getTime() - 2 * 60 * 60 * 1000,
+      ).toISOString(),
+    };
+  };
+
+  return [
+    createBooking(
+      "booking-001",
+      -5,
+      "09:00",
+      "svc-oil-change",
+      "client-wanjiku",
+      "staff-kariuki",
+      "completed",
+      "paid",
+      "mpesa",
+      "Requested synthetic oil and wiper fluid top-up.",
+    ),
+    createBooking(
+      "booking-002",
+      -4,
+      "11:30",
+      "svc-diagnostics",
+      "client-fatma",
+      "staff-wanjiru",
+      "completed",
+      "paid",
+      "card",
+      "Dashboard light on after school run.",
+    ),
+    createBooking(
+      "booking-003",
+      -3,
+      "14:00",
+      "svc-brake-service",
+      "client-otieno",
+      "staff-otieno",
+      "completed",
+      "deposit",
+      "cash",
+      "Rear brake squeal on rough road.",
+    ),
+    createBooking(
+      "booking-004",
+      -2,
+      "16:00",
+      "svc-ac-repair",
+      "client-njeri",
+      "staff-wanjiru",
+      "no_show",
+      "unpaid",
+      undefined,
+      "Client travelling back from Naivasha.",
+    ),
+    createBooking(
+      "booking-005",
+      -1,
+      "10:30",
+      "svc-wheel-alignment",
+      "client-kamau",
+      "staff-otieno",
+      "completed",
+      "paid",
+      "mpesa",
+      "Delivery van steering drift.",
+    ),
+    createBooking(
+      "booking-006",
+      0,
+      "08:30",
+      "svc-oil-change",
+      "client-atieno",
+      "staff-mutiso",
+      "scheduled",
+      "unpaid",
+      undefined,
+      "Waiting customer - quick turnaround needed.",
+    ),
+    createBooking(
+      "booking-007",
+      0,
+      "09:30",
+      "svc-diagnostics",
+      "client-wanjiku",
+      "staff-wanjiru",
+      "in_progress",
+      "deposit",
+      "mpesa",
+      "Intermittent engine light after weekend trip.",
+    ),
+    createBooking(
+      "booking-008",
+      0,
+      "11:00",
+      "svc-battery-replacement",
+      "client-mwikali",
+      "staff-mutiso",
+      "confirmed",
+      "paid",
+      "mpesa",
+      "Battery failing in the mornings.",
+      true,
+    ),
+    createBooking(
+      "booking-009",
+      0,
+      "13:30",
+      "svc-full-service",
+      "client-kamau",
+      "staff-kariuki",
+      "scheduled",
+      "deposit",
+      "bnpl",
+      "Van needed by 5pm for next route.",
+    ),
+    createBooking(
+      "booking-010",
+      0,
+      "15:00",
+      "svc-tire-rotation",
+      "client-fatma",
+      "staff-otieno",
+      "scheduled",
+      "unpaid",
+      undefined,
+      "Check front tyre wear pattern.",
+    ),
+    createBooking(
+      "booking-011",
+      1,
+      "09:00",
+      "svc-brake-service",
+      "client-otieno",
+      "staff-otieno",
+      "confirmed",
+      "deposit",
+      "card",
+      "Pad replacement and rotor skim.",
+    ),
+    createBooking(
+      "booking-012",
+      1,
+      "13:00",
+      "svc-ac-repair",
+      "client-njeri",
+      "staff-wanjiru",
+      "scheduled",
+      "unpaid",
+      undefined,
+      "AC weak in traffic.",
+    ),
+    createBooking(
+      "booking-013",
+      2,
+      "10:00",
+      "svc-full-service",
+      "client-kamau",
+      "staff-kariuki",
+      "scheduled",
+      "deposit",
+      "mpesa",
+      "Fleet vehicle due for 40,000 km service.",
+    ),
+    createBooking(
+      "booking-014",
+      3,
+      "14:30",
+      "svc-wheel-alignment",
+      "client-atieno",
+      "staff-otieno",
+      "cancelled",
+      "unpaid",
+      undefined,
+      "Client rescheduled after work meeting.",
+    ),
+  ];
+}
+
+function buildJobCards(clients: ServiceClient[], now = new Date()): JobCard[] {
+  const clientMap = new Map(clients.map((client) => [client.id, client]));
+  const job = (
+    id: string,
+    clientId: string,
+    title: string,
+    description: string,
+    status: JobCard["status"],
+    estimatedCost: number,
+    actualCost: number | undefined,
+    assignedStaff: string,
+    laborHours: number,
+    laborRate: number,
+    materials: JobCard["materials"],
+    stages: JobCard["photos"],
+    createdAt: string,
+    startedAt?: string,
+    completedAt?: string,
+    invoiceId?: string,
+  ): JobCard => {
+    const client = clientMap.get(clientId);
+    return {
+      id,
+      clientId,
+      clientName: client?.name ?? "Client",
+      clientPhone: client?.phone ?? "+254700000000",
+      title,
+      description,
+      status,
+      estimatedCost,
+      actualCost,
+      materials,
+      laborHours,
+      laborRate,
+      photos: stages,
+      assignedStaff,
+      startedAt,
+      completedAt,
+      invoiceId,
+      createdAt,
+    };
+  };
+
+  return [
+    job(
+      "job-001",
+      "client-wanjiku",
+      "Toyota Fielder KCJ 123A - Overheating",
+      "Customer reported temperature spike on Waiyaki Way. Radiator fan relay and coolant hose need replacement.",
+      "in_progress",
+      18000,
+      undefined,
+      "John Kariuki",
+      3.5,
+      1800,
+      [
+        { name: "Coolant hose", qty: 1, unitCost: 2200 },
+        { name: "Fan relay", qty: 1, unitCost: 1800 },
+        { name: "Coolant", qty: 2, unitCost: 950 },
+      ],
+      [
+        {
+          url: servicePhoto("Before Check", "1d4ed8"),
+          label: "Engine bay arrival",
+          stage: "before",
+        },
+        {
+          url: servicePhoto("Repair Ongoing", "f59e0b"),
+          label: "Hose replacement",
+          stage: "during",
+        },
+      ],
+      minusTime(now, 1, 3).toISOString(),
+      minusTime(now, 0, 5).toISOString(),
+    ),
+    job(
+      "job-002",
+      "client-otieno",
+      "Nissan Note KDA 456B - Brake noise",
+      "Grinding sound from rear left wheel. Brake shoe and drum inspection complete, quotation awaiting approval.",
+      "quoted",
+      9600,
+      undefined,
+      "Peter Otieno",
+      1.5,
+      1800,
+      [
+        { name: "Brake shoes", qty: 1, unitCost: 3200 },
+        { name: "Brake fluid", qty: 1, unitCost: 750 },
+      ],
+      [
+        {
+          url: servicePhoto("Brake Wear", "dc2626"),
+          label: "Worn brake shoe",
+          stage: "before",
+        },
+      ],
+      minusTime(now, 0, 6).toISOString(),
+    ),
+    job(
+      "job-003",
+      "client-fatma",
+      "Subaru Forester KDL 908N - AC not cooling",
+      "Leak test, compressor service, and gas refill completed. Invoice shared on WhatsApp.",
+      "invoiced",
+      16500,
+      15800,
+      "Faith Wanjiru",
+      4,
+      2000,
+      [
+        { name: "AC gas", qty: 2, unitCost: 2500 },
+        { name: "Compressor seal kit", qty: 1, unitCost: 1800 },
+      ],
+      [
+        {
+          url: servicePhoto("Warm Cabin", "7c3aed"),
+          label: "Before service",
+          stage: "before",
+        },
+        {
+          url: servicePhoto("Cold Air", "0f766e"),
+          label: "After service",
+          stage: "after",
+        },
+      ],
+      minusTime(now, 4, 2).toISOString(),
+      minusTime(now, 4, 1).toISOString(),
+      minusTime(now, 3, 5).toISOString(),
+      "INV-AC-908N",
+    ),
+    job(
+      "job-004",
+      "client-kamau",
+      "Toyota Hiace KCS 778P - Fleet service",
+      "Quarterly fleet inspection completed with oil, brake, and suspension checks. Awaiting payment settlement.",
+      "paid",
+      22000,
+      21400,
+      "Alex Mutiso",
+      5,
+      1700,
+      [
+        { name: "Engine oil", qty: 6, unitCost: 850 },
+        { name: "Oil filter", qty: 1, unitCost: 1200 },
+        { name: "Brake pads", qty: 1, unitCost: 3200 },
+      ],
+      [
+        {
+          url: servicePhoto("Fleet Arrival", "334155"),
+          label: "Fleet van received",
+          stage: "before",
+        },
+        {
+          url: servicePhoto("Delivery", "15803d"),
+          label: "Ready for pickup",
+          stage: "after",
+        },
+      ],
+      minusTime(now, 8, 3).toISOString(),
+      minusTime(now, 8, 2).toISOString(),
+      minusTime(now, 7, 5).toISOString(),
+      "INV-FLT-778P",
+    ),
+  ];
+}
+
+export function generateServicesDemoData(now = new Date()): ServicesSnapshot {
+  const business = buildServiceBusiness();
+  const staff = buildServiceStaff();
+  const categories = buildServiceCategories();
+  const services = buildServiceCatalogue(staff);
+  const packages = buildServicePackages(services);
+  const clients = buildServiceClients(now);
+  const bookings = buildServiceBookings(services, clients, staff, now);
+  const jobCards = buildJobCards(clients, now);
+
+  return {
+    business,
+    staff,
+    categories,
+    services,
+    packages,
+    clients,
+    bookings,
+    jobCards,
+  };
+}
+
+export function ensureServicesDemoData() {
+  if (!canUseStorage()) return generateServicesDemoData();
+  if (!window.localStorage.getItem(SERVICES_STORAGE_KEY)) {
+    writeStorage(SERVICES_STORAGE_KEY, generateServicesDemoData());
+  }
+  return loadServicesSnapshot();
+}
+
+export function loadServicesSnapshot(): ServicesSnapshot {
+  const fallback = generateServicesDemoData();
+  return readStorage(SERVICES_STORAGE_KEY, fallback);
+}
+
+export function saveServicesSnapshot(snapshot: ServicesSnapshot) {
+  writeStorage(SERVICES_STORAGE_KEY, snapshot);
+}
+
+export function getAvailableSlots(
+  bookings: Booking[],
+  date: string,
+  staffId?: string,
+) {
+  const dayBookings = bookings.filter((booking) => {
+    if (booking.date !== date) return false;
+    if (staffId && booking.staffId !== staffId) return false;
+    return ACTIVE_BOOKING_STATUSES.includes(booking.status);
+  });
+
+  const slots: string[] = [];
+  for (
+    let minutes = SERVICE_OPEN_MINUTES;
+    minutes <= SERVICE_CLOSE_MINUTES - 30;
+    minutes += 30
+  ) {
+    const occupied = dayBookings.some((booking) => {
+      const start = serviceMinutesFromTime(booking.startTime);
+      const end = serviceMinutesFromTime(booking.endTime);
+      return minutes >= start && minutes < end;
+    });
+    if (!occupied) slots.push(serviceTimeFromMinutes(minutes));
+  }
+  return slots;
+}
+
+export function getStaffUtilization(
+  bookings: Booking[],
+  staff: ServiceStaff[],
+) {
+  const now = new Date();
+  const weekStart = serviceStartOfWeek(now);
+  const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+  return staff.map((member) => {
+    const availableHours = member.availability.reduce((sum, entry) => {
+      return (
+        sum +
+        (serviceMinutesFromTime(entry.end) -
+          serviceMinutesFromTime(entry.start)) /
+          60
+      );
+    }, 0);
+    const bookedHours = bookings
+      .filter((booking) => {
+        if (booking.staffId !== member.id) return false;
+        if (
+          !["scheduled", "confirmed", "in_progress", "completed"].includes(
+            booking.status,
+          )
+        )
+          return false;
+        const bookingDate = new Date(`${booking.date}T${booking.startTime}:00`);
+        return bookingDate >= weekStart && bookingDate < weekEnd;
+      })
+      .reduce((sum, booking) => sum + booking.duration / 60, 0);
+
+    return {
+      staffId: member.id,
+      staffName: member.name,
+      role: member.role,
+      color: member.color,
+      bookedHours,
+      availableHours,
+      utilization: availableHours
+        ? Math.round((bookedHours / availableHours) * 100)
+        : 0,
+    };
+  });
+}
+
+export function getServiceAnalytics(
+  bookings: Booking[],
+  services: ServiceOffering[],
+): ServiceAnalytics {
+  const serviceMap = new Map(services.map((service) => [service.id, service]));
+  const revenueByService = new Map<string, number>();
+  const dayCounts = new Map<string, number>();
+  const hourCounts = new Map<string, number>();
+  const busiestMatrix: Array<{ day: string; hour: string; count: number }> = [];
+  const clientVisits = new Map<string, number>();
+  const billableBookings = bookings.filter(
+    (booking) =>
+      booking.status === "completed" || booking.status === "in_progress",
+  );
+  const validBookings = bookings.filter(
+    (booking) => booking.status !== "cancelled" && booking.status !== "no_show",
+  );
+  const now = new Date();
+  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+  billableBookings.forEach((booking) => {
+    const label =
+      serviceMap.get(booking.serviceId)?.name ?? booking.serviceName;
+    revenueByService.set(
+      label,
+      (revenueByService.get(label) ?? 0) + booking.price,
+    );
+  });
+
+  SERVICE_WEEK_DAYS.forEach((day) => {
+    for (let hour = 8; hour < 18; hour += 1) {
+      const hourLabel = `${String(hour).padStart(2, "0")}:00`;
+      const count = bookings.filter((booking) => {
+        const bookingDate = new Date(`${booking.date}T${booking.startTime}:00`);
+        const bookingDay = SERVICE_WEEK_DAYS[(bookingDate.getDay() + 6) % 7];
+        return (
+          bookingDay === day && Number(booking.startTime.slice(0, 2)) === hour
+        );
+      }).length;
+      busiestMatrix.push({ day, hour: hourLabel, count });
+      dayCounts.set(day, (dayCounts.get(day) ?? 0) + count);
+      hourCounts.set(hourLabel, (hourCounts.get(hourLabel) ?? 0) + count);
+    }
+  });
+
+  validBookings.forEach((booking) => {
+    clientVisits.set(
+      booking.clientId,
+      (clientVisits.get(booking.clientId) ?? 0) + 1,
+    );
+  });
+
+  const currentMonthRevenue = getServiceBookingRevenue(
+    billableBookings.filter(
+      (booking) =>
+        new Date(`${booking.date}T${booking.startTime}:00`) >=
+        currentMonthStart,
+    ),
+    ["completed", "in_progress"],
+  );
+  const previousMonthRevenue = getServiceBookingRevenue(
+    billableBookings.filter((booking) => {
+      const bookingDate = new Date(`${booking.date}T${booking.startTime}:00`);
+      return (
+        bookingDate >= previousMonthStart && bookingDate < currentMonthStart
+      );
+    }),
+    ["completed", "in_progress"],
+  );
+  const underBookedDay = [...dayCounts.entries()].sort(
+    (left, right) => left[1] - right[1],
+  )[0];
+  const topHour = [...hourCounts.entries()].sort(
+    (left, right) => right[1] - left[1],
+  )[0];
+  const retentionBase = clientVisits.size || 1;
+  const repeatClients = [...clientVisits.values()].filter(
+    (count) => count >= 2,
+  ).length;
+  const clientRetentionRate = Math.round((repeatClients / retentionBase) * 100);
+  const averageJobValue = billableBookings.length
+    ? Math.round(
+        billableBookings.reduce((sum, booking) => sum + booking.price, 0) /
+          billableBookings.length,
+      )
+    : 0;
+  const delta = previousMonthRevenue
+    ? Math.round(
+        ((currentMonthRevenue - previousMonthRevenue) / previousMonthRevenue) *
+          100,
+      )
+    : currentMonthRevenue > 0
+      ? 100
+      : 0;
+
+  return {
+    revenueByServiceType: [...revenueByService.entries()]
+      .map(([name, value]) => ({ name, value }))
+      .sort((left, right) => right.value - left.value),
+    busiestMatrix,
+    busiestDays: [...dayCounts.entries()].map(([name, value]) => ({
+      name,
+      value,
+    })),
+    busiestHours: [...hourCounts.entries()].map(([name, value]) => ({
+      name,
+      value,
+    })),
+    bookingStatusBreakdown: [
+      "scheduled",
+      "confirmed",
+      "in_progress",
+      "completed",
+      "cancelled",
+      "no_show",
+    ].map((status) => ({
+      name: status,
+      value: bookings.filter((booking) => booking.status === status).length,
+    })),
+    clientRetentionRate,
+    averageJobValue,
+    monthlyComparison: {
+      current: currentMonthRevenue,
+      previous: previousMonthRevenue,
+      delta,
+    },
+    aiInsights: [
+      underBookedDay
+        ? `${underBookedDay[0]} is 40% under-booked compared with peak days — try a targeted service discount.`
+        : "Bookings are balanced across the week.",
+      topHour
+        ? `${topHour[0]} is your busiest hour. Consider assigning diagnostics overflow to keep bays moving.`
+        : "No clear peak hour yet.",
+      clientRetentionRate >= 45
+        ? `Repeat customers are ${clientRetentionRate}%. Double down on reminders and loyalty rewards.`
+        : `Retention is ${clientRetentionRate}%. Follow up with recent clients to improve repeat visits.`,
+    ],
+  };
+}
+
+export function getServicesBusinessSlug(profile?: ServiceBusinessProfile) {
+  return profile?.id || "nairobi-auto-care";
 }
