@@ -119,7 +119,8 @@ function RootComponent() {
   const isStandaloneLayout =
     pathname.startsWith("/dashboard") ||
     pathname.startsWith("/pay") ||
-    pathname.startsWith("/table");
+    pathname.startsWith("/table") ||
+    pathname.startsWith("/admin");
 
   if (isStandaloneLayout) {
     return (

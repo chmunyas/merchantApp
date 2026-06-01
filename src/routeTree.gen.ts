@@ -17,8 +17,10 @@ import { Route as MerchantRouteImport } from "./routes/merchant";
 import { Route as DashboardRouteImport } from "./routes/dashboard";
 import { Route as ConverterRouteImport } from "./routes/converter";
 import { Route as BeneficiariesRouteImport } from "./routes/beneficiaries";
+import { Route as AdminRouteImport } from "./routes/admin";
 import { Route as IndexRouteImport } from "./routes/index";
 import { Route as DashboardIndexRouteImport } from "./routes/dashboard/index";
+import { Route as AdminIndexRouteImport } from "./routes/admin/index";
 import { Route as TableTableIdRouteImport } from "./routes/table.$tableId";
 import { Route as RetailStoreIdRouteImport } from "./routes/retail.$storeId";
 import { Route as DashboardStaffRouteImport } from "./routes/dashboard/staff";
@@ -30,6 +32,9 @@ import { Route as DashboardPaymentsRouteImport } from "./routes/dashboard/paymen
 import { Route as DashboardMenuRouteImport } from "./routes/dashboard/menu";
 import { Route as DashboardAnalyticsRouteImport } from "./routes/dashboard/analytics";
 import { Route as BookBusinessIdRouteImport } from "./routes/book.$businessId";
+import { Route as AdminMerchantsRouteImport } from "./routes/admin/merchants";
+import { Route as AdminFeaturesRouteImport } from "./routes/admin/features";
+import { Route as AdminActivityRouteImport } from "./routes/admin/activity";
 
 const TableRoute = TableRouteImport.update({
   id: "/table",
@@ -71,6 +76,11 @@ const BeneficiariesRoute = BeneficiariesRouteImport.update({
   path: "/beneficiaries",
   getParentRoute: () => rootRouteImport,
 } as any);
+const AdminRoute = AdminRouteImport.update({
+  id: "/admin",
+  path: "/admin",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const IndexRoute = IndexRouteImport.update({
   id: "/",
   path: "/",
@@ -80,6 +90,11 @@ const DashboardIndexRoute = DashboardIndexRouteImport.update({
   id: "/",
   path: "/",
   getParentRoute: () => DashboardRoute,
+} as any);
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: "/",
+  path: "/",
+  getParentRoute: () => AdminRoute,
 } as any);
 const TableTableIdRoute = TableTableIdRouteImport.update({
   id: "/$tableId",
@@ -136,9 +151,25 @@ const BookBusinessIdRoute = BookBusinessIdRouteImport.update({
   path: "/book/$businessId",
   getParentRoute: () => rootRouteImport,
 } as any);
+const AdminMerchantsRoute = AdminMerchantsRouteImport.update({
+  id: "/merchants",
+  path: "/merchants",
+  getParentRoute: () => AdminRoute,
+} as any);
+const AdminFeaturesRoute = AdminFeaturesRouteImport.update({
+  id: "/features",
+  path: "/features",
+  getParentRoute: () => AdminRoute,
+} as any);
+const AdminActivityRoute = AdminActivityRouteImport.update({
+  id: "/activity",
+  path: "/activity",
+  getParentRoute: () => AdminRoute,
+} as any);
 
 export interface FileRoutesByFullPath {
   "/": typeof IndexRoute;
+  "/admin": typeof AdminRouteWithChildren;
   "/beneficiaries": typeof BeneficiariesRoute;
   "/converter": typeof ConverterRoute;
   "/dashboard": typeof DashboardRouteWithChildren;
@@ -147,6 +178,9 @@ export interface FileRoutesByFullPath {
   "/payments": typeof PaymentsRoute;
   "/reports": typeof ReportsRoute;
   "/table": typeof TableRouteWithChildren;
+  "/admin/activity": typeof AdminActivityRoute;
+  "/admin/features": typeof AdminFeaturesRoute;
+  "/admin/merchants": typeof AdminMerchantsRoute;
   "/book/$businessId": typeof BookBusinessIdRoute;
   "/dashboard/analytics": typeof DashboardAnalyticsRoute;
   "/dashboard/menu": typeof DashboardMenuRoute;
@@ -158,6 +192,7 @@ export interface FileRoutesByFullPath {
   "/dashboard/staff": typeof DashboardStaffRoute;
   "/retail/$storeId": typeof RetailStoreIdRoute;
   "/table/$tableId": typeof TableTableIdRoute;
+  "/admin/": typeof AdminIndexRoute;
   "/dashboard/": typeof DashboardIndexRoute;
 }
 export interface FileRoutesByTo {
@@ -169,6 +204,9 @@ export interface FileRoutesByTo {
   "/payments": typeof PaymentsRoute;
   "/reports": typeof ReportsRoute;
   "/table": typeof TableRouteWithChildren;
+  "/admin/activity": typeof AdminActivityRoute;
+  "/admin/features": typeof AdminFeaturesRoute;
+  "/admin/merchants": typeof AdminMerchantsRoute;
   "/book/$businessId": typeof BookBusinessIdRoute;
   "/dashboard/analytics": typeof DashboardAnalyticsRoute;
   "/dashboard/menu": typeof DashboardMenuRoute;
@@ -180,11 +218,13 @@ export interface FileRoutesByTo {
   "/dashboard/staff": typeof DashboardStaffRoute;
   "/retail/$storeId": typeof RetailStoreIdRoute;
   "/table/$tableId": typeof TableTableIdRoute;
+  "/admin": typeof AdminIndexRoute;
   "/dashboard": typeof DashboardIndexRoute;
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
   "/": typeof IndexRoute;
+  "/admin": typeof AdminRouteWithChildren;
   "/beneficiaries": typeof BeneficiariesRoute;
   "/converter": typeof ConverterRoute;
   "/dashboard": typeof DashboardRouteWithChildren;
@@ -193,6 +233,9 @@ export interface FileRoutesById {
   "/payments": typeof PaymentsRoute;
   "/reports": typeof ReportsRoute;
   "/table": typeof TableRouteWithChildren;
+  "/admin/activity": typeof AdminActivityRoute;
+  "/admin/features": typeof AdminFeaturesRoute;
+  "/admin/merchants": typeof AdminMerchantsRoute;
   "/book/$businessId": typeof BookBusinessIdRoute;
   "/dashboard/analytics": typeof DashboardAnalyticsRoute;
   "/dashboard/menu": typeof DashboardMenuRoute;
@@ -204,12 +247,14 @@ export interface FileRoutesById {
   "/dashboard/staff": typeof DashboardStaffRoute;
   "/retail/$storeId": typeof RetailStoreIdRoute;
   "/table/$tableId": typeof TableTableIdRoute;
+  "/admin/": typeof AdminIndexRoute;
   "/dashboard/": typeof DashboardIndexRoute;
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
   fullPaths:
     | "/"
+    | "/admin"
     | "/beneficiaries"
     | "/converter"
     | "/dashboard"
@@ -218,6 +263,9 @@ export interface FileRouteTypes {
     | "/payments"
     | "/reports"
     | "/table"
+    | "/admin/activity"
+    | "/admin/features"
+    | "/admin/merchants"
     | "/book/$businessId"
     | "/dashboard/analytics"
     | "/dashboard/menu"
@@ -229,6 +277,7 @@ export interface FileRouteTypes {
     | "/dashboard/staff"
     | "/retail/$storeId"
     | "/table/$tableId"
+    | "/admin/"
     | "/dashboard/";
   fileRoutesByTo: FileRoutesByTo;
   to:
@@ -240,6 +289,9 @@ export interface FileRouteTypes {
     | "/payments"
     | "/reports"
     | "/table"
+    | "/admin/activity"
+    | "/admin/features"
+    | "/admin/merchants"
     | "/book/$businessId"
     | "/dashboard/analytics"
     | "/dashboard/menu"
@@ -251,10 +303,12 @@ export interface FileRouteTypes {
     | "/dashboard/staff"
     | "/retail/$storeId"
     | "/table/$tableId"
+    | "/admin"
     | "/dashboard";
   id:
     | "__root__"
     | "/"
+    | "/admin"
     | "/beneficiaries"
     | "/converter"
     | "/dashboard"
@@ -263,6 +317,9 @@ export interface FileRouteTypes {
     | "/payments"
     | "/reports"
     | "/table"
+    | "/admin/activity"
+    | "/admin/features"
+    | "/admin/merchants"
     | "/book/$businessId"
     | "/dashboard/analytics"
     | "/dashboard/menu"
@@ -274,11 +331,13 @@ export interface FileRouteTypes {
     | "/dashboard/staff"
     | "/retail/$storeId"
     | "/table/$tableId"
+    | "/admin/"
     | "/dashboard/";
   fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute;
+  AdminRoute: typeof AdminRouteWithChildren;
   BeneficiariesRoute: typeof BeneficiariesRoute;
   ConverterRoute: typeof ConverterRoute;
   DashboardRoute: typeof DashboardRouteWithChildren;
@@ -349,6 +408,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof BeneficiariesRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/admin": {
+      id: "/admin";
+      path: "/admin";
+      fullPath: "/admin";
+      preLoaderRoute: typeof AdminRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/": {
       id: "/";
       path: "/";
@@ -362,6 +428,13 @@ declare module "@tanstack/react-router" {
       fullPath: "/dashboard/";
       preLoaderRoute: typeof DashboardIndexRouteImport;
       parentRoute: typeof DashboardRoute;
+    };
+    "/admin/": {
+      id: "/admin/";
+      path: "/";
+      fullPath: "/admin/";
+      preLoaderRoute: typeof AdminIndexRouteImport;
+      parentRoute: typeof AdminRoute;
     };
     "/table/$tableId": {
       id: "/table/$tableId";
@@ -440,8 +513,45 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof BookBusinessIdRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/admin/merchants": {
+      id: "/admin/merchants";
+      path: "/merchants";
+      fullPath: "/admin/merchants";
+      preLoaderRoute: typeof AdminMerchantsRouteImport;
+      parentRoute: typeof AdminRoute;
+    };
+    "/admin/features": {
+      id: "/admin/features";
+      path: "/features";
+      fullPath: "/admin/features";
+      preLoaderRoute: typeof AdminFeaturesRouteImport;
+      parentRoute: typeof AdminRoute;
+    };
+    "/admin/activity": {
+      id: "/admin/activity";
+      path: "/activity";
+      fullPath: "/admin/activity";
+      preLoaderRoute: typeof AdminActivityRouteImport;
+      parentRoute: typeof AdminRoute;
+    };
   }
 }
+
+interface AdminRouteChildren {
+  AdminActivityRoute: typeof AdminActivityRoute;
+  AdminFeaturesRoute: typeof AdminFeaturesRoute;
+  AdminMerchantsRoute: typeof AdminMerchantsRoute;
+  AdminIndexRoute: typeof AdminIndexRoute;
+}
+
+const AdminRouteChildren: AdminRouteChildren = {
+  AdminActivityRoute: AdminActivityRoute,
+  AdminFeaturesRoute: AdminFeaturesRoute,
+  AdminMerchantsRoute: AdminMerchantsRoute,
+  AdminIndexRoute: AdminIndexRoute,
+};
+
+const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren);
 
 interface DashboardRouteChildren {
   DashboardAnalyticsRoute: typeof DashboardAnalyticsRoute;
@@ -483,6 +593,7 @@ const TableRouteWithChildren = TableRoute._addFileChildren(TableRouteChildren);
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdminRoute: AdminRouteWithChildren,
   BeneficiariesRoute: BeneficiariesRoute,
   ConverterRoute: ConverterRoute,
   DashboardRoute: DashboardRouteWithChildren,
