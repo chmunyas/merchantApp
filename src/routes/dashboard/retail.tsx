@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   BarChart3,
+  Building2,
   Boxes,
   ClipboardList,
   CreditCard,
@@ -34,6 +35,7 @@ import {
 } from "recharts";
 
 import type {
+  BNPLTransaction,
   CreditCustomer,
   CreditEntry,
   PurchaseOrder,
@@ -69,6 +71,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { BNPLCheckout } from "@/components/merchant/features/BNPLCheckout";
 import {
   ensureRetailDemoData,
   getCreditAging,
@@ -102,7 +105,7 @@ type SaleCartItem = {
   stock: number;
   sku: string;
 };
-type PaymentMethod = "mpesa" | "cash";
+type PaymentMethod = "mpesa" | "cash" | "bnpl";
 type ProductForm = {
   id?: string;
   name: string;
@@ -153,7 +156,7 @@ const currency = new Intl.NumberFormat("en-KE", {
   maximumFractionDigits: 0,
 });
 
-const paymentPieColors = ["#2563eb", "#10b981", "#dc2626"];
+const paymentPieColors = ["#2563eb", "#10b981", "#dc2626", "#003DA5"];
 const tabs: Array<{ value: RetailTab; label: string; icon: typeof Store }> = [
   { value: "products", label: "Products", icon: Store },
   { value: "inventory", label: "Inventory", icon: Boxes },
@@ -699,6 +702,7 @@ function RetailDashboardPage() {
     setSaleCustomerPhone("");
     setReceiptPhone("");
     setMpesaPhone("");
+    setPaymentMethod("mpesa");
     setPaymentOpen(false);
   }
 
@@ -713,7 +717,14 @@ function RetailDashboardPage() {
     }));
   }
 
-  function completeSale(method: RetailSale["paymentMethod"]) {
+  function completeSale(
+    method: RetailSale["paymentMethod"],
+    overrides?: {
+      bnplTransaction?: BNPLTransaction;
+      customerName?: string;
+      customerPhone?: string;
+    },
+  ) {
     if (!storeProfile || !saleItems.length) return;
     const productMap = new Map(
       products.map((product) => [product.id, product]),
@@ -745,10 +756,13 @@ function RetailDashboardPage() {
       })),
       total: saleTotal,
       paymentMethod: method,
-      customerName: saleCustomerName.trim() || undefined,
+      customerName:
+        overrides?.customerName || saleCustomerName.trim() || undefined,
       customerPhone:
-        (method === "mpesa" ? mpesaPhone : saleCustomerPhone).trim() ||
-        undefined,
+        (method === "mpesa"
+          ? mpesaPhone
+          : overrides?.customerPhone || saleCustomerPhone
+        ).trim() || undefined,
       mpesaRef:
         method === "mpesa" ? `PS${Date.now().toString().slice(-6)}` : undefined,
       createdAt: new Date().toISOString(),
@@ -823,7 +837,9 @@ function RetailDashboardPage() {
       setStatusMessage(
         method === "mpesa"
           ? `M-Pesa STK push sent to ${mpesaPhone}.`
-          : "Cash sale recorded successfully.",
+          : method === "bnpl"
+            ? `Co-op BNPL approved${overrides?.bnplTransaction?.coopReference ? ` · ${overrides.bnplTransaction.coopReference}` : ""}.`
+            : "Cash sale recorded successfully.",
       );
     }
     setReceiptPreview({
@@ -1770,7 +1786,9 @@ function RetailDashboardPage() {
             <Card className="rounded-3xl">
               <CardHeader>
                 <CardTitle>Payment mix</CardTitle>
-                <CardDescription>M-Pesa vs cash vs credit</CardDescription>
+                <CardDescription>
+                  M-Pesa, cash, credit and Co-op BNPL
+                </CardDescription>
               </CardHeader>
               <CardContent className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
@@ -1839,6 +1857,7 @@ function RetailDashboardPage() {
                   <option value="mpesa">M-Pesa</option>
                   <option value="cash">Cash</option>
                   <option value="credit">Credit</option>
+                  <option value="bnpl">Co-op BNPL</option>
                 </select>
                 <select
                   className="h-9 rounded-md border border-input bg-transparent px-3 text-sm"
@@ -1903,9 +1922,13 @@ function RetailDashboardPage() {
                                 "bg-slate-100 text-slate-700",
                               sale.paymentMethod === "credit" &&
                                 "bg-red-100 text-red-700",
+                              sale.paymentMethod === "bnpl" &&
+                                "bg-blue-100 text-blue-700",
                             )}
                           >
-                            {sale.paymentMethod}
+                            {sale.paymentMethod === "bnpl"
+                              ? "Co-op BNPL"
+                              : sale.paymentMethod}
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -2385,7 +2408,12 @@ function RetailDashboardPage() {
       </Tabs>
 
       <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
-        <DialogContent className="rounded-3xl sm:max-w-xl">
+        <DialogContent
+          className={cn(
+            "rounded-3xl",
+            paymentMethod === "bnpl" ? "sm:max-w-2xl" : "sm:max-w-xl",
+          )}
+        >
           <DialogHeader>
             <DialogTitle>Charge customer</DialogTitle>
             <DialogDescription>
@@ -2393,7 +2421,7 @@ function RetailDashboardPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-3">
               <button
                 type="button"
                 className={cn(
@@ -2424,7 +2452,41 @@ function RetailDashboardPage() {
                   Record till payment immediately
                 </p>
               </button>
+              <button
+                type="button"
+                className={cn(
+                  "rounded-2xl border p-4 text-left",
+                  paymentMethod === "bnpl"
+                    ? "border-[#003DA5] bg-blue-50"
+                    : "border-border",
+                )}
+                onClick={() => setPaymentMethod("bnpl")}
+              >
+                <div className="flex items-center gap-2 font-semibold">
+                  <Building2 className="h-4 w-4" />
+                  Co-op BNPL
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Approve instalments inside this checkout modal
+                </p>
+              </button>
             </div>
+            {paymentMethod === "bnpl" ? (
+              <BNPLCheckout
+                amount={saleTotal}
+                description={`${saleItems.length} retail items at ${storeProfile?.name || "PesaSwap"}`}
+                merchantId={storeProfile?.id}
+                onCancel={() => setPaymentMethod("mpesa")}
+                onSuccess={(transaction) =>
+                  completeSale("bnpl", {
+                    bnplTransaction: transaction,
+                    customerName: transaction.customerName,
+                    customerPhone: transaction.customerPhone,
+                  })
+                }
+                orderId={`retail-${Date.now()}`}
+              />
+            ) : null}
             {paymentMethod === "mpesa" ? (
               <label className="space-y-2 text-sm">
                 <span className="font-medium">M-Pesa phone number</span>
@@ -2435,24 +2497,29 @@ function RetailDashboardPage() {
                 />
               </label>
             ) : null}
-            <div className="rounded-2xl bg-slate-50 p-4 text-sm">
-              <div className="flex items-center justify-between">
-                <span>Items</span>
-                <span>
-                  {saleItems.reduce((sum, item) => sum + item.qty, 0)}
-                </span>
-              </div>
-              <div className="mt-2 flex items-center justify-between font-semibold">
-                <span>Total</span>
-                <span>{currency.format(saleTotal)}</span>
-              </div>
-            </div>
-            <Button
-              className="h-12 w-full rounded-2xl"
-              onClick={() => completeSale(paymentMethod)}
-            >
-              Confirm {paymentMethod === "mpesa" ? "M-Pesa" : "cash"} payment
-            </Button>
+            {paymentMethod !== "bnpl" ? (
+              <>
+                <div className="rounded-2xl bg-slate-50 p-4 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span>Items</span>
+                    <span>
+                      {saleItems.reduce((sum, item) => sum + item.qty, 0)}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between font-semibold">
+                    <span>Total</span>
+                    <span>{currency.format(saleTotal)}</span>
+                  </div>
+                </div>
+                <Button
+                  className="h-12 w-full rounded-2xl"
+                  onClick={() => completeSale(paymentMethod)}
+                >
+                  Confirm {paymentMethod === "mpesa" ? "M-Pesa" : "cash"}{" "}
+                  payment
+                </Button>
+              </>
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>

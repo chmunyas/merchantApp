@@ -382,13 +382,15 @@ export type RetailSale = {
   id: string;
   items: { productId: string; name: string; qty: number; unitPrice: number }[];
   total: number;
-  paymentMethod: "mpesa" | "cash" | "credit";
+  paymentMethod: "mpesa" | "cash" | "credit" | "bnpl";
   customerName?: string;
   customerPhone?: string;
   mpesaRef?: string;
   createdAt: string;
   refunded?: boolean;
 };
+
+export type { BNPLTransaction } from "@/lib/coop-bnpl";
 
 export type StockAdjustment = {
   id: string;

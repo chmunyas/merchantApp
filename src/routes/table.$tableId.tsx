@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
   CalendarDays,
+  Building2,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -24,7 +25,9 @@ import {
 } from "lucide-react";
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
+import { BNPLCheckout } from "@/components/merchant/features/BNPLCheckout";
 import type {
+  BNPLTransaction,
   CatalogueItem,
   StaffMember,
 } from "@/components/merchant/features/types";
@@ -91,6 +94,7 @@ type StoredPayment = {
   tipAmount: number;
   totalCharged: number;
   phone: string;
+  method: "mpesa" | "bnpl";
   splitMode: SplitMode;
   status: "success";
 };
@@ -122,6 +126,11 @@ type PaymentReceipt = {
   tipAmount: number;
   totalCharged: number;
   phone: string;
+  method?: "mpesa" | "bnpl";
+  coopReference?: string;
+  monthlyPayment?: number;
+  tenure?: number;
+  customerName?: string;
 };
 
 type EncodedTablePayload = {
@@ -161,6 +170,9 @@ function TableCustomerPage() {
   const [tipSelection, setTipSelection] = useState<TipValue>(10);
   const [customTip, setCustomTip] = useState<string>("");
   const [phone, setPhone] = useState<string>("");
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<
+    "mpesa" | "bnpl"
+  >("mpesa");
   const [reviewRating, setReviewRating] = useState<number>(0);
   const [reviewComment, setReviewComment] = useState<string>("");
   const [reviewTags, setReviewTags] = useState<string[]>([]);
@@ -473,6 +485,7 @@ function TableCustomerPage() {
 
   const canPlaceOrder = cart.length > 0;
   const canPay =
+    selectedPaymentMethod === "mpesa" &&
     !isProcessingPayment &&
     payerSubtotal > 0 &&
     totalCharge > 0 &&
@@ -1059,56 +1072,116 @@ function TableCustomerPage() {
                     ) : null}
                   </div>
 
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                    <label className="block text-sm text-slate-200">
-                      M-Pesa phone number
-                      <input
-                        className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 outline-none transition focus:border-[#00A651]"
-                        inputMode="tel"
-                        onChange={(event) => setPhone(event.target.value)}
-                        placeholder="07XX XXX XXX"
-                        value={phone}
-                      />
-                    </label>
-
-                    <div className="mt-4 space-y-2 rounded-2xl bg-slate-900 p-4">
-                      <SummaryRow
-                        label="Your bill share"
-                        value={formatMoney(payerSubtotal)}
-                      />
-                      <SummaryRow label="Tip" value={formatMoney(tipAmount)} />
-                      <SummaryRow
-                        highlight
-                        label="M-Pesa charge"
-                        value={formatMoney(totalCharge)}
-                      />
-                    </div>
-
-                    {paymentError ? (
-                      <p className="mt-3 text-sm text-rose-300">
-                        {paymentError}
-                      </p>
-                    ) : null}
-
+                  <div className="grid gap-3 sm:grid-cols-2">
                     <button
-                      className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#00A651] font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
-                      disabled={!canPay}
-                      onClick={handlePayment}
+                      className={`rounded-2xl border p-4 text-left transition ${
+                        selectedPaymentMethod === "mpesa"
+                          ? "border-[#00A651] bg-[#00A651]/10 text-white"
+                          : "border-white/10 bg-white/5 text-slate-200"
+                      }`}
+                      onClick={() => {
+                        setPaymentError("");
+                        setSelectedPaymentMethod("mpesa");
+                      }}
                       type="button"
                     >
-                      {isProcessingPayment ? (
-                        <>
-                          <Clock3 className="h-5 w-5 animate-spin" />
-                          Processing payment…
-                        </>
-                      ) : (
-                        <>
-                          <Phone className="h-5 w-5" />
-                          Pay with M-Pesa
-                        </>
-                      )}
+                      <div className="flex items-center gap-2 text-base font-semibold">
+                        <Phone className="h-4 w-4" />
+                        M-Pesa
+                      </div>
+                      <p className="mt-2 text-sm text-slate-300">
+                        Instant STK push to the customer phone.
+                      </p>
+                    </button>
+                    <button
+                      className={`rounded-2xl border p-4 text-left transition ${
+                        selectedPaymentMethod === "bnpl"
+                          ? "border-[#003DA5] bg-[#003DA5]/15 text-white"
+                          : "border-white/10 bg-white/5 text-slate-200"
+                      }`}
+                      onClick={() => {
+                        setPaymentError("");
+                        setSelectedPaymentMethod("bnpl");
+                      }}
+                      type="button"
+                    >
+                      <div className="flex items-center gap-2 text-base font-semibold">
+                        <Building2 className="h-4 w-4" />
+                        Co-op BNPL
+                      </div>
+                      <p className="mt-2 text-sm text-slate-300">
+                        Buy now and repay in flexible instalments.
+                      </p>
                     </button>
                   </div>
+
+                  {selectedPaymentMethod === "mpesa" ? (
+                    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                      <label className="block text-sm text-slate-200">
+                        M-Pesa phone number
+                        <input
+                          className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 outline-none transition focus:border-[#00A651]"
+                          inputMode="tel"
+                          onChange={(event) => setPhone(event.target.value)}
+                          placeholder="07XX XXX XXX"
+                          value={phone}
+                        />
+                      </label>
+
+                      <div className="mt-4 space-y-2 rounded-2xl bg-slate-900 p-4">
+                        <SummaryRow
+                          label="Your bill share"
+                          value={formatMoney(payerSubtotal)}
+                        />
+                        <SummaryRow
+                          label="Tip"
+                          value={formatMoney(tipAmount)}
+                        />
+                        <SummaryRow
+                          highlight
+                          label="M-Pesa charge"
+                          value={formatMoney(totalCharge)}
+                        />
+                      </div>
+
+                      {paymentError ? (
+                        <p className="mt-3 text-sm text-rose-300">
+                          {paymentError}
+                        </p>
+                      ) : null}
+
+                      <button
+                        className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#00A651] font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+                        disabled={!canPay}
+                        onClick={handlePayment}
+                        type="button"
+                      >
+                        {isProcessingPayment ? (
+                          <>
+                            <Clock3 className="h-5 w-5 animate-spin" />
+                            Processing payment…
+                          </>
+                        ) : (
+                          <>
+                            <Phone className="h-5 w-5" />
+                            Pay with M-Pesa
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  ) : (
+                    <BNPLCheckout
+                      amount={totalCharge}
+                      description={`Table ${tableNumber} checkout at ${snapshot?.settings.businessProfile.name ?? "PesaSwap"}`}
+                      merchantId={
+                        snapshot?.settings.businessProfile.tillNumber ||
+                        "fx-engine-demo"
+                      }
+                      onCancel={() => setSelectedPaymentMethod("mpesa")}
+                      onSuccess={handleBNPLSuccess}
+                      orderId={`table-${tableId}-${billItems.length}-${Math.round(totalCharge)}`}
+                    />
+                  )}
                 </div>
               ) : (
                 <EmptyState
@@ -1136,13 +1209,21 @@ function TableCustomerPage() {
                         : "Paid"}
                     </p>
                     <p className="mt-1 text-sm text-emerald-50/80">
-                      {latestReceipt?.phone
-                        ? `STK push sent to ${latestReceipt.phone}`
-                        : "Your payment went through successfully."}
+                      {latestReceipt?.method === "bnpl"
+                        ? `${latestReceipt.customerName || "Customer"} approved via Co-op BNPL${latestReceipt.monthlyPayment && latestReceipt.tenure ? ` · ${formatMoney(latestReceipt.monthlyPayment)}/month for ${latestReceipt.tenure} days` : ""}`
+                        : latestReceipt?.phone
+                          ? `STK push sent to ${latestReceipt.phone}`
+                          : "Your payment went through successfully."}
                     </p>
                   </div>
                   <CheckCircle2 className="h-8 w-8 text-emerald-300" />
                 </div>
+                {latestReceipt?.method === "bnpl" &&
+                latestReceipt.coopReference ? (
+                  <p className="mt-3 text-sm text-emerald-50/80">
+                    Co-op reference: {latestReceipt.coopReference}
+                  </p>
+                ) : null}
               </div>
 
               <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -1589,6 +1670,7 @@ function TableCustomerPage() {
         amountPaid: payerSubtotal,
         createdAt: now,
         id: paymentId,
+        method: "mpesa",
         phone,
         splitMode,
         status: "success",
@@ -1600,6 +1682,7 @@ function TableCustomerPage() {
       setLatestReceipt({
         amountPaid: payerSubtotal,
         id: paymentId,
+        method: "mpesa",
         paidAt: now,
         phone,
         tipAmount,
@@ -1617,6 +1700,41 @@ function TableCustomerPage() {
     } finally {
       setIsProcessingPayment(false);
     }
+  }
+
+  function handleBNPLSuccess(transaction: BNPLTransaction) {
+    if (!snapshot || !currentTable) return;
+
+    const now = new Date().toISOString();
+    const nextPayment: StoredPayment = {
+      amountPaid: payerSubtotal,
+      createdAt: now,
+      id: transaction.id,
+      method: "bnpl",
+      phone: transaction.customerPhone,
+      splitMode,
+      status: "success",
+      tipAmount,
+      totalCharged: totalCharge,
+    };
+
+    setPayments((current) => [...current, nextPayment]);
+    setLatestReceipt({
+      amountPaid: payerSubtotal,
+      coopReference: transaction.coopReference,
+      customerName: transaction.customerName,
+      id: transaction.id,
+      method: "bnpl",
+      monthlyPayment: transaction.monthlyPayment,
+      paidAt: now,
+      phone: transaction.customerPhone,
+      tenure: transaction.tenure,
+      tipAmount,
+      totalCharged: totalCharge,
+    });
+    setScreen("success");
+    setSelectedBillKeys([]);
+    setPaymentError("");
   }
 
   function toggleReviewTag(tag: string) {

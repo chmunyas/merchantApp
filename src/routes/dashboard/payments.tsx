@@ -21,6 +21,7 @@ import {
   type MerchantPayment,
   type MerchantSnapshot,
 } from "@/lib/merchant-dashboard";
+import { getBNPLTransactions, type BNPLTransaction } from "@/lib/coop-bnpl";
 import { pesaswapClient } from "@/lib/pesaswap-payments";
 
 export const Route = createFileRoute("/dashboard/payments")({
@@ -52,10 +53,27 @@ function DashboardPaymentsPage() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<MerchantPayment | null>(null);
   const [refundLoading, setRefundLoading] = useState(false);
+  const [bnplTransactions, setBnplTransactions] = useState<BNPLTransaction[]>(
+    [],
+  );
 
   useEffect(() => {
     generateDemoData();
     setSnapshot(loadMerchantSnapshot());
+    setBnplTransactions(getBNPLTransactions());
+  }, []);
+
+  useEffect(() => {
+    function syncBnplTransactions() {
+      setBnplTransactions(getBNPLTransactions());
+    }
+
+    window.addEventListener("storage", syncBnplTransactions);
+    window.addEventListener("focus", syncBnplTransactions);
+    return () => {
+      window.removeEventListener("storage", syncBnplTransactions);
+      window.removeEventListener("focus", syncBnplTransactions);
+    };
   }, []);
 
   const transactions = useMemo(() => {
@@ -95,6 +113,38 @@ function DashboardPaymentsPage() {
 
   const paginated = filtered.slice((page - 1) * pageSize, page * pageSize);
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const bnplSummary = useMemo(() => {
+    const now = new Date();
+    const totalVolume = bnplTransactions.reduce(
+      (sum, transaction) => sum + transaction.amount,
+      0,
+    );
+    const pendingSettlements = bnplTransactions.filter(
+      (transaction) =>
+        transaction.status === "approved" && !transaction.merchantPaidAt,
+    );
+    const settledThisMonth = bnplTransactions.filter((transaction) => {
+      if (!transaction.merchantPaidAt) return false;
+      const settledAt = new Date(transaction.merchantPaidAt);
+      return (
+        settledAt.getMonth() === now.getMonth() &&
+        settledAt.getFullYear() === now.getFullYear()
+      );
+    });
+
+    return {
+      pendingAmount: pendingSettlements.reduce(
+        (sum, transaction) => sum + transaction.amount,
+        0,
+      ),
+      pendingCount: pendingSettlements.length,
+      settledAmount: settledThisMonth.reduce(
+        (sum, transaction) => sum + transaction.amount,
+        0,
+      ),
+      totalVolume,
+    };
+  }, [bnplTransactions]);
 
   useEffect(() => {
     setPage(1);
@@ -238,6 +288,108 @@ function DashboardPaymentsPage() {
           <Button onClick={handleExport} className="gap-2">
             <Download className="h-4 w-4" /> Export CSV
           </Button>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-border bg-card p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">Co-op BNPL transactions</h2>
+            <p className="text-sm text-muted-foreground">
+              Track financed checkouts, pending settlements and Co-op
+              references.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl border border-border bg-slate-50 p-4">
+              <p className="text-sm text-muted-foreground">Total BNPL volume</p>
+              <p className="mt-2 text-2xl font-semibold">
+                {currency.format(bnplSummary.totalVolume)}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-border bg-slate-50 p-4">
+              <p className="text-sm text-muted-foreground">
+                Pending settlements
+              </p>
+              <p className="mt-2 text-2xl font-semibold">
+                {currency.format(bnplSummary.pendingAmount)}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {bnplSummary.pendingCount} waiting for Co-op settlement
+              </p>
+            </div>
+            <div className="rounded-2xl border border-border bg-slate-50 p-4">
+              <p className="text-sm text-muted-foreground">
+                Settled this month
+              </p>
+              <p className="mt-2 text-2xl font-semibold">
+                {currency.format(bnplSummary.settledAmount)}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6 overflow-x-auto rounded-2xl border border-border">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50 text-left text-muted-foreground">
+              <tr>
+                {[
+                  "Date",
+                  "Customer",
+                  "Amount",
+                  "Tenure",
+                  "Status",
+                  "Co-op Ref",
+                ].map((column) => (
+                  <th key={column} className="px-4 py-3 font-medium">
+                    {column}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {bnplTransactions.length ? (
+                bnplTransactions.map((transaction, index) => (
+                  <tr
+                    key={transaction.id}
+                    className={`border-t border-border ${index % 2 === 0 ? "bg-white" : "bg-slate-50/40"}`}
+                  >
+                    <td className="px-4 py-3">
+                      {format(new Date(transaction.createdAt), "dd MMM yyyy")}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div>{transaction.customerName}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {transaction.nationalId}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 font-mono">
+                      {currency.format(transaction.amount)}
+                    </td>
+                    <td className="px-4 py-3">{transaction.tenure} days</td>
+                    <td className="px-4 py-3">
+                      <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700">
+                        {transaction.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {transaction.coopReference || "Pending"}
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td
+                    colSpan={6}
+                    className="px-4 py-8 text-center text-sm text-muted-foreground"
+                  >
+                    No BNPL transactions yet. Complete a Co-op BNPL checkout to
+                    see it here.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 

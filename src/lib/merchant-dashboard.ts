@@ -2476,7 +2476,7 @@ function buildRetailSales(
   const paymentMethods: RetailSale["paymentMethod"][] = [
     "mpesa",
     "cash",
-    "cash",
+    "bnpl",
     "mpesa",
     "credit",
   ];
@@ -2807,12 +2807,14 @@ export function getRetailAnalytics(
     );
   }, 0);
 
-  const paymentBreakdown = ["mpesa", "cash", "credit"].map((method) => ({
-    name: method,
-    value: validSales
-      .filter((sale) => sale.paymentMethod === method)
-      .reduce((sum, sale) => sum + sale.total, 0),
-  }));
+  const paymentBreakdown = ["mpesa", "cash", "credit", "bnpl"].map(
+    (method) => ({
+      name: method,
+      value: validSales
+        .filter((sale) => sale.paymentMethod === method)
+        .reduce((sum, sale) => sum + sale.total, 0),
+    }),
+  );
 
   const topProducts = Array.from(
     validSales
