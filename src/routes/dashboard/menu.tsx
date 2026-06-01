@@ -1,60 +1,37 @@
 import { createFileRoute } from "@tanstack/react-router";
-import {
-  Camera,
-  Clock3,
-  Download,
-  Eye,
-  Globe,
-  ImageIcon,
-  Link2,
-  MapPinned,
-  Pencil,
-  Plus,
-  Search,
-  Trash2,
-  Upload,
-} from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import { toast } from "sonner";
-
+import { useEffect, useMemo, useState } from "react";
+import { CustomerMenuList } from "@/components/merchant/features/customer-menu-list";
 import type {
   CatalogueItem,
-  ExternalMenu,
   ItemModifier,
   Menu,
   MenuSchedule,
-  SupportedMenuLocale,
+  ModifierOption,
   Zone,
 } from "@/components/merchant/features/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import {
   ensureMerchantDemoData,
-  getActiveMenuSchedule,
-  getActiveMenus,
-  getOrderedCategories,
-  getScheduleDayIndex,
-  getTableZone,
-  getVisibleCatalogueForTable,
-  isMenuScheduleActive,
-  loadMerchantSnapshot,
+  getActiveMenuSchedules,
+  getCurrentActiveMenuIds,
+  getMenuCategoriesByIds,
+  getOrderedMerchantCategories,
+  getZoneForTable,
   saveMerchantCatalogue,
   saveMerchantCategoryOrder,
-  saveMerchantExternalMenus,
-  saveMerchantMenus,
   saveMerchantMenuSchedules,
+  saveMerchantMenus,
   saveMerchantZones,
-  type MerchantSnapshot,
 } from "@/lib/merchant-dashboard";
 import { cn } from "@/lib/utils";
 
@@ -62,75 +39,64 @@ export const Route = createFileRoute("/dashboard/menu")({
   component: DashboardMenuPage,
 });
 
-type MenuTab = "items" | "menus" | "zones" | "schedules" | "external";
-type ScheduleDraft = MenuSchedule;
-type MenuDraft = Omit<Menu, "id" | "createdAt">;
-type ZoneDraft = {
-  id?: string;
-  name: string;
-  menuIds: string[];
-  tableStart: number;
-  tableEnd: number;
-};
-type TranslationDraft = Record<
-  SupportedMenuLocale,
-  { name: string; description: string }
->;
-type CsvImportField =
-  | "ignore"
-  | "name"
-  | "price"
-  | "category"
-  | "description"
-  | "dietary";
-type CsvColumnMapping = Record<string, CsvImportField>;
-type ExternalMenuDraft = {
-  name: string;
-  type: "pdf" | "url";
-  content: string;
-};
+type TabKey = "items" | "menus" | "zones" | "schedules";
 
-type ItemSwitchProps = {
-  checked: boolean;
-  onCheckedChange: (checked: boolean) => void;
-};
-
-const dietaryOptions = ["vegan", "vegetarian", "gluten-free", "halal"];
-const defaultCategories = ["Mains", "Sides", "Drinks", "Cocktails", "Desserts"];
-const weekDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const menuLocales: SupportedMenuLocale[] = ["en", "sw", "fr", "ar"];
-const csvImportFields: Array<{ value: CsvImportField; label: string }> = [
-  { value: "ignore", label: "Ignore" },
-  { value: "name", label: "Name" },
-  { value: "price", label: "Price" },
-  { value: "category", label: "Category" },
-  { value: "description", label: "Description" },
-  { value: "dietary", label: "Dietary" },
+const TAB_OPTIONS: Array<{ key: TabKey; label: string }> = [
+  { key: "items", label: "Items" },
+  { key: "menus", label: "Menus" },
+  { key: "zones", label: "Zones" },
+  { key: "schedules", label: "Schedules" },
 ];
 
-function emptyTranslationDraft(): TranslationDraft {
-  return {
-    en: { name: "", description: "" },
-    sw: { name: "", description: "" },
-    fr: { name: "", description: "" },
-    ar: { name: "", description: "" },
-  };
+const DIETARY_OPTIONS = [
+  "vegan",
+  "vegetarian",
+  "gluten-free",
+  "halal",
+  "contains-nuts",
+  "dairy-free",
+];
+
+const DAYS = [
+  { value: 0, label: "Sun" },
+  { value: 1, label: "Mon" },
+  { value: 2, label: "Tue" },
+  { value: 3, label: "Wed" },
+  { value: 4, label: "Thu" },
+  { value: 5, label: "Fri" },
+  { value: 6, label: "Sat" },
+];
+
+const ZONE_BORDER_CLASSES = [
+  "border-l-cyan-500",
+  "border-l-emerald-500",
+  "border-l-fuchsia-500",
+  "border-l-amber-500",
+  "border-l-violet-500",
+];
+
+function createId(prefix: string) {
+  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function emptyExternalMenuDraft(): ExternalMenuDraft {
+function createEmptyModifierOption(): ModifierOption {
+  return { id: createId("option"), label: "", priceAdjustment: 0 };
+}
+
+function createEmptyModifier(): ItemModifier {
   return {
+    id: createId("modifier"),
     name: "",
-    type: "url",
-    content: "",
+    options: [createEmptyModifierOption()],
   };
 }
 
-function emptyDraftItem(): CatalogueItem {
+function createEmptyItem(): CatalogueItem {
   return {
-    id: "",
+    id: createId("item"),
     name: "",
     price: 0,
-    category: "Mains",
+    category: "",
     dietary: [],
     destination: "kitchen",
     image: "",
@@ -141,451 +107,256 @@ function emptyDraftItem(): CatalogueItem {
   };
 }
 
-function emptyScheduleDraft(): ScheduleDraft {
+function createEmptyMenu(): Menu {
   return {
-    id: "",
-    name: "",
-    days: [],
-    startTime: "09:00",
-    endTime: "17:00",
-    categories: [],
-  };
-}
-
-function emptyMenuDraft(): MenuDraft {
-  return {
+    id: createId("menu"),
     name: "",
     description: "",
     categories: [],
-    isActive: true,
+    isActive: false,
+    createdAt: new Date().toISOString(),
   };
 }
 
-function emptyZoneDraft(): ZoneDraft {
+function createEmptyZone(): Zone {
   return {
+    id: createId("zone"),
     name: "",
     menuIds: [],
-    tableStart: 1,
-    tableEnd: 4,
+    tableRange: [1, 10],
   };
 }
 
-function cloneModifiers(modifiers?: ItemModifier[]) {
-  return (modifiers || []).map((modifier) => ({
-    ...modifier,
-    options: modifier.options.map((option) => ({ ...option })),
-  }));
-}
-
-function readFileAsDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(new Error("Image upload failed"));
-    reader.readAsDataURL(file);
-  });
-}
-
-function readFileAsText(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(new Error("File upload failed"));
-    reader.readAsText(file);
-  });
-}
-
-function parseCsv(content: string) {
-  const rows: string[][] = [];
-  let currentRow: string[] = [];
-  let currentField = "";
-  let inQuotes = false;
-
-  for (let index = 0; index < content.length; index += 1) {
-    const char = content[index];
-    const nextChar = content[index + 1];
-
-    if (char === '"') {
-      if (inQuotes && nextChar === '"') {
-        currentField += '"';
-        index += 1;
-      } else {
-        inQuotes = !inQuotes;
-      }
-      continue;
-    }
-
-    if (char === "," && !inQuotes) {
-      currentRow.push(currentField.trim());
-      currentField = "";
-      continue;
-    }
-
-    if ((char === "\n" || char === "\r") && !inQuotes) {
-      if (char === "\r" && nextChar === "\n") index += 1;
-      currentRow.push(currentField.trim());
-      if (currentRow.some((field) => field.length > 0)) {
-        rows.push(currentRow);
-      }
-      currentRow = [];
-      currentField = "";
-      continue;
-    }
-
-    currentField += char;
-  }
-
-  if (currentField.length > 0 || currentRow.length > 0) {
-    currentRow.push(currentField.trim());
-    if (currentRow.some((field) => field.length > 0)) {
-      rows.push(currentRow);
-    }
-  }
-
-  const [headers = [], ...dataRows] = rows;
+function createEmptySchedule(): MenuSchedule {
   return {
-    headers,
-    rows: dataRows,
+    id: createId("schedule"),
+    name: "",
+    days: [1, 2, 3, 4, 5],
+    startTime: "12:00",
+    endTime: "16:00",
+    categories: [],
+    menuIds: [],
   };
 }
 
-function inferCsvField(header: string): CsvImportField {
-  const normalized = header.trim().toLowerCase();
-  if (normalized.includes("name") || normalized.includes("item")) return "name";
-  if (normalized.includes("price") || normalized.includes("amount"))
-    return "price";
-  if (normalized.includes("category")) return "category";
-  if (normalized.includes("description") || normalized.includes("desc"))
-    return "description";
-  if (
-    normalized.includes("dietary") ||
-    normalized.includes("allergen") ||
-    normalized.includes("tag")
-  ) {
-    return "dietary";
-  }
-  return "ignore";
+function upsertById<T extends { id: string }>(items: T[], nextItem: T) {
+  const exists = items.some((item) => item.id === nextItem.id);
+  return exists
+    ? items.map((item) => (item.id === nextItem.id ? nextItem : item))
+    : [...items, nextItem];
 }
 
-function escapeCsvValue(value: string | number | boolean | null | undefined) {
-  let text = String(value ?? "");
-  // Prevent CSV formula injection in spreadsheet apps
-  if (/^[=+\-@\t\r]/.test(text)) {
-    text = `'${text}`;
-  }
-  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+function removeById<T extends { id: string }>(items: T[], id: string) {
+  return items.filter((item) => item.id !== id);
 }
 
-function hasTranslations(item: CatalogueItem) {
-  return menuLocales.some((locale) => {
-    const translation = item.translations?.[locale];
-    return Boolean(
-      translation?.name?.trim() || translation?.description?.trim(),
-    );
-  });
+function toggleValue(values: string[], value: string) {
+  return values.includes(value)
+    ? values.filter((entry) => entry !== value)
+    : [...values, value];
 }
 
-function buildTranslationDraft(item: CatalogueItem): TranslationDraft {
-  const draft = emptyTranslationDraft();
-  menuLocales.forEach((locale) => {
-    const translation = item.translations?.[locale];
-    draft[locale] = {
-      name:
-        locale === "en"
-          ? translation?.name || item.name
-          : translation?.name || "",
-      description:
-        locale === "en"
-          ? translation?.description || item.description || ""
-          : translation?.description || "",
-    };
-  });
-  return draft;
+function toggleDay(days: number[], value: number) {
+  return days.includes(value)
+    ? days.filter((day) => day !== value)
+    : [...days, value].sort((a, b) => a - b);
 }
 
-function normaliseTranslationDraft(draft: TranslationDraft) {
-  const translations: NonNullable<CatalogueItem["translations"]> = {};
-
-  menuLocales.forEach((locale) => {
-    const translation = draft[locale];
-    const name = translation.name.trim();
-    const description = translation.description.trim();
-
-    if (!name && !description) return;
-
-    translations[locale] = {
-      name,
-      description: description || undefined,
-    };
-  });
-
-  return Object.keys(translations).length ? translations : undefined;
-}
-
-function formatScheduleDays(days: number[]) {
-  return days
-    .slice()
-    .sort((a, b) => a - b)
-    .map((day) => weekDays[day])
-    .join(" · ");
-}
-
-function getModifierSummary(modifiers?: ItemModifier[]) {
-  if (!modifiers?.length) return "No modifiers";
-  return `${modifiers.length} modifier group${modifiers.length === 1 ? "" : "s"}`;
-}
-
-function Switch({ checked, onCheckedChange }: ItemSwitchProps) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onCheckedChange(!checked)}
-      className={cn(
-        "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
-        checked ? "bg-emerald-500" : "bg-slate-300",
-      )}
-    >
-      <span
-        className={cn(
-          "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform",
-          checked ? "translate-x-5" : "translate-x-0.5",
-        )}
-      />
-    </button>
+function sortItems(items: CatalogueItem[], categoryOrder: string[]) {
+  const orderIndex = new Map(
+    categoryOrder.map((category, index) => [category, index]),
   );
+  return [...items].sort((a, b) => {
+    const categoryDelta =
+      (orderIndex.get(a.category) ?? 999) - (orderIndex.get(b.category) ?? 999);
+    if (categoryDelta !== 0) return categoryDelta;
+    return a.name.localeCompare(b.name);
+  });
 }
 
 function DashboardMenuPage() {
-  const [snapshot, setSnapshot] = useState<MerchantSnapshot | null>(null);
-  const [activeTab, setActiveTab] = useState<MenuTab>("items");
-  const [category, setCategory] = useState("All");
-  const [search, setSearch] = useState("");
-  const [reorderMode, setReorderMode] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabKey>("items");
+  const [catalogue, setCatalogue] = useState<CatalogueItem[]>([]);
+  const [menus, setMenus] = useState<Menu[]>([]);
+  const [zones, setZones] = useState<Zone[]>([]);
+  const [menuSchedules, setMenuSchedules] = useState<MenuSchedule[]>([]);
+  const [categoryOrder, setCategoryOrder] = useState<string[]>([]);
+  const [itemDraft, setItemDraft] = useState<CatalogueItem | null>(null);
+  const [menuDraft, setMenuDraft] = useState<Menu | null>(null);
+  const [zoneDraft, setZoneDraft] = useState<Zone | null>(null);
+  const [scheduleDraft, setScheduleDraft] = useState<MenuSchedule | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<string>("All");
   const [draggedCategory, setDraggedCategory] = useState<string | null>(null);
-  const [itemDialogOpen, setItemDialogOpen] = useState(false);
-  const [editingItemId, setEditingItemId] = useState<string | null>(null);
-  const [draftItem, setDraftItem] = useState<CatalogueItem>(emptyDraftItem());
-  const [translationDialogOpen, setTranslationDialogOpen] = useState(false);
-  const [translationItemId, setTranslationItemId] = useState<string | null>(
-    null,
-  );
-  const [translationDraft, setTranslationDraft] = useState<TranslationDraft>(
-    emptyTranslationDraft(),
-  );
-  const [menuDialogOpen, setMenuDialogOpen] = useState(false);
-  const [editingMenuId, setEditingMenuId] = useState<string | null>(null);
-  const [menuDraft, setMenuDraft] = useState<MenuDraft>(emptyMenuDraft());
-  const [zoneDialogOpen, setZoneDialogOpen] = useState(false);
-  const [editingZoneId, setEditingZoneId] = useState<string | null>(null);
-  const [zoneDraft, setZoneDraft] = useState<ZoneDraft>(emptyZoneDraft());
-  const [scheduleDraft, setScheduleDraft] =
-    useState<ScheduleDraft>(emptyScheduleDraft());
-  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(
-    null,
-  );
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewTableNumber, setPreviewTableNumber] = useState(7);
-  const [previewCategory, setPreviewCategory] = useState("All");
-  const [pairingsSearch, setPairingsSearch] = useState("");
-  const [importDialogOpen, setImportDialogOpen] = useState(false);
-  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
-  const [csvRows, setCsvRows] = useState<string[][]>([]);
-  const [csvMapping, setCsvMapping] = useState<CsvColumnMapping>({});
-  const [externalDialogOpen, setExternalDialogOpen] = useState(false);
-  const [externalDraft, setExternalDraft] = useState<ExternalMenuDraft>(
-    emptyExternalMenuDraft(),
-  );
-  const csvInputRef = useRef<HTMLInputElement | null>(null);
+  const [linkedProductSearch, setLinkedProductSearch] = useState("");
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [previewTableNumber, setPreviewTableNumber] = useState(12);
 
   useEffect(() => {
-    ensureMerchantDemoData();
-    setSnapshot(loadMerchantSnapshot());
+    const snapshot = ensureMerchantDemoData();
+    setCatalogue(snapshot.catalogue);
+    setMenus(snapshot.menus);
+    setZones(snapshot.zones);
+    setMenuSchedules(snapshot.menuSchedules);
+    setCategoryOrder(snapshot.categoryOrder);
+    setHydrated(true);
   }, []);
 
-  const allCategories = useMemo(() => {
-    if (!snapshot) return defaultCategories;
-    return getOrderedCategories(
-      [
-        ...defaultCategories,
-        ...snapshot.catalogue.map((item) => item.category),
-        ...snapshot.menus.flatMap((menu) => menu.categories),
-        ...snapshot.menuSchedules.flatMap((schedule) => schedule.categories),
-      ],
-      snapshot.categoryOrder,
-    );
-  }, [snapshot]);
+  useEffect(() => {
+    if (!hydrated) return;
+    saveMerchantCatalogue(catalogue);
+  }, [catalogue, hydrated]);
 
-  const activeSchedule = useMemo(
-    () => (snapshot ? getActiveMenuSchedule(snapshot.menuSchedules) : null),
-    [snapshot],
-  );
+  useEffect(() => {
+    if (!hydrated) return;
+    saveMerchantMenus(menus);
+  }, [hydrated, menus]);
 
-  const activeMenus = useMemo(
-    () => (snapshot ? getActiveMenus(snapshot.menus) : []),
-    [snapshot],
-  );
+  useEffect(() => {
+    if (!hydrated) return;
+    saveMerchantZones(zones);
+  }, [hydrated, zones]);
 
-  const filteredItems = useMemo(() => {
-    if (!snapshot) return [];
-    return snapshot.catalogue.filter((item) => {
-      const matchesCategory = category === "All" || item.category === category;
-      const haystack = `${item.name} ${item.description || ""}`.toLowerCase();
-      return (
-        matchesCategory && (!search || haystack.includes(search.toLowerCase()))
-      );
-    });
-  }, [snapshot, category, search]);
+  useEffect(() => {
+    if (!hydrated) return;
+    saveMerchantMenuSchedules(menuSchedules);
+  }, [hydrated, menuSchedules]);
 
-  const csvPreviewRows = useMemo(() => {
-    return csvRows.slice(0, 5).map((row) => {
-      const mapped = {
-        name: "",
-        price: "",
-        category: "",
-        description: "",
-        dietary: "",
-      };
+  useEffect(() => {
+    if (!hydrated) return;
+    saveMerchantCategoryOrder(categoryOrder);
+  }, [categoryOrder, hydrated]);
 
-      csvHeaders.forEach((header, index) => {
-        const field = csvMapping[header];
-        if (field && field !== "ignore") {
-          mapped[field] = row[index] || "";
-        }
-      });
-
-      return mapped;
-    });
-  }, [csvHeaders, csvMapping, csvRows]);
-
-  const previewItems = useMemo(() => {
-    if (!snapshot) return [];
-    return getVisibleCatalogueForTable({
-      catalogue: snapshot.catalogue,
-      menus: snapshot.menus,
-      zones: snapshot.zones,
-      tableNumber: previewTableNumber,
-      activeSchedule,
-    });
-  }, [snapshot, previewTableNumber, activeSchedule]);
-
-  const previewCategories = useMemo(() => {
-    if (!snapshot) return [];
-    return getOrderedCategories(
-      previewItems.map((item) => item.category),
-      snapshot.categoryOrder,
-    );
-  }, [previewItems, snapshot]);
-
-  const previewVisibleItems = useMemo(
+  const allCategories = useMemo(
     () =>
-      previewCategory === "All"
-        ? previewItems
-        : previewItems.filter((item) => item.category === previewCategory),
-    [previewCategory, previewItems],
+      Array.from(
+        new Set(
+          [
+            ...catalogue.map((item) => item.category),
+            ...menus.flatMap((menu) => menu.categories),
+          ].filter(Boolean),
+        ),
+      ),
+    [catalogue, menus],
+  );
+
+  const orderedCategories = useMemo(
+    () => getOrderedMerchantCategories(allCategories, categoryOrder),
+    [allCategories, categoryOrder],
+  );
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const normalisedOrder = getOrderedMerchantCategories(
+      allCategories,
+      categoryOrder,
+    );
+    if (normalisedOrder.join("|") !== categoryOrder.join("|")) {
+      setCategoryOrder(normalisedOrder);
+    }
+  }, [allCategories, categoryOrder, hydrated]);
+
+  useEffect(() => {
+    if (selectedCategory === "All") return;
+    if (!orderedCategories.includes(selectedCategory)) {
+      setSelectedCategory("All");
+    }
+  }, [orderedCategories, selectedCategory]);
+
+  const activeSchedules = useMemo(
+    () => getActiveMenuSchedules(menuSchedules),
+    [menuSchedules],
+  );
+
+  const activeMenuIds = useMemo(
+    () => getCurrentActiveMenuIds(menus, menuSchedules),
+    [menuSchedules, menus],
   );
 
   const previewZone = useMemo(
-    () => (snapshot ? getTableZone(snapshot.zones, previewTableNumber) : null),
-    [snapshot, previewTableNumber],
+    () => getZoneForTable(zones, previewTableNumber),
+    [previewTableNumber, zones],
   );
 
-  useEffect(() => {
-    if (
-      previewCategory !== "All" &&
-      !previewCategories.includes(previewCategory)
-    ) {
-      setPreviewCategory("All");
+  const previewVisibleMenuIds = useMemo(() => {
+    const zoneMenuIds = previewZone?.menuIds ?? [];
+    if (zoneMenuIds.length) {
+      const intersected = activeMenuIds.length
+        ? zoneMenuIds.filter((menuId) => activeMenuIds.includes(menuId))
+        : zoneMenuIds;
+      return intersected.length ? intersected : zoneMenuIds;
     }
-  }, [previewCategory, previewCategories]);
+    return activeMenuIds;
+  }, [activeMenuIds, previewZone]);
 
-  function refreshSnapshot(next: MerchantSnapshot) {
-    setSnapshot(next);
+  const previewCategories = useMemo(() => {
+    if (!previewVisibleMenuIds.length) return orderedCategories;
+    return getOrderedMerchantCategories(
+      getMenuCategoriesByIds(menus, previewVisibleMenuIds),
+      categoryOrder,
+    );
+  }, [categoryOrder, menus, orderedCategories, previewVisibleMenuIds]);
+
+  const previewItems = useMemo(() => {
+    const visibleSet = new Set(previewCategories);
+    return sortItems(
+      catalogue.filter((item) => visibleSet.has(item.category)),
+      categoryOrder,
+    );
+  }, [catalogue, categoryOrder, previewCategories]);
+
+  const filteredItems = useMemo(() => {
+    const items = sortItems(catalogue, categoryOrder);
+    if (selectedCategory === "All") return items;
+    return items.filter((item) => item.category === selectedCategory);
+  }, [catalogue, categoryOrder, selectedCategory]);
+
+  const linkedProductChoices = useMemo(() => {
+    const search = linkedProductSearch.trim().toLowerCase();
+    const currentId = itemDraft?.id;
+    return sortItems(
+      catalogue.filter((item) => {
+        if (item.id === currentId) return false;
+        if (!search) return true;
+        return `${item.name} ${item.category}`.toLowerCase().includes(search);
+      }),
+      categoryOrder,
+    );
+  }, [catalogue, categoryOrder, itemDraft?.id, linkedProductSearch]);
+
+  const menuLookup = useMemo(
+    () => new Map(menus.map((menu) => [menu.id, menu])),
+    [menus],
+  );
+
+  const itemCountByCategory = useMemo(() => {
+    return catalogue.reduce<Record<string, number>>((acc, item) => {
+      acc[item.category] = (acc[item.category] ?? 0) + 1;
+      return acc;
+    }, {});
+  }, [catalogue]);
+
+  function handleCategoryDrop(targetCategory: string) {
+    if (!draggedCategory || draggedCategory === targetCategory) return;
+    const nextOrder = orderedCategories.filter(
+      (category) => category !== draggedCategory,
+    );
+    const targetIndex = nextOrder.indexOf(targetCategory);
+    nextOrder.splice(targetIndex, 0, draggedCategory);
+    setCategoryOrder(nextOrder);
+    setDraggedCategory(null);
   }
 
-  function persistCatalogue(nextCatalogue: CatalogueItem[]) {
-    if (!snapshot) return;
-    saveMerchantCatalogue(nextCatalogue);
-    refreshSnapshot({ ...snapshot, catalogue: nextCatalogue });
-  }
-
-  function persistMenus(nextMenus: Menu[]) {
-    if (!snapshot) return;
-    saveMerchantMenus(nextMenus);
-    refreshSnapshot({ ...snapshot, menus: nextMenus });
-  }
-
-  function persistZones(nextZones: Zone[]) {
-    if (!snapshot) return;
-    saveMerchantZones(nextZones);
-    refreshSnapshot({ ...snapshot, zones: nextZones });
-  }
-
-  function persistSchedules(nextSchedules: MenuSchedule[]) {
-    if (!snapshot) return;
-    saveMerchantMenuSchedules(nextSchedules);
-    refreshSnapshot({ ...snapshot, menuSchedules: nextSchedules });
-  }
-
-  function persistExternalMenus(nextExternalMenus: ExternalMenu[]) {
-    if (!snapshot) return;
-    saveMerchantExternalMenus(nextExternalMenus);
-    refreshSnapshot({ ...snapshot, externalMenus: nextExternalMenus });
-  }
-
-  function persistCategoryOrder(nextOrder: string[]) {
-    if (!snapshot) return;
-    saveMerchantCategoryOrder(nextOrder);
-    refreshSnapshot({ ...snapshot, categoryOrder: nextOrder });
-  }
-
-  function openNewItemDialog() {
-    setEditingItemId(null);
-    setDraftItem(emptyDraftItem());
-    setPairingsSearch("");
-    setItemDialogOpen(true);
-  }
-
-  function openEditItemDialog(item: CatalogueItem) {
-    setEditingItemId(item.id);
-    setDraftItem({
-      ...emptyDraftItem(),
-      ...item,
-      dietary: [...(item.dietary || [])],
-      modifiers: cloneModifiers(item.modifiers),
-      linkedProductIds: [...(item.linkedProductIds || [])],
-    });
-    setPairingsSearch("");
-    setItemDialogOpen(true);
-  }
-
-  function openTranslationsDialog(item: CatalogueItem) {
-    setTranslationItemId(item.id);
-    setTranslationDraft(buildTranslationDraft(item));
-    setTranslationDialogOpen(true);
-  }
-
-  function saveItem() {
-    if (!snapshot || !draftItem.name.trim() || draftItem.price <= 0) return;
-    const id = editingItemId || `item-${Date.now()}`;
-    const nextItem: CatalogueItem = {
-      ...draftItem,
-      id,
-      name: draftItem.name.trim(),
-      category: draftItem.category || allCategories[0] || "Mains",
-      image: draftItem.image || undefined,
-      description: draftItem.description?.trim() || undefined,
-      dietary: [...new Set((draftItem.dietary || []).filter(Boolean))],
-      linkedProductIds: [
-        ...new Set(
-          (draftItem.linkedProductIds || []).filter(
-            (entry) => entry && entry !== id,
-          ),
-        ),
-      ],
+  function handleSaveItem() {
+    if (!itemDraft) return;
+    const cleanedItem: CatalogueItem = {
+      ...itemDraft,
+      name: itemDraft.name.trim(),
+      category: itemDraft.category.trim(),
+      description: itemDraft.description?.trim() ?? "",
+      image: itemDraft.image?.trim() ?? "",
       modifiers:
-        draftItem.modifiers
+        itemDraft.modifiers
           ?.map((modifier) => ({
             ...modifier,
             name: modifier.name.trim(),
@@ -597,2279 +368,1486 @@ function DashboardMenuPage() {
               }))
               .filter((option) => option.label),
           }))
-          .filter((modifier) => modifier.name && modifier.options.length > 0) ||
-        undefined,
+          .filter((modifier) => modifier.name && modifier.options.length) ?? [],
+      linkedProductIds: itemDraft.linkedProductIds?.slice(0, 3) ?? [],
+      price: Number(itemDraft.price) || 0,
     };
 
-    const nextCatalogue = editingItemId
-      ? snapshot.catalogue.map((item) =>
-          item.id === editingItemId ? nextItem : item,
-        )
-      : [nextItem, ...snapshot.catalogue];
+    if (!cleanedItem.name || !cleanedItem.category) return;
 
-    persistCatalogue(nextCatalogue);
-    setItemDialogOpen(false);
-    setEditingItemId(null);
-    setDraftItem(emptyDraftItem());
-    toast.success(editingItemId ? "Menu item updated" : "Menu item created");
+    setCatalogue((current) => upsertById(current, cleanedItem));
+    setCategoryOrder((current) =>
+      getOrderedMerchantCategories(
+        [...allCategories, cleanedItem.category],
+        current,
+      ),
+    );
+    setItemDraft(null);
+    setLinkedProductSearch("");
   }
 
-  function deleteItem(id: string) {
-    if (!snapshot) return;
-    persistCatalogue(
-      snapshot.catalogue
-        .filter((item) => item.id !== id)
+  function handleDeleteItem(itemId: string) {
+    setCatalogue((current) =>
+      current
+        .filter((item) => item.id !== itemId)
         .map((item) => ({
           ...item,
-          linkedProductIds: item.linkedProductIds?.filter(
-            (linkedId) => linkedId !== id,
-          ),
+          linkedProductIds:
+            item.linkedProductIds?.filter((linkedId) => linkedId !== itemId) ??
+            [],
         })),
     );
-    toast.success("Menu item removed");
   }
 
-  function toggleAvailability(id: string, available: boolean) {
-    if (!snapshot) return;
-    persistCatalogue(
-      snapshot.catalogue.map((item) =>
-        item.id === id ? { ...item, available } : item,
-      ),
-    );
-  }
-
-  function addModifierGroup() {
-    setDraftItem((current) => ({
-      ...current,
-      modifiers: [
-        ...(current.modifiers || []),
-        {
-          id: `modifier-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          name: "",
-          options: [
-            {
-              id: `option-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-              label: "",
-              priceAdjustment: 0,
-            },
-          ],
-        },
-      ],
-    }));
-  }
-
-  function updateModifierGroup(
-    modifierId: string,
-    updates: Partial<ItemModifier>,
-  ) {
-    setDraftItem((current) => ({
-      ...current,
-      modifiers: (current.modifiers || []).map((modifier) =>
-        modifier.id === modifierId ? { ...modifier, ...updates } : modifier,
-      ),
-    }));
-  }
-
-  function removeModifierGroup(modifierId: string) {
-    setDraftItem((current) => ({
-      ...current,
-      modifiers: (current.modifiers || []).filter(
-        (modifier) => modifier.id !== modifierId,
-      ),
-    }));
-  }
-
-  function addModifierOption(modifierId: string) {
-    setDraftItem((current) => ({
-      ...current,
-      modifiers: (current.modifiers || []).map((modifier) =>
-        modifier.id === modifierId
-          ? {
-              ...modifier,
-              options: [
-                ...modifier.options,
-                {
-                  id: `option-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                  label: "",
-                  priceAdjustment: 0,
-                },
-              ],
-            }
-          : modifier,
-      ),
-    }));
-  }
-
-  function updateModifierOption(
-    modifierId: string,
-    optionId: string,
-    updates: { label?: string; priceAdjustment?: number },
-  ) {
-    setDraftItem((current) => ({
-      ...current,
-      modifiers: (current.modifiers || []).map((modifier) =>
-        modifier.id === modifierId
-          ? {
-              ...modifier,
-              options: modifier.options.map((option) =>
-                option.id === optionId ? { ...option, ...updates } : option,
-              ),
-            }
-          : modifier,
-      ),
-    }));
-  }
-
-  function removeModifierOption(modifierId: string, optionId: string) {
-    setDraftItem((current) => ({
-      ...current,
-      modifiers: (current.modifiers || []).map((modifier) =>
-        modifier.id === modifierId
-          ? {
-              ...modifier,
-              options: modifier.options.filter(
-                (option) => option.id !== optionId,
-              ),
-            }
-          : modifier,
-      ),
-    }));
-  }
-
-  async function handleImageUpload(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    try {
-      const image = await readFileAsDataUrl(file);
-      setDraftItem((current) => ({ ...current, image }));
-    } catch {
-      toast.error("Could not upload image");
-    }
-  }
-
-  function saveTranslations() {
-    if (!snapshot || !translationItemId) return;
-
-    const englishName = translationDraft.en.name.trim();
-    if (!englishName) {
-      toast.error("English name is required");
-      return;
-    }
-
-    persistCatalogue(
-      snapshot.catalogue.map((item) =>
-        item.id === translationItemId
-          ? {
-              ...item,
-              name: englishName,
-              description: translationDraft.en.description.trim() || undefined,
-              translations: normaliseTranslationDraft(translationDraft),
-            }
-          : item,
-      ),
-    );
-    setTranslationDialogOpen(false);
-    toast.success("Translations saved");
-  }
-
-  async function handleCsvFileImport(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const text = await readFileAsText(file);
-      const parsed = parseCsv(text);
-      if (!parsed.headers.length || !parsed.rows.length) {
-        toast.error("CSV file is empty");
-        return;
-      }
-
-      setCsvHeaders(parsed.headers);
-      setCsvRows(parsed.rows);
-      setCsvMapping(
-        Object.fromEntries(
-          parsed.headers.map((header) => [header, inferCsvField(header)]),
-        ),
-      );
-      setImportDialogOpen(true);
-    } catch {
-      toast.error("Could not import CSV");
-    } finally {
-      event.target.value = "";
-    }
-  }
-
-  function confirmCsvImport() {
-    if (!snapshot) return;
-
-    const now = new Date().toISOString();
-    const importedItems: CatalogueItem[] = [];
-
-    csvRows.forEach((row, rowIndex) => {
-      const mapped: Partial<Record<CsvImportField, string>> = {};
-      csvHeaders.forEach((header, index) => {
-        const field = csvMapping[header];
-        if (field && field !== "ignore") {
-          mapped[field] = row[index] || "";
-        }
-      });
-
-      const name = mapped.name?.trim() || "";
-      const price = Number((mapped.price || "").replace(/[^\d.-]/g, ""));
-      if (!name || !Number.isFinite(price)) return;
-
-      const categoryValue = mapped.category?.trim() || "Imported";
-      importedItems.push({
-        id: `csv-item-${Date.now()}-${rowIndex}`,
-        name,
-        price,
-        category: categoryValue,
-        description: mapped.description?.trim() || undefined,
-        dietary: mapped.dietary
-          ? mapped.dietary
-              .split(/[|,;/]/)
-              .map((entry) => entry.trim())
-              .filter(Boolean)
-          : undefined,
-        destination:
-          categoryValue === "Drinks" || categoryValue === "Cocktails"
-            ? "bar"
-            : "kitchen",
-        available: true,
-        syncSource: "csv-import",
-        syncedAt: now,
-      });
-    });
-
-    if (!importedItems.length) {
-      toast.error("No valid rows found");
-      return;
-    }
-
-    persistCatalogue([...importedItems, ...snapshot.catalogue]);
-    setImportDialogOpen(false);
-    setCsvHeaders([]);
-    setCsvRows([]);
-    setCsvMapping({});
-    toast.success(`${importedItems.length} items imported`);
-  }
-
-  function exportCatalogueCsv() {
-    if (!snapshot || typeof window === "undefined") return;
-    const rows = [
-      [
-        "name",
-        "price",
-        "category",
-        "description",
-        "dietary",
-        "destination",
-        "available",
-      ],
-      ...snapshot.catalogue.map((item) => [
-        item.name,
-        item.price,
-        item.category,
-        item.description || "",
-        (item.dietary || []).join("|"),
-        item.destination || "",
-        item.available ?? true,
-      ]),
-    ];
-    const content = rows
-      .map((row) => row.map(escapeCsvValue).join(","))
-      .join("\n");
-    const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "merchant-catalogue.csv";
-    link.click();
-    window.URL.revokeObjectURL(url);
-  }
-
-  async function handleExternalPdfUpload(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const content = await readFileAsDataUrl(file);
-      setExternalDraft((current) => ({ ...current, content }));
-    } catch {
-      toast.error("Could not upload PDF");
-    } finally {
-      event.target.value = "";
-    }
-  }
-
-  function saveExternalMenu() {
-    if (
-      !snapshot ||
-      !externalDraft.name.trim() ||
-      !externalDraft.content.trim()
-    ) {
-      toast.error("Add a name and menu source");
-      return;
-    }
-
-    // Validate URL type is HTTPS
-    if (
-      externalDraft.type === "url" &&
-      !externalDraft.content.trim().startsWith("https://")
-    ) {
-      toast.error("URL must start with https://");
-      return;
-    }
-
-    persistExternalMenus([
-      {
-        id: `external-${Date.now()}`,
-        name: externalDraft.name.trim(),
-        type: externalDraft.type,
-        content: externalDraft.content.trim(),
-        createdAt: new Date().toISOString(),
-      },
-      ...snapshot.externalMenus,
-    ]);
-    setExternalDialogOpen(false);
-    setExternalDraft(emptyExternalMenuDraft());
-    toast.success("External menu added");
-  }
-
-  function deleteExternalMenu(id: string) {
-    if (!snapshot) return;
-    persistExternalMenus(
-      snapshot.externalMenus.filter((externalMenu) => externalMenu.id !== id),
-    );
-    toast.success("External menu removed");
-  }
-
-  function toggleLinkedProduct(id: string) {
-    setDraftItem((current) => ({
-      ...current,
-      linkedProductIds: current.linkedProductIds?.includes(id)
-        ? current.linkedProductIds.filter((entry) => entry !== id)
-        : [...(current.linkedProductIds || []), id],
-    }));
-  }
-
-  function openNewMenuDialog() {
-    setEditingMenuId(null);
-    setMenuDraft(emptyMenuDraft());
-    setMenuDialogOpen(true);
-  }
-
-  function openEditMenuDialog(menu: Menu) {
-    setEditingMenuId(menu.id);
-    setMenuDraft({
-      name: menu.name,
-      description: menu.description || "",
-      categories: [...menu.categories],
-      isActive: menu.isActive,
-    });
-    setMenuDialogOpen(true);
-  }
-
-  function saveMenu() {
-    if (!snapshot || !menuDraft.name.trim() || !menuDraft.categories.length)
-      return;
-    const nextMenu: Menu = {
-      id: editingMenuId || `menu-${Date.now()}`,
+  function handleSaveMenu() {
+    if (!menuDraft) return;
+    const cleanedMenu: Menu = {
+      ...menuDraft,
       name: menuDraft.name.trim(),
-      description: menuDraft.description?.trim() || undefined,
-      categories: [...new Set(menuDraft.categories)],
-      isActive: menuDraft.isActive,
-      createdAt:
-        snapshot.menus.find((menu) => menu.id === editingMenuId)?.createdAt ||
-        new Date().toISOString(),
-    };
-
-    const nextMenus = editingMenuId
-      ? snapshot.menus.map((menu) =>
-          menu.id === editingMenuId ? nextMenu : menu,
-        )
-      : [nextMenu, ...snapshot.menus];
-
-    persistMenus(nextMenus);
-    setMenuDialogOpen(false);
-    toast.success(editingMenuId ? "Menu updated" : "Menu created");
-  }
-
-  function deleteMenu(id: string) {
-    if (!snapshot) return;
-    const nextMenus = snapshot.menus.filter((menu) => menu.id !== id);
-    const nextZones = snapshot.zones.map((zone) => ({
-      ...zone,
-      menuIds: zone.menuIds.filter((menuId) => menuId !== id),
-    }));
-    saveMerchantMenus(nextMenus);
-    saveMerchantZones(nextZones);
-    refreshSnapshot({ ...snapshot, menus: nextMenus, zones: nextZones });
-    toast.success("Menu removed");
-  }
-
-  function toggleMenuActive(id: string, isActive: boolean) {
-    if (!snapshot) return;
-    persistMenus(
-      snapshot.menus.map((menu) =>
-        menu.id === id ? { ...menu, isActive } : menu,
+      description: menuDraft.description?.trim() ?? "",
+      categories: getOrderedMerchantCategories(
+        menuDraft.categories,
+        categoryOrder,
       ),
+      createdAt: menuDraft.createdAt || new Date().toISOString(),
+    };
+    if (!cleanedMenu.name || !cleanedMenu.categories.length) return;
+    setMenus((current) => upsertById(current, cleanedMenu));
+    setMenuDraft(null);
+  }
+
+  function handleDeleteMenu(menuId: string) {
+    setMenus((current) => removeById(current, menuId));
+    setZones((current) =>
+      current.map((zone) => ({
+        ...zone,
+        menuIds: zone.menuIds.filter((id) => id !== menuId),
+      })),
+    );
+    setMenuSchedules((current) =>
+      current.map((schedule) => ({
+        ...schedule,
+        menuIds: schedule.menuIds.filter((id) => id !== menuId),
+      })),
     );
   }
 
-  function openNewZoneDialog() {
-    setEditingZoneId(null);
-    setZoneDraft(emptyZoneDraft());
-    setZoneDialogOpen(true);
-  }
-
-  function openEditZoneDialog(zone: Zone) {
-    setEditingZoneId(zone.id);
-    setZoneDraft({
-      id: zone.id,
-      name: zone.name,
-      menuIds: [...zone.menuIds],
-      tableStart: zone.tableRange[0],
-      tableEnd: zone.tableRange[1],
-    });
-    setZoneDialogOpen(true);
-  }
-
-  function saveZone() {
-    if (!snapshot || !zoneDraft.name.trim() || !zoneDraft.menuIds.length)
-      return;
-    const tableStart = Math.min(zoneDraft.tableStart, zoneDraft.tableEnd);
-    const tableEnd = Math.max(zoneDraft.tableStart, zoneDraft.tableEnd);
-    const nextZone: Zone = {
-      id: editingZoneId || `zone-${Date.now()}`,
+  function handleSaveZone() {
+    if (!zoneDraft) return;
+    const start = Math.min(...zoneDraft.tableRange);
+    const end = Math.max(...zoneDraft.tableRange);
+    const cleanedZone: Zone = {
+      ...zoneDraft,
       name: zoneDraft.name.trim(),
-      menuIds: [...new Set(zoneDraft.menuIds)],
-      tableRange: [tableStart, tableEnd],
+      menuIds: Array.from(new Set(zoneDraft.menuIds)),
+      tableRange: [start, end],
     };
-
-    const nextZones = editingZoneId
-      ? snapshot.zones.map((zone) =>
-          zone.id === editingZoneId ? nextZone : zone,
-        )
-      : [nextZone, ...snapshot.zones];
-
-    persistZones(nextZones);
-    setZoneDialogOpen(false);
-    toast.success(editingZoneId ? "Zone updated" : "Zone created");
+    if (!cleanedZone.name || !cleanedZone.menuIds.length) return;
+    setZones((current) => upsertById(current, cleanedZone));
+    setZoneDraft(null);
   }
 
-  function deleteZone(id: string) {
-    if (!snapshot) return;
-    persistZones(snapshot.zones.filter((zone) => zone.id !== id));
-    toast.success("Zone removed");
-  }
-
-  function resetScheduleDraft() {
-    setEditingScheduleId(null);
-    setScheduleDraft(emptyScheduleDraft());
-  }
-
-  function saveSchedule() {
-    if (!snapshot || !scheduleDraft.name.trim() || !scheduleDraft.days.length)
-      return;
-    const nextSchedule: MenuSchedule = {
+  function handleSaveSchedule() {
+    if (!scheduleDraft) return;
+    const cleanedSchedule: MenuSchedule = {
       ...scheduleDraft,
-      id: editingScheduleId || `schedule-${Date.now()}`,
       name: scheduleDraft.name.trim(),
-      categories: [...new Set(scheduleDraft.categories)],
+      menuIds: Array.from(new Set(scheduleDraft.menuIds)),
+      days: [...scheduleDraft.days].sort((a, b) => a - b),
     };
-
-    const nextSchedules = editingScheduleId
-      ? snapshot.menuSchedules.map((schedule) =>
-          schedule.id === editingScheduleId ? nextSchedule : schedule,
-        )
-      : [nextSchedule, ...snapshot.menuSchedules];
-
-    persistSchedules(nextSchedules);
-    resetScheduleDraft();
-    toast.success(editingScheduleId ? "Schedule updated" : "Schedule created");
+    if (!cleanedSchedule.name || !cleanedSchedule.menuIds.length) return;
+    setMenuSchedules((current) => upsertById(current, cleanedSchedule));
+    setScheduleDraft(null);
   }
-
-  function editSchedule(schedule: MenuSchedule) {
-    setEditingScheduleId(schedule.id);
-    setScheduleDraft({
-      ...schedule,
-      days: [...schedule.days],
-      categories: [...schedule.categories],
-    });
-  }
-
-  function deleteSchedule(id: string) {
-    if (!snapshot) return;
-    persistSchedules(
-      snapshot.menuSchedules.filter((schedule) => schedule.id !== id),
-    );
-    if (editingScheduleId === id) resetScheduleDraft();
-    toast.success("Schedule removed");
-  }
-
-  function moveCategory(targetCategory: string) {
-    if (!draggedCategory || !snapshot || draggedCategory === targetCategory)
-      return;
-    const nextOrder = [...allCategories];
-    const fromIndex = nextOrder.indexOf(draggedCategory);
-    const toIndex = nextOrder.indexOf(targetCategory);
-    if (fromIndex === -1 || toIndex === -1) return;
-    nextOrder.splice(fromIndex, 1);
-    nextOrder.splice(toIndex, 0, draggedCategory);
-    persistCategoryOrder(nextOrder);
-    setDraggedCategory(null);
-    toast.success("Category order updated");
-  }
-
-  if (!snapshot) {
-    return (
-      <div className="rounded-2xl border border-border bg-card p-6">
-        Loading menu…
-      </div>
-    );
-  }
-
-  const linkedProductOptions = snapshot.catalogue.filter(
-    (item) => item.id !== editingItemId && item.id !== draftItem.id,
-  );
-  const filteredPairingOptions = linkedProductOptions.filter((item) => {
-    const haystack = `${item.name} ${item.category}`.toLowerCase();
-    return !pairingsSearch || haystack.includes(pairingsSearch.toLowerCase());
-  });
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-2xl border border-border bg-card p-6">
+    <div className="relative mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 md:px-6 lg:px-8">
+      <div className="flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-sm">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <div className="flex flex-wrap items-center gap-3">
-              <h1 className="text-2xl font-semibold">Menu management</h1>
-              {activeSchedule ? (
-                <Badge className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-700 hover:bg-emerald-100">
-                  Active schedule: {activeSchedule.name}
-                </Badge>
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-purple-600">
+              Merchant menu controls
+            </p>
+            <div>
+              <h1 className="text-3xl font-semibold text-slate-950">
+                Menu Phase 2
+              </h1>
+              <p className="text-sm text-slate-500">
+                Manage catalogue items, customer-facing menus, table zones, and
+                scheduled menu windows.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {activeSchedules.length ? (
+                activeSchedules.map((schedule) => (
+                  <Badge
+                    key={schedule.id}
+                    className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100"
+                  >
+                    Live now: {schedule.name}
+                  </Badge>
+                ))
               ) : (
-                <Badge className="rounded-full bg-slate-100 px-3 py-1 text-slate-700 hover:bg-slate-100">
-                  No active schedule
+                <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-100">
+                  {menus.filter((menu) => menu.isActive).length} active default
+                  menu(s)
                 </Badge>
               )}
-              <Badge className="rounded-full bg-blue-100 px-3 py-1 text-blue-700 hover:bg-blue-100">
-                {activeMenus.length} active menu
-                {activeMenus.length === 1 ? "" : "s"}
+              <Badge
+                variant="outline"
+                className="border-slate-200 text-slate-600"
+              >
+                {zones.length} zone{zones.length === 1 ? "" : "s"}
               </Badge>
             </div>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Manage menu items, menu groups, table zones, category order, and
-              customer preview.
-            </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-3">
             <Button
+              type="button"
               variant="outline"
-              onClick={() => setPreviewOpen(true)}
-              className="gap-2"
+              onClick={() => setItemDraft(createEmptyItem())}
             >
-              <Eye className="h-4 w-4" /> Preview
+              New item
             </Button>
-            <Button onClick={openNewItemDialog} className="gap-2">
-              <Plus className="h-4 w-4" /> Add item
+            <Button type="button" onClick={() => setIsPreviewOpen(true)}>
+              Preview
             </Button>
           </div>
         </div>
 
-        <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-          <div className="rounded-2xl border border-border p-4">
-            <p className="text-xs text-muted-foreground">Items</p>
-            <p className="mt-2 text-2xl font-semibold">
-              {snapshot.catalogue.length}
-            </p>
-          </div>
-          <div className="rounded-2xl border border-border p-4">
-            <p className="text-xs text-muted-foreground">Menus</p>
-            <p className="mt-2 text-2xl font-semibold">
-              {snapshot.menus.length}
-            </p>
-          </div>
-          <div className="rounded-2xl border border-border p-4">
-            <p className="text-xs text-muted-foreground">Zones</p>
-            <p className="mt-2 text-2xl font-semibold">
-              {snapshot.zones.length}
-            </p>
-          </div>
-          <div className="rounded-2xl border border-border p-4">
-            <p className="text-xs text-muted-foreground">Schedules</p>
-            <p className="mt-2 text-2xl font-semibold">
-              {snapshot.menuSchedules.length}
-            </p>
-          </div>
-          <div className="rounded-2xl border border-border p-4">
-            <p className="text-xs text-muted-foreground">External menus</p>
-            <p className="mt-2 text-2xl font-semibold">
-              {snapshot.externalMenus.length}
-            </p>
-          </div>
+        <div className="flex flex-wrap gap-2 rounded-2xl bg-slate-100 p-1">
+          {TAB_OPTIONS.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setActiveTab(tab.key)}
+              className={cn(
+                "rounded-2xl px-4 py-2 text-sm font-medium transition",
+                activeTab === tab.key
+                  ? "bg-white text-slate-950 shadow-sm"
+                  : "text-slate-500 hover:text-slate-800",
+              )}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      <Tabs
-        value={activeTab}
-        onValueChange={(value) => setActiveTab(value as MenuTab)}
-        className="space-y-4"
-      >
-        <TabsList>
-          <TabsTrigger value="items">Items</TabsTrigger>
-          <TabsTrigger value="menus">Menus</TabsTrigger>
-          <TabsTrigger value="zones">Zones</TabsTrigger>
-          <TabsTrigger value="schedules">Schedules</TabsTrigger>
-          <TabsTrigger value="external">External</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="items" className="space-y-4">
-          <div className="rounded-2xl border border-border bg-card p-6">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setCategory("All")}
-                  className={cn(
-                    "rounded-full px-4 py-2 text-sm font-medium",
-                    category === "All"
-                      ? "bg-slate-900 text-white"
-                      : "bg-slate-100 text-slate-700",
-                  )}
-                >
-                  All
-                </button>
-                {allCategories.map((item) => (
+      {activeTab === "items" ? (
+        <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+          <div className="space-y-6">
+            <Card className="border-slate-200 bg-white/90 shadow-sm">
+              <CardHeader>
+                <CardTitle>Category order</CardTitle>
+                <CardDescription>
+                  Drag category pills into the order customers should see on the
+                  dashboard and QR menu.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap gap-3">
                   <button
-                    key={item}
                     type="button"
-                    draggable={reorderMode}
-                    onDragStart={() => setDraggedCategory(item)}
-                    onDragOver={(event) => {
-                      if (reorderMode) event.preventDefault();
-                    }}
-                    onDrop={() => moveCategory(item)}
-                    onClick={() => !reorderMode && setCategory(item)}
+                    onClick={() => setSelectedCategory("All")}
                     className={cn(
-                      "inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium",
-                      category === item && !reorderMode
-                        ? "bg-slate-900 text-white"
-                        : "bg-slate-100 text-slate-700",
-                      reorderMode && "border border-dashed border-slate-300",
+                      "rounded-full border px-4 py-2 text-sm font-medium transition",
+                      selectedCategory === "All"
+                        ? "border-purple-500 bg-purple-600 text-white"
+                        : "border-slate-200 bg-white text-slate-600",
                     )}
                   >
-                    {reorderMode ? (
-                      <span className="text-base leading-none">⠿</span>
-                    ) : null}
-                    {item}
+                    All items
                   </button>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <div className="relative min-w-72">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder="Search menu items"
-                    className="pl-9"
-                  />
-                </div>
-                <div className="rounded-2xl border border-border bg-background p-1">
-                  <div className="flex flex-wrap items-center gap-1">
-                    <span className="px-2 text-xs font-medium text-muted-foreground">
-                      Import/Export
-                    </span>
-                    <input
-                      ref={csvInputRef}
-                      type="file"
-                      accept=".csv,text/csv"
-                      className="hidden"
-                      onChange={handleCsvFileImport}
-                    />
-                    <Button
-                      variant="outline"
-                      onClick={() => csvInputRef.current?.click()}
-                      className="gap-2"
+                  {orderedCategories.map((category) => (
+                    <button
+                      key={category}
+                      type="button"
+                      draggable
+                      onDragStart={() => setDraggedCategory(category)}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={() => handleCategoryDrop(category)}
+                      onClick={() => setSelectedCategory(category)}
+                      className={cn(
+                        "flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition",
+                        selectedCategory === category
+                          ? "border-purple-500 bg-purple-600 text-white"
+                          : "border-slate-200 bg-white text-slate-700",
+                      )}
                     >
-                      <Upload className="h-4 w-4" /> Import CSV
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={exportCatalogueCsv}
-                      className="gap-2"
-                    >
-                      <Download className="h-4 w-4" /> Export CSV
-                    </Button>
-                  </div>
+                      <span className="text-base leading-none">⠿</span>
+                      <span>{category}</span>
+                      <span className="text-xs opacity-75">
+                        {itemCountByCategory[category] ?? 0}
+                      </span>
+                    </button>
+                  ))}
                 </div>
-                <Button
-                  variant="outline"
-                  onClick={() => setReorderMode((current) => !current)}
+              </CardContent>
+            </Card>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              {filteredItems.map((item) => (
+                <Card
+                  key={item.id}
+                  className="border-slate-200 bg-white/90 shadow-sm"
                 >
-                  {reorderMode ? "Done reordering" : "Reorder categories"}
-                </Button>
-              </div>
+                  <CardContent className="flex h-full flex-col gap-4 p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-lg font-semibold text-slate-950">
+                            {item.name}
+                          </h3>
+                          <Badge
+                            variant="secondary"
+                            className="bg-slate-100 text-slate-700"
+                          >
+                            {item.category}
+                          </Badge>
+                          {item.available === false ? (
+                            <Badge className="bg-rose-100 text-rose-700 hover:bg-rose-100">
+                              Sold out
+                            </Badge>
+                          ) : null}
+                        </div>
+                        <p className="mt-2 text-sm text-slate-500">
+                          {item.description || "No description added yet."}
+                        </p>
+                      </div>
+                      <div className="text-right text-sm text-slate-500">
+                        <p className="text-lg font-semibold text-slate-950">
+                          KES {item.price.toFixed(0)}
+                        </p>
+                        <p>{item.destination === "bar" ? "Bar" : "Kitchen"}</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {item.dietary?.map((tag) => (
+                        <Badge
+                          key={`${item.id}-${tag}`}
+                          variant="outline"
+                          className="border-emerald-200 bg-emerald-50 text-emerald-700"
+                        >
+                          {tag}
+                        </Badge>
+                      ))}
+                    </div>
+                    <div className="mt-auto flex items-center justify-between gap-3 text-sm text-slate-500">
+                      <span>
+                        {item.linkedProductIds?.length ?? 0} suggested
+                        pairing(s)
+                      </span>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setItemDraft({
+                              ...item,
+                              dietary: item.dietary ?? [],
+                              modifiers: item.modifiers ?? [],
+                              linkedProductIds: item.linkedProductIds ?? [],
+                            });
+                            setLinkedProductSearch("");
+                          }}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="border-rose-200 text-rose-600 hover:bg-rose-50"
+                          onClick={() => handleDeleteItem(item.id)}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
             </div>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {filteredItems.map((item) => {
-              const isAvailable = item.available ?? true;
-              return (
-                <div
-                  key={item.id}
-                  className="rounded-2xl border border-border bg-card p-5"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <h3
-                          className={cn(
-                            "text-lg font-semibold",
-                            !isAvailable && "line-through text-slate-400",
-                          )}
-                        >
-                          {item.name}
-                        </h3>
-                        {hasTranslations(item) ? (
-                          <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">
-                            🌐 Translated
-                          </span>
-                        ) : null}
-                        {item.syncSource ? (
-                          <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
-                            Imported
-                          </span>
-                        ) : null}
-                        {!isAvailable ? (
-                          <span className="rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-semibold text-white">
-                            Sold out
-                          </span>
-                        ) : null}
-                      </div>
-                      <p className="font-mono text-xl font-semibold">
-                        KES {item.price.toLocaleString()}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => openEditItemDialog(item)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => deleteItem(item.id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 overflow-hidden rounded-2xl border border-dashed border-slate-200 bg-slate-50">
-                    {item.image ? (
-                      <img
-                        src={item.image}
-                        alt={item.name}
-                        className="h-44 w-full object-cover"
+          <Card className="border-slate-200 bg-white/90 shadow-sm">
+            <CardHeader>
+              <CardTitle>{itemDraft ? "Edit item" : "Create item"}</CardTitle>
+              <CardDescription>
+                Keep your QR menu rich with pricing, dietary labels, modifiers,
+                and suggested pairings.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {itemDraft ? (
+                <div className="space-y-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <Field label="Item name">
+                      <Input
+                        value={itemDraft.name}
+                        onChange={(event) =>
+                          setItemDraft({
+                            ...itemDraft,
+                            name: event.target.value,
+                          })
+                        }
+                        placeholder="Nyama Choma Platter"
                       />
-                    ) : (
-                      <div className="flex h-44 items-center justify-center text-slate-400">
-                        <ImageIcon className="h-8 w-8" />
-                      </div>
-                    )}
-                  </div>
-
-                  {item.description ? (
-                    <p className="mt-4 text-sm text-muted-foreground">
-                      {item.description}
-                    </p>
-                  ) : null}
-
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium">
-                      {item.category}
-                    </span>
-                    <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700">
-                      {item.destination}
-                    </span>
-                    <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-700">
-                      {getModifierSummary(item.modifiers)}
-                    </span>
-                    {item.linkedProductIds?.length ? (
-                      <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-medium text-violet-700">
-                        {item.linkedProductIds.length} pairing
-                        {item.linkedProductIds.length === 1 ? "" : "s"}
-                      </span>
-                    ) : null}
-                    {item.syncedAt ? (
-                      <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-                        Synced {new Date(item.syncedAt).toLocaleDateString()}
-                      </span>
-                    ) : null}
-                  </div>
-
-                  {(item.dietary || []).length ? (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {(item.dietary || []).map((tag) => (
-                        <span
-                          key={tag}
-                          className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700"
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  <div className="mt-4 space-y-3 rounded-2xl bg-slate-50 p-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium">Availability</p>
-                        <p className="text-xs text-muted-foreground">
-                          Shown to customers instantly
-                        </p>
-                      </div>
-                      <Switch
-                        checked={isAvailable}
-                        onCheckedChange={(available) =>
-                          toggleAvailability(item.id, available)
+                    </Field>
+                    <Field label="Category">
+                      <Input
+                        value={itemDraft.category}
+                        onChange={(event) =>
+                          setItemDraft({
+                            ...itemDraft,
+                            category: event.target.value,
+                          })
+                        }
+                        placeholder="Mains"
+                      />
+                    </Field>
+                    <Field label="Price (KES)">
+                      <Input
+                        type="number"
+                        min="0"
+                        value={itemDraft.price}
+                        onChange={(event) =>
+                          setItemDraft({
+                            ...itemDraft,
+                            price: Number(event.target.value),
+                          })
                         }
                       />
-                    </div>
-                    <div className="flex items-center justify-between rounded-2xl border border-dashed border-slate-200 bg-white px-3 py-2">
-                      <div>
-                        <p className="text-sm font-medium">Translations</p>
-                        <p className="text-xs text-muted-foreground">
-                          EN, SW, FR, AR content
-                        </p>
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openTranslationsDialog(item)}
-                        className="gap-2"
+                    </Field>
+                    <Field label="Destination">
+                      <select
+                        value={itemDraft.destination ?? "kitchen"}
+                        onChange={(event) =>
+                          setItemDraft({
+                            ...itemDraft,
+                            destination: event.target
+                              .value as CatalogueItem["destination"],
+                          })
+                        }
+                        className="flex h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900"
                       >
-                        <Globe className="h-4 w-4" />
-                        Translations
-                      </Button>
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium">Sync status</p>
-                      {item.syncSource ? (
-                        <p className="text-xs text-muted-foreground">
-                          Source: {item.syncSource}
-                        </p>
-                      ) : (
-                        <p className="text-xs text-muted-foreground">
-                          Managed locally
-                        </p>
-                      )}
-                    </div>
+                        <option value="kitchen">Kitchen</option>
+                        <option value="bar">Bar</option>
+                      </select>
+                    </Field>
+                    <Field label="Image URL">
+                      <Input
+                        value={itemDraft.image ?? ""}
+                        onChange={(event) =>
+                          setItemDraft({
+                            ...itemDraft,
+                            image: event.target.value,
+                          })
+                        }
+                        placeholder="https://..."
+                      />
+                    </Field>
+                    <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={itemDraft.available !== false}
+                        onChange={(event) =>
+                          setItemDraft({
+                            ...itemDraft,
+                            available: event.target.checked,
+                          })
+                        }
+                        className="h-4 w-4 rounded border-slate-300 text-purple-600"
+                      />
+                      Available for ordering
+                    </label>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        </TabsContent>
 
-        <TabsContent value="menus" className="space-y-4">
-          <div className="flex justify-end">
-            <Button onClick={openNewMenuDialog} className="gap-2">
-              <Plus className="h-4 w-4" /> Add menu
-            </Button>
-          </div>
-          <div className="grid gap-4 lg:grid-cols-2">
-            {snapshot.menus.map((menu) => (
-              <div
-                key={menu.id}
-                className="rounded-2xl border border-border bg-card p-5"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-lg font-semibold">{menu.name}</h3>
-                      {menu.isActive ? (
-                        <Badge className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-700 hover:bg-emerald-100">
-                          Active
-                        </Badge>
-                      ) : null}
-                    </div>
-                    {menu.description ? (
-                      <p className="mt-2 text-sm text-muted-foreground">
-                        {menu.description}
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => openEditMenuDialog(menu)}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => deleteMenu(menu.id)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
+                  <Field label="Description">
+                    <Textarea
+                      value={itemDraft.description ?? ""}
+                      onChange={(event) =>
+                        setItemDraft({
+                          ...itemDraft,
+                          description: event.target.value,
+                        })
+                      }
+                      placeholder="Describe the dish or drink for customers"
+                      rows={3}
+                    />
+                  </Field>
 
-                <div className="mt-4 flex items-center justify-between rounded-2xl bg-slate-50 p-4">
-                  <div>
-                    <p className="text-sm font-medium">
-                      {menu.categories.length} categories
+                  <div className="space-y-3">
+                    <p className="text-sm font-medium text-slate-700">
+                      Dietary badges
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      Created {new Date(menu.createdAt).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <Switch
-                    checked={menu.isActive}
-                    onCheckedChange={(checked) =>
-                      toggleMenuActive(menu.id, checked)
-                    }
-                  />
-                </div>
-
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {getOrderedCategories(
-                    menu.categories,
-                    snapshot.categoryOrder,
-                  ).map((entry) => (
-                    <span
-                      key={entry}
-                      className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700"
-                    >
-                      {entry}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="zones" className="space-y-4">
-          <div className="flex justify-end">
-            <Button onClick={openNewZoneDialog} className="gap-2">
-              <Plus className="h-4 w-4" /> Add zone
-            </Button>
-          </div>
-          <div className="grid gap-4 lg:grid-cols-2">
-            {snapshot.zones.map((zone) => {
-              const assignedMenus = snapshot.menus.filter((menu) =>
-                zone.menuIds.includes(menu.id),
-              );
-              return (
-                <div
-                  key={zone.id}
-                  className="rounded-2xl border border-border bg-card p-5"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <MapPinned className="h-4 w-4 text-muted-foreground" />
-                        <h3 className="text-lg font-semibold">{zone.name}</h3>
-                      </div>
-                      <div className="mt-2 inline-flex rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">
-                        Tables {zone.tableRange[0]}–{zone.tableRange[1]}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => openEditZoneDialog(zone)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => deleteZone(zone.id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 space-y-2">
-                    <p className="text-sm font-medium">Assigned menus</p>
                     <div className="flex flex-wrap gap-2">
-                      {assignedMenus.map((menu) => (
-                        <span
-                          key={menu.id}
-                          className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700"
-                        >
-                          {menu.name}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="schedules" className="space-y-6">
-          <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-            <div className="rounded-2xl border border-border bg-card p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold">Create schedule</h2>
-                  <p className="text-sm text-muted-foreground">
-                    Control which categories show on the customer menu.
-                  </p>
-                </div>
-                {editingScheduleId ? (
-                  <Button variant="ghost" onClick={resetScheduleDraft}>
-                    Cancel edit
-                  </Button>
-                ) : null}
-              </div>
-
-              <div className="mt-5 space-y-5">
-                <Input
-                  placeholder="Lunch Menu"
-                  value={scheduleDraft.name}
-                  onChange={(event) =>
-                    setScheduleDraft((current) => ({
-                      ...current,
-                      name: event.target.value,
-                    }))
-                  }
-                />
-
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Active days</p>
-                  <div className="flex flex-wrap gap-2">
-                    {weekDays.map((day, index) => {
-                      const selected = scheduleDraft.days.includes(index);
-                      return (
-                        <button
-                          key={day}
-                          type="button"
-                          onClick={() =>
-                            setScheduleDraft((current) => ({
-                              ...current,
-                              days: selected
-                                ? current.days.filter(
-                                    (entry) => entry !== index,
-                                  )
-                                : [...current.days, index],
-                            }))
-                          }
-                          className={cn(
-                            "rounded-full border px-3 py-2 text-sm font-medium",
-                            selected
-                              ? "border-emerald-500 bg-emerald-50 text-emerald-700"
-                              : "border-border bg-background text-slate-600",
-                          )}
-                        >
-                          {day}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <label className="space-y-2 text-sm font-medium">
-                    <span>Start time</span>
-                    <Input
-                      type="time"
-                      value={scheduleDraft.startTime}
-                      onChange={(event) =>
-                        setScheduleDraft((current) => ({
-                          ...current,
-                          startTime: event.target.value,
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className="space-y-2 text-sm font-medium">
-                    <span>End time</span>
-                    <Input
-                      type="time"
-                      value={scheduleDraft.endTime}
-                      onChange={(event) =>
-                        setScheduleDraft((current) => ({
-                          ...current,
-                          endTime: event.target.value,
-                        }))
-                      }
-                    />
-                  </label>
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Visible categories</p>
-                  <div className="flex flex-wrap gap-2">
-                    {allCategories.map((option) => {
-                      const selected =
-                        scheduleDraft.categories.includes(option);
-                      return (
+                      {DIETARY_OPTIONS.map((option) => (
                         <button
                           key={option}
                           type="button"
                           onClick={() =>
-                            setScheduleDraft((current) => ({
-                              ...current,
-                              categories: selected
-                                ? current.categories.filter(
-                                    (entry) => entry !== option,
-                                  )
-                                : [...current.categories, option],
-                            }))
+                            setItemDraft({
+                              ...itemDraft,
+                              dietary: toggleValue(
+                                itemDraft.dietary ?? [],
+                                option,
+                              ),
+                            })
                           }
                           className={cn(
-                            "rounded-full border px-3 py-2 text-sm",
-                            selected
-                              ? "border-blue-500 bg-blue-50 text-blue-700"
-                              : "border-border bg-background text-slate-600",
+                            "rounded-full border px-3 py-2 text-sm transition",
+                            itemDraft.dietary?.includes(option)
+                              ? "border-emerald-500 bg-emerald-500 text-white"
+                              : "border-slate-200 bg-white text-slate-600",
                           )}
                         >
                           {option}
                         </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <Button onClick={saveSchedule} className="w-full gap-2">
-                  <Clock3 className="h-4 w-4" />
-                  {editingScheduleId ? "Update schedule" : "Save schedule"}
-                </Button>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="rounded-2xl border border-border bg-card p-6">
-                <h2 className="text-lg font-semibold">
-                  Active schedule right now
-                </h2>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {activeSchedule
-                    ? `${activeSchedule.name} is currently live for customers.`
-                    : "No schedule is active. Customers will see all menu categories allowed by active menus."}
-                </p>
-                {activeSchedule ? (
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {getOrderedCategories(
-                      activeSchedule.categories,
-                      snapshot.categoryOrder,
-                    ).map((entry) => (
-                      <Badge
-                        key={entry}
-                        variant="secondary"
-                        className="rounded-full px-3 py-1"
-                      >
-                        {entry}
-                      </Badge>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-
-              {snapshot.menuSchedules.map((schedule) => {
-                const isActive = isMenuScheduleActive(schedule);
-                const today = schedule.days.includes(getScheduleDayIndex());
-                return (
-                  <div
-                    key={schedule.id}
-                    className={cn(
-                      "rounded-2xl border bg-card p-5",
-                      isActive
-                        ? "border-emerald-300 shadow-sm"
-                        : "border-border",
-                    )}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="text-lg font-semibold">
-                            {schedule.name}
-                          </h3>
-                          {isActive ? (
-                            <span className="rounded-full bg-emerald-500 px-2.5 py-1 text-[10px] font-semibold text-white">
-                              Active now
-                            </span>
-                          ) : null}
-                        </div>
-                        <p className="mt-1 text-sm text-muted-foreground">
-                          {formatScheduleDays(schedule.days)}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => editSchedule(schedule)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => deleteSchedule(schedule.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 flex flex-wrap items-center gap-2">
-                      <span
-                        className={cn(
-                          "rounded-full px-3 py-1 text-xs font-medium",
-                          today
-                            ? "bg-indigo-100 text-indigo-700"
-                            : "bg-slate-100 text-slate-600",
-                        )}
-                      >
-                        {schedule.startTime} – {schedule.endTime}
-                      </span>
-                      {getOrderedCategories(
-                        schedule.categories,
-                        snapshot.categoryOrder,
-                      ).map((entry) => (
-                        <span
-                          key={entry}
-                          className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700"
-                        >
-                          {entry}
-                        </span>
                       ))}
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          </div>
-        </TabsContent>
 
-        <TabsContent value="external" className="space-y-4">
-          <div className="flex justify-end">
-            <Button
-              onClick={() => {
-                setExternalDraft(emptyExternalMenuDraft());
-                setExternalDialogOpen(true);
-              }}
-              className="gap-2"
-            >
-              <Plus className="h-4 w-4" /> Add External Menu
-            </Button>
-          </div>
-
-          {snapshot.externalMenus.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-10 text-center text-sm text-muted-foreground">
-              Add PDF or URL menus for full catalogues like wine lists and
-              banquet menus.
-            </div>
-          ) : (
-            <div className="grid gap-4 lg:grid-cols-2">
-              {snapshot.externalMenus.map((externalMenu) => (
-                <div
-                  key={externalMenu.id}
-                  className={cn(
-                    "rounded-2xl border border-border bg-card p-5",
-                    externalMenu.type === "pdf"
-                      ? "border-l-4 border-l-red-500"
-                      : "border-l-4 border-l-blue-500",
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-lg font-semibold">
-                          {externalMenu.name}
-                        </h3>
-                        <span
-                          className={cn(
-                            "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                            externalMenu.type === "pdf"
-                              ? "bg-red-100 text-red-700"
-                              : "bg-blue-100 text-blue-700",
-                          )}
-                        >
-                          {externalMenu.type.toUpperCase()}
-                        </span>
+                  <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50/70 p-4">
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">
+                          Suggested pairings
+                        </p>
+                        <p className="text-sm text-slate-500">
+                          Pick up to three linked products to surface after this
+                          item is added.
+                        </p>
                       </div>
-                      <p className="text-sm text-muted-foreground">
-                        Added{" "}
-                        {new Date(externalMenu.createdAt).toLocaleDateString()}
-                      </p>
-                      <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Link2 className="h-3.5 w-3.5" />
-                        {externalMenu.type === "pdf"
-                          ? "Embedded PDF menu"
-                          : externalMenu.content}
-                      </p>
+                      <Badge
+                        variant="outline"
+                        className="border-purple-200 text-purple-600"
+                      >
+                        {(itemDraft.linkedProductIds ?? []).length}/3 selected
+                      </Badge>
                     </div>
-
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => deleteExternalMenu(externalMenu.id)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </TabsContent>
-      </Tabs>
-
-      <Dialog open={itemDialogOpen} onOpenChange={setItemDialogOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>
-              {editingItemId ? "Edit menu item" : "Add menu item"}
-            </DialogTitle>
-            <DialogDescription>
-              Manage photos, availability, modifiers, and suggested pairings.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="grid gap-6 py-2 lg:grid-cols-[0.95fr_1.05fr]">
-            <div className="space-y-4">
-              <label className="block">
-                <span className="mb-2 block text-sm font-medium">Photo</span>
-                <label className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
-                  {draftItem.image ? (
-                    <img
-                      src={draftItem.image}
-                      alt="Preview"
-                      className="h-44 w-full rounded-xl object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-40 w-full flex-col items-center justify-center rounded-xl bg-white text-slate-400">
-                      <Camera className="h-8 w-8" />
-                      <p className="mt-3 text-sm font-medium text-slate-600">
-                        Click to upload
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        JPG, PNG, or base64-ready preview
-                      </p>
-                    </div>
-                  )}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={handleImageUpload}
-                  />
-                </label>
-              </label>
-
-              {draftItem.image ? (
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    setDraftItem((current) => ({
-                      ...current,
-                      image: undefined,
-                    }))
-                  }
-                  className="w-full"
-                >
-                  Remove photo
-                </Button>
-              ) : null}
-
-              <div className="rounded-2xl border border-border bg-slate-50 p-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">Availability</span>
-                  <Switch
-                    checked={draftItem.available ?? true}
-                    onCheckedChange={(available) =>
-                      setDraftItem((current) => ({ ...current, available }))
-                    }
-                  />
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Turn this off to show the item as sold out across the menu.
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                <Input
-                  placeholder="Item name"
-                  value={draftItem.name}
-                  onChange={(event) =>
-                    setDraftItem((current) => ({
-                      ...current,
-                      name: event.target.value,
-                    }))
-                  }
-                />
-                <Input
-                  type="number"
-                  placeholder="Price"
-                  value={draftItem.price || ""}
-                  onChange={(event) =>
-                    setDraftItem((current) => ({
-                      ...current,
-                      price: Number(event.target.value),
-                    }))
-                  }
-                />
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <select
-                  value={draftItem.category}
-                  onChange={(event) =>
-                    setDraftItem((current) => ({
-                      ...current,
-                      category: event.target.value,
-                    }))
-                  }
-                  className="rounded-xl border border-border bg-background px-3 py-2 text-sm"
-                >
-                  {allCategories.map((option) => (
-                    <option key={option}>{option}</option>
-                  ))}
-                </select>
-                <select
-                  value={draftItem.destination}
-                  onChange={(event) =>
-                    setDraftItem((current) => ({
-                      ...current,
-                      destination: event.target.value as "kitchen" | "bar",
-                    }))
-                  }
-                  className="rounded-xl border border-border bg-background px-3 py-2 text-sm"
-                >
-                  <option value="kitchen">Kitchen</option>
-                  <option value="bar">Bar</option>
-                </select>
-              </div>
-
-              <textarea
-                placeholder="Write a short product description"
-                value={draftItem.description || ""}
-                onChange={(event) =>
-                  setDraftItem((current) => ({
-                    ...current,
-                    description: event.target.value,
-                  }))
-                }
-                className="min-h-28 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
-              />
-
-              <div className="grid gap-2 sm:grid-cols-2">
-                {dietaryOptions.map((tag) => (
-                  <label
-                    key={tag}
-                    className="flex items-center gap-2 rounded-xl border border-border px-3 py-2 text-sm"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={(draftItem.dietary || []).includes(tag)}
-                      onChange={() =>
-                        setDraftItem((current) => ({
-                          ...current,
-                          dietary: (current.dietary || []).includes(tag)
-                            ? (current.dietary || []).filter(
-                                (entry) => entry !== tag,
-                              )
-                            : [...(current.dietary || []), tag],
-                        }))
+                    <Input
+                      value={linkedProductSearch}
+                      onChange={(event) =>
+                        setLinkedProductSearch(event.target.value)
                       }
+                      placeholder="Search menu items to link"
                     />
-                    {tag}
-                  </label>
-                ))}
-              </div>
-
-              <div className="rounded-2xl border border-border p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-sm font-semibold">
-                      Suggested Pairings
-                    </h3>
-                    <p className="text-xs text-muted-foreground">
-                      Recommend up to a few complementary products.
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-3 space-y-3">
-                  <Input
-                    value={pairingsSearch}
-                    onChange={(event) => setPairingsSearch(event.target.value)}
-                    placeholder="Search other items"
-                  />
-                  <div className="max-h-44 space-y-2 overflow-y-auto">
-                    {filteredPairingOptions.map((item) => {
-                      const selected = (
-                        draftItem.linkedProductIds || []
-                      ).includes(item.id);
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => toggleLinkedProduct(item.id)}
-                          className={cn(
-                            "flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left text-sm",
-                            selected
-                              ? "border-violet-500 bg-violet-50 text-violet-700"
-                              : "border-border",
-                          )}
-                        >
-                          <div>
-                            <p className="font-medium">{item.name}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {item.category} · KES{" "}
-                              {item.price.toLocaleString()}
-                            </p>
-                          </div>
-                          <span>{selected ? "Selected" : "Select"}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-border p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-sm font-semibold">Modifiers</h3>
-                    <p className="text-xs text-muted-foreground">
-                      Add groups like size, extras, or style.
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={addModifierGroup}
-                  >
-                    Add group
-                  </Button>
-                </div>
-                <div className="mt-4 space-y-4">
-                  {(draftItem.modifiers || []).map((modifier) => (
-                    <div
-                      key={modifier.id}
-                      className="rounded-2xl border border-border p-4"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Input
-                          placeholder="Modifier group name"
-                          value={modifier.name}
-                          onChange={(event) =>
-                            updateModifierGroup(modifier.id, {
-                              name: event.target.value,
-                            })
-                          }
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => removeModifierGroup(modifier.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                      <div className="mt-3 space-y-3">
-                        {modifier.options.map((option) => (
-                          <div
-                            key={option.id}
-                            className="grid gap-2 sm:grid-cols-[1fr_140px_auto]"
+                    <div className="max-h-52 space-y-2 overflow-y-auto pr-1">
+                      {linkedProductChoices.map((item) => {
+                        const isSelected =
+                          itemDraft.linkedProductIds?.includes(item.id) ??
+                          false;
+                        const canSelect =
+                          isSelected ||
+                          (itemDraft.linkedProductIds?.length ?? 0) < 3;
+                        return (
+                          <label
+                            key={item.id}
+                            className={cn(
+                              "flex items-center justify-between gap-3 rounded-2xl border px-3 py-3 text-sm",
+                              isSelected
+                                ? "border-purple-300 bg-purple-50"
+                                : "border-slate-200 bg-white",
+                              !canSelect && "opacity-60",
+                            )}
                           >
-                            <Input
-                              placeholder="Option label"
-                              value={option.label}
-                              onChange={(event) =>
-                                updateModifierOption(modifier.id, option.id, {
-                                  label: event.target.value,
+                            <div>
+                              <p className="font-medium text-slate-900">
+                                {item.name}
+                              </p>
+                              <p className="text-xs text-slate-500">
+                                {item.category} • KES {item.price.toFixed(0)}
+                              </p>
+                            </div>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              disabled={!canSelect}
+                              onChange={() =>
+                                setItemDraft({
+                                  ...itemDraft,
+                                  linkedProductIds: isSelected
+                                    ? (itemDraft.linkedProductIds ?? []).filter(
+                                        (linkedId) => linkedId !== item.id,
+                                      )
+                                    : [
+                                        ...(itemDraft.linkedProductIds ?? []),
+                                        item.id,
+                                      ].slice(0, 3),
                                 })
                               }
+                              className="h-4 w-4 rounded border-slate-300 text-purple-600"
                             />
-                            <Input
-                              type="number"
-                              placeholder="Price adj."
-                              value={option.priceAdjustment}
-                              onChange={(event) =>
-                                updateModifierOption(modifier.id, option.id, {
-                                  priceAdjustment: Number(event.target.value),
-                                })
-                              }
-                            />
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              onClick={() =>
-                                removeModifierOption(modifier.id, option.id)
-                              }
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        ))}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50/70 p-4">
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">
+                          Modifiers
+                        </p>
+                        <p className="text-sm text-slate-500">
+                          Define option groups such as size, sides, or cooking
+                          preference.
+                        </p>
                       </div>
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
-                        onClick={() => addModifierOption(modifier.id)}
-                        className="mt-3"
+                        onClick={() =>
+                          setItemDraft({
+                            ...itemDraft,
+                            modifiers: [
+                              ...(itemDraft.modifiers ?? []),
+                              createEmptyModifier(),
+                            ],
+                          })
+                        }
                       >
-                        Add option
+                        Add modifier
                       </Button>
                     </div>
-                  ))}
+                    <div className="space-y-4">
+                      {(itemDraft.modifiers ?? []).map(
+                        (modifier, modifierIndex) => (
+                          <div
+                            key={modifier.id}
+                            className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4"
+                          >
+                            <div className="flex items-center gap-3">
+                              <Input
+                                value={modifier.name}
+                                onChange={(event) =>
+                                  setItemDraft({
+                                    ...itemDraft,
+                                    modifiers: (itemDraft.modifiers ?? []).map(
+                                      (entry, index) =>
+                                        index === modifierIndex
+                                          ? {
+                                              ...entry,
+                                              name: event.target.value,
+                                            }
+                                          : entry,
+                                    ),
+                                  })
+                                }
+                                placeholder="Modifier name"
+                              />
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="border-rose-200 text-rose-600 hover:bg-rose-50"
+                                onClick={() =>
+                                  setItemDraft({
+                                    ...itemDraft,
+                                    modifiers: (
+                                      itemDraft.modifiers ?? []
+                                    ).filter(
+                                      (_, index) => index !== modifierIndex,
+                                    ),
+                                  })
+                                }
+                              >
+                                Remove
+                              </Button>
+                            </div>
+                            <div className="space-y-3">
+                              {modifier.options.map((option, optionIndex) => (
+                                <div
+                                  key={option.id}
+                                  className="grid gap-3 md:grid-cols-[1fr_140px_auto]"
+                                >
+                                  <Input
+                                    value={option.label}
+                                    onChange={(event) =>
+                                      setItemDraft({
+                                        ...itemDraft,
+                                        modifiers: (
+                                          itemDraft.modifiers ?? []
+                                        ).map((entry, entryIndex) =>
+                                          entryIndex === modifierIndex
+                                            ? {
+                                                ...entry,
+                                                options: entry.options.map(
+                                                  (
+                                                    currentOption,
+                                                    currentIndex,
+                                                  ) =>
+                                                    currentIndex === optionIndex
+                                                      ? {
+                                                          ...currentOption,
+                                                          label:
+                                                            event.target.value,
+                                                        }
+                                                      : currentOption,
+                                                ),
+                                              }
+                                            : entry,
+                                        ),
+                                      })
+                                    }
+                                    placeholder="Option label"
+                                  />
+                                  <Input
+                                    type="number"
+                                    value={option.priceAdjustment}
+                                    onChange={(event) =>
+                                      setItemDraft({
+                                        ...itemDraft,
+                                        modifiers: (
+                                          itemDraft.modifiers ?? []
+                                        ).map((entry, entryIndex) =>
+                                          entryIndex === modifierIndex
+                                            ? {
+                                                ...entry,
+                                                options: entry.options.map(
+                                                  (
+                                                    currentOption,
+                                                    currentIndex,
+                                                  ) =>
+                                                    currentIndex === optionIndex
+                                                      ? {
+                                                          ...currentOption,
+                                                          priceAdjustment:
+                                                            Number(
+                                                              event.target
+                                                                .value,
+                                                            ),
+                                                        }
+                                                      : currentOption,
+                                                ),
+                                              }
+                                            : entry,
+                                        ),
+                                      })
+                                    }
+                                    placeholder="0"
+                                  />
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="border-rose-200 text-rose-600 hover:bg-rose-50"
+                                    onClick={() =>
+                                      setItemDraft({
+                                        ...itemDraft,
+                                        modifiers: (
+                                          itemDraft.modifiers ?? []
+                                        ).map((entry, entryIndex) =>
+                                          entryIndex === modifierIndex
+                                            ? {
+                                                ...entry,
+                                                options: entry.options.filter(
+                                                  (_, currentIndex) =>
+                                                    currentIndex !==
+                                                    optionIndex,
+                                                ),
+                                              }
+                                            : entry,
+                                        ),
+                                      })
+                                    }
+                                  >
+                                    Delete
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                setItemDraft({
+                                  ...itemDraft,
+                                  modifiers: (itemDraft.modifiers ?? []).map(
+                                    (entry, entryIndex) =>
+                                      entryIndex === modifierIndex
+                                        ? {
+                                            ...entry,
+                                            options: [
+                                              ...entry.options,
+                                              createEmptyModifierOption(),
+                                            ],
+                                          }
+                                        : entry,
+                                  ),
+                                })
+                              }
+                            >
+                              Add option
+                            </Button>
+                          </div>
+                        ),
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        setItemDraft(null);
+                        setLinkedProductSearch("");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button type="button" onClick={handleSaveItem}>
+                      Save item
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-4 py-12 text-center text-sm text-slate-500">
+                  Select an item to edit or create a new dish, drink, or combo.
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
+
+      {activeTab === "menus" ? (
+        <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+          <Card className="border-slate-200 bg-white/90 shadow-sm">
+            <CardHeader>
+              <CardTitle>{menuDraft ? "Edit menu" : "Create menu"}</CardTitle>
+              <CardDescription>
+                Bundle categories into customer-facing menus and toggle them
+                live.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <Field label="Menu name">
+                  <Input
+                    value={menuDraft?.name ?? ""}
+                    onChange={(event) =>
+                      setMenuDraft((current) => ({
+                        ...(current ?? createEmptyMenu()),
+                        name: event.target.value,
+                      }))
+                    }
+                    placeholder="Lunch Menu"
+                  />
+                </Field>
+                <Field label="Description">
+                  <Textarea
+                    value={menuDraft?.description ?? ""}
+                    onChange={(event) =>
+                      setMenuDraft((current) => ({
+                        ...(current ?? createEmptyMenu()),
+                        description: event.target.value,
+                      }))
+                    }
+                    rows={3}
+                    placeholder="Short description for staff reference"
+                  />
+                </Field>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-4">
+                    <p className="text-sm font-medium text-slate-700">
+                      Included categories
+                    </p>
+                    <Badge
+                      variant="outline"
+                      className="border-slate-200 text-slate-600"
+                    >
+                      {(menuDraft?.categories ?? []).length} selected
+                    </Badge>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {orderedCategories.map((category) => (
+                      <label
+                        key={category}
+                        className={cn(
+                          "flex items-center justify-between rounded-2xl border px-3 py-3 text-sm",
+                          menuDraft?.categories.includes(category)
+                            ? "border-purple-300 bg-purple-50"
+                            : "border-slate-200 bg-white",
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-base leading-none">⠿</span>
+                          <span>{category}</span>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={
+                            menuDraft?.categories.includes(category) ?? false
+                          }
+                          onChange={() =>
+                            setMenuDraft((current) => ({
+                              ...(current ?? createEmptyMenu()),
+                              categories: toggleValue(
+                                current?.categories ?? [],
+                                category,
+                              ),
+                            }))
+                          }
+                          className="h-4 w-4 rounded border-slate-300 text-purple-600"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={menuDraft?.isActive ?? false}
+                    onChange={(event) =>
+                      setMenuDraft((current) => ({
+                        ...(current ?? createEmptyMenu()),
+                        isActive: event.target.checked,
+                      }))
+                    }
+                    className="h-4 w-4 rounded border-slate-300 text-purple-600"
+                  />
+                  Set as active default menu
+                </label>
+                <div className="flex justify-end gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setMenuDraft(createEmptyMenu())}
+                  >
+                    Reset
+                  </Button>
+                  <Button type="button" onClick={handleSaveMenu}>
+                    Save menu
+                  </Button>
                 </div>
               </div>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setItemDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={saveItem}>
-              {editingItemId ? "Update item" : "Save item"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={translationDialogOpen}
-        onOpenChange={setTranslationDialogOpen}
-      >
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Item translations</DialogTitle>
-            <DialogDescription>
-              Manage localized names and descriptions for customer ordering.
-            </DialogDescription>
-          </DialogHeader>
-          <Tabs defaultValue="en" className="space-y-4">
-            <TabsList className="grid w-full grid-cols-4">
-              {menuLocales.map((locale) => (
-                <TabsTrigger key={locale} value={locale}>
-                  {locale.toUpperCase()}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-            {menuLocales.map((locale) => (
-              <TabsContent key={locale} value={locale} className="space-y-4">
-                <label className="space-y-2 text-sm font-medium">
-                  <span>Name</span>
-                  <Input
-                    value={translationDraft[locale].name}
-                    onChange={(event) =>
-                      setTranslationDraft((current) => ({
-                        ...current,
-                        [locale]: {
-                          ...current[locale],
-                          name: event.target.value,
-                        },
-                      }))
-                    }
-                    placeholder={`${locale.toUpperCase()} item name`}
-                  />
-                </label>
-                <label className="space-y-2 text-sm font-medium">
-                  <span>Description</span>
-                  <textarea
-                    value={translationDraft[locale].description}
-                    onChange={(event) =>
-                      setTranslationDraft((current) => ({
-                        ...current,
-                        [locale]: {
-                          ...current[locale],
-                          description: event.target.value,
-                        },
-                      }))
-                    }
-                    placeholder={`${locale.toUpperCase()} description`}
-                    className="min-h-28 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
-                  />
-                </label>
-              </TabsContent>
-            ))}
-          </Tabs>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setTranslationDialogOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button onClick={saveTranslations}>Save translations</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>Import CSV</DialogTitle>
-            <DialogDescription>
-              Map CSV columns to your catalogue fields and review the first five
-              rows before importing.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="grid gap-6 py-2 lg:grid-cols-[0.95fr_1.05fr]">
-            <div className="space-y-3 rounded-2xl border border-border p-4">
-              <div>
-                <h3 className="text-sm font-semibold">Field mapping</h3>
-                <p className="text-xs text-muted-foreground">
-                  Choose how each CSV column should be interpreted.
-                </p>
-              </div>
-              <div className="space-y-3">
-                {csvHeaders.map((header) => (
-                  <div
-                    key={header}
-                    className="grid gap-3 rounded-xl bg-slate-50 p-3 sm:grid-cols-2"
-                  >
-                    <div>
-                      <p className="text-xs font-medium text-muted-foreground">
-                        CSV column
-                      </p>
-                      <p className="text-sm font-semibold">{header}</p>
-                    </div>
-                    <label className="space-y-2 text-sm font-medium">
-                      <span>Our field</span>
-                      <select
-                        value={csvMapping[header] || "ignore"}
-                        onChange={(event) =>
-                          setCsvMapping((current) => ({
-                            ...current,
-                            [header]: event.target.value as CsvImportField,
-                          }))
-                        }
-                        className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm"
-                      >
-                        {csvImportFields.map((field) => (
-                          <option key={field.value} value={field.value}>
-                            {field.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-3 rounded-2xl border border-border p-4">
-              <div>
-                <h3 className="text-sm font-semibold">Preview</h3>
-                <p className="text-xs text-muted-foreground">
-                  Showing first 5 rows with current mapping.
-                </p>
-              </div>
-              <div className="overflow-hidden rounded-2xl border border-border">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-100 text-xs uppercase tracking-wide text-muted-foreground">
-                    <tr>
-                      <th className="px-3 py-2">Name</th>
-                      <th className="px-3 py-2">Price</th>
-                      <th className="px-3 py-2">Category</th>
-                      <th className="px-3 py-2">Description</th>
-                      <th className="px-3 py-2">Dietary</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {csvPreviewRows.map((row, index) => (
-                      <tr
-                        key={`${row.name}-${index}`}
-                        className="odd:bg-white even:bg-slate-50"
-                      >
-                        <td className="px-3 py-2">{row.name || "—"}</td>
-                        <td className="px-3 py-2">{row.price || "—"}</td>
-                        <td className="px-3 py-2">{row.category || "—"}</td>
-                        <td className="px-3 py-2">{row.description || "—"}</td>
-                        <td className="px-3 py-2">{row.dietary || "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setImportDialogOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button onClick={confirmCsvImport}>Confirm Import</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={externalDialogOpen} onOpenChange={setExternalDialogOpen}>
-        <DialogContent className="sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle>Add external menu</DialogTitle>
-            <DialogDescription>
-              Upload a PDF menu or embed a hosted menu URL for customers.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2">
-            <Input
-              value={externalDraft.name}
-              onChange={(event) =>
-                setExternalDraft((current) => ({
-                  ...current,
-                  name: event.target.value,
-                }))
-              }
-              placeholder="Menu name"
-            />
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              {(["pdf", "url"] as const).map((type) => (
-                <button
-                  key={type}
-                  type="button"
-                  onClick={() =>
-                    setExternalDraft((current) => ({
-                      ...current,
-                      type,
-                      content: "",
-                    }))
-                  }
-                  className={cn(
-                    "rounded-2xl border px-4 py-3 text-left",
-                    externalDraft.type === type
-                      ? type === "pdf"
-                        ? "border-red-500 bg-red-50 text-red-700"
-                        : "border-blue-500 bg-blue-50 text-blue-700"
-                      : "border-border",
-                  )}
+          <div className="grid gap-4 md:grid-cols-2">
+            {menus.map((menu) => {
+              const linkedSchedules = menuSchedules.filter((schedule) =>
+                schedule.menuIds.includes(menu.id),
+              );
+              return (
+                <Card
+                  key={menu.id}
+                  className="border-slate-200 bg-white/90 shadow-sm"
                 >
-                  <p className="font-semibold">{type.toUpperCase()}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {type === "pdf"
-                      ? "Upload a brochure or menu PDF"
-                      : "Embed a live web link"}
-                  </p>
-                </button>
-              ))}
-            </div>
-
-            {externalDraft.type === "pdf" ? (
-              <label className="block">
-                <span className="mb-2 block text-sm font-medium">PDF file</span>
-                <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border bg-slate-50 p-6 text-center">
-                  <span className="text-sm font-medium">
-                    {externalDraft.content
-                      ? "PDF ready to save"
-                      : "Click to upload PDF"}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    Accepts .pdf files only
-                  </span>
-                  <input
-                    type="file"
-                    accept=".pdf,application/pdf"
-                    className="hidden"
-                    onChange={handleExternalPdfUpload}
-                  />
-                </label>
-              </label>
-            ) : (
-              <Input
-                value={externalDraft.content}
-                onChange={(event) =>
-                  setExternalDraft((current) => ({
-                    ...current,
-                    content: event.target.value,
-                  }))
-                }
-                placeholder="https://example.com/full-menu"
-              />
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setExternalDialogOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button onClick={saveExternalMenu}>Save</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={menuDialogOpen} onOpenChange={setMenuDialogOpen}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>
-              {editingMenuId ? "Edit menu" : "Create menu"}
-            </DialogTitle>
-            <DialogDescription>
-              Choose the categories this menu should expose to customers.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <Input
-              value={menuDraft.name}
-              onChange={(event) =>
-                setMenuDraft((current) => ({
-                  ...current,
-                  name: event.target.value,
-                }))
-              }
-              placeholder="Menu name"
-            />
-            <textarea
-              value={menuDraft.description || ""}
-              onChange={(event) =>
-                setMenuDraft((current) => ({
-                  ...current,
-                  description: event.target.value,
-                }))
-              }
-              placeholder="Optional description"
-              className="min-h-24 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
-            />
-            <div className="rounded-2xl border border-border p-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Active menu</span>
-                <Switch
-                  checked={menuDraft.isActive}
-                  onCheckedChange={(isActive) =>
-                    setMenuDraft((current) => ({ ...current, isActive }))
-                  }
-                />
-              </div>
-            </div>
-            <div>
-              <p className="mb-3 text-sm font-medium">Categories</p>
-              <div className="flex flex-wrap gap-2">
-                {allCategories.map((option) => {
-                  const selected = menuDraft.categories.includes(option);
-                  return (
-                    <button
-                      key={option}
-                      type="button"
-                      onClick={() =>
-                        setMenuDraft((current) => ({
-                          ...current,
-                          categories: selected
-                            ? current.categories.filter(
-                                (entry) => entry !== option,
-                              )
-                            : [...current.categories, option],
-                        }))
-                      }
-                      className={cn(
-                        "rounded-full border px-3 py-2 text-sm",
-                        selected
-                          ? "border-emerald-500 bg-emerald-50 text-emerald-700"
-                          : "border-border bg-background",
-                      )}
-                    >
-                      {option}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setMenuDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={saveMenu}>
-              {editingMenuId ? "Update menu" : "Create menu"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={zoneDialogOpen} onOpenChange={setZoneDialogOpen}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>
-              {editingZoneId ? "Edit zone" : "Create zone"}
-            </DialogTitle>
-            <DialogDescription>
-              Assign menus to a table range.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <Input
-              value={zoneDraft.name}
-              onChange={(event) =>
-                setZoneDraft((current) => ({
-                  ...current,
-                  name: event.target.value,
-                }))
-              }
-              placeholder="Zone name"
-            />
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="space-y-2 text-sm font-medium">
-                <span>Table start</span>
-                <Input
-                  type="number"
-                  min={1}
-                  value={zoneDraft.tableStart}
-                  onChange={(event) =>
-                    setZoneDraft((current) => ({
-                      ...current,
-                      tableStart: Number(event.target.value) || 1,
-                    }))
-                  }
-                />
-              </label>
-              <label className="space-y-2 text-sm font-medium">
-                <span>Table end</span>
-                <Input
-                  type="number"
-                  min={1}
-                  value={zoneDraft.tableEnd}
-                  onChange={(event) =>
-                    setZoneDraft((current) => ({
-                      ...current,
-                      tableEnd: Number(event.target.value) || 1,
-                    }))
-                  }
-                />
-              </label>
-            </div>
-            <div>
-              <p className="mb-3 text-sm font-medium">Menus</p>
-              <div className="space-y-2">
-                {snapshot.menus.map((menu) => {
-                  const selected = zoneDraft.menuIds.includes(menu.id);
-                  return (
-                    <button
-                      key={menu.id}
-                      type="button"
-                      onClick={() =>
-                        setZoneDraft((current) => ({
-                          ...current,
-                          menuIds: selected
-                            ? current.menuIds.filter(
-                                (entry) => entry !== menu.id,
-                              )
-                            : [...current.menuIds, menu.id],
-                        }))
-                      }
-                      className={cn(
-                        "flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left",
-                        selected
-                          ? "border-blue-500 bg-blue-50 text-blue-700"
-                          : "border-border",
-                      )}
-                    >
+                  <CardContent className="space-y-4 p-5">
+                    <div className="flex items-start justify-between gap-4">
                       <div>
-                        <p className="font-medium">{menu.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {menu.categories.length} categories
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-lg font-semibold text-slate-950">
+                            {menu.name}
+                          </h3>
+                          <Badge
+                            className={
+                              menu.isActive
+                                ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-100"
+                                : "bg-slate-100 text-slate-700 hover:bg-slate-100"
+                            }
+                          >
+                            {menu.isActive ? "Active" : "Inactive"}
+                          </Badge>
+                        </div>
+                        <p className="mt-2 text-sm text-slate-500">
+                          {menu.description || "No description yet."}
                         </p>
                       </div>
-                      <span>{selected ? "Selected" : "Select"}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+                      <div className="text-right text-sm text-slate-500">
+                        <p className="font-semibold text-slate-900">
+                          {menu.categories.length} categories
+                        </p>
+                        <p>{new Date(menu.createdAt).toLocaleDateString()}</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {menu.categories.map((category) => (
+                        <Badge
+                          key={`${menu.id}-${category}`}
+                          variant="outline"
+                          className="border-slate-200 text-slate-600"
+                        >
+                          {category}
+                        </Badge>
+                      ))}
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                      <p className="font-medium text-slate-800">
+                        Schedule info
+                      </p>
+                      <p className="mt-1">
+                        {linkedSchedules.length
+                          ? linkedSchedules
+                              .map((schedule) => schedule.name)
+                              .join(", ")
+                          : "Not linked to a schedule yet."}
+                      </p>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() =>
+                          setMenus((current) =>
+                            current.map((entry) =>
+                              entry.id === menu.id
+                                ? { ...entry, isActive: !entry.isActive }
+                                : entry,
+                            ),
+                          )
+                        }
+                      >
+                        {menu.isActive ? "Deactivate" : "Activate"}
+                      </Button>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setMenuDraft(menu)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="border-rose-200 text-rose-600 hover:bg-rose-50"
+                          onClick={() => handleDeleteMenu(menu.id)}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setZoneDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={saveZone}>
-              {editingZoneId ? "Update zone" : "Create zone"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </div>
+      ) : null}
 
-      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>Menu preview</DialogTitle>
-            <DialogDescription>
-              Read-only customer view using active menus, schedules, and zone
-              rules.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-end gap-3">
-              <label className="space-y-2 text-sm font-medium">
-                <span>Preview table number</span>
+      {activeTab === "zones" ? (
+        <div className="grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
+          <Card className="border-slate-200 bg-white/90 shadow-sm">
+            <CardHeader>
+              <CardTitle>{zoneDraft ? "Edit zone" : "Create zone"}</CardTitle>
+              <CardDescription>
+                Assign one or more menus to a range of table numbers.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <Field label="Zone name">
+                  <Input
+                    value={zoneDraft?.name ?? ""}
+                    onChange={(event) =>
+                      setZoneDraft((current) => ({
+                        ...(current ?? createEmptyZone()),
+                        name: event.target.value,
+                      }))
+                    }
+                    placeholder="Terrace"
+                  />
+                </Field>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field label="Table start">
+                    <Input
+                      type="number"
+                      min="1"
+                      value={zoneDraft?.tableRange[0] ?? 1}
+                      onChange={(event) =>
+                        setZoneDraft((current) => ({
+                          ...(current ?? createEmptyZone()),
+                          tableRange: [
+                            Number(event.target.value) || 1,
+                            current?.tableRange[1] ?? 10,
+                          ],
+                        }))
+                      }
+                    />
+                  </Field>
+                  <Field label="Table end">
+                    <Input
+                      type="number"
+                      min="1"
+                      value={zoneDraft?.tableRange[1] ?? 10}
+                      onChange={(event) =>
+                        setZoneDraft((current) => ({
+                          ...(current ?? createEmptyZone()),
+                          tableRange: [
+                            current?.tableRange[0] ?? 1,
+                            Number(event.target.value) || 10,
+                          ],
+                        }))
+                      }
+                    />
+                  </Field>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-4">
+                    <p className="text-sm font-medium text-slate-700">
+                      Assigned menus
+                    </p>
+                    <Badge
+                      variant="outline"
+                      className="border-slate-200 text-slate-600"
+                    >
+                      {(zoneDraft?.menuIds ?? []).length} selected
+                    </Badge>
+                  </div>
+                  <div className="space-y-2">
+                    {menus.map((menu) => (
+                      <label
+                        key={menu.id}
+                        className={cn(
+                          "flex items-center justify-between rounded-2xl border px-3 py-3 text-sm",
+                          zoneDraft?.menuIds.includes(menu.id)
+                            ? "border-sky-300 bg-sky-50"
+                            : "border-slate-200 bg-white",
+                        )}
+                      >
+                        <div>
+                          <p className="font-medium text-slate-900">
+                            {menu.name}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {menu.categories.length} categories
+                          </p>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={
+                            zoneDraft?.menuIds.includes(menu.id) ?? false
+                          }
+                          onChange={() =>
+                            setZoneDraft((current) => ({
+                              ...(current ?? createEmptyZone()),
+                              menuIds: toggleValue(
+                                current?.menuIds ?? [],
+                                menu.id,
+                              ),
+                            }))
+                          }
+                          className="h-4 w-4 rounded border-slate-300 text-purple-600"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex justify-end gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setZoneDraft(createEmptyZone())}
+                  >
+                    Reset
+                  </Button>
+                  <Button type="button" onClick={handleSaveZone}>
+                    Save zone
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            {zones.map((zone, index) => (
+              <Card
+                key={zone.id}
+                className={cn(
+                  "border-l-4 border-slate-200 bg-white/90 shadow-sm",
+                  ZONE_BORDER_CLASSES[index % ZONE_BORDER_CLASSES.length],
+                )}
+              >
+                <CardContent className="space-y-4 p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-lg font-semibold text-slate-950">
+                        {zone.name}
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Assigned to {zone.menuIds.length} menu(s)
+                      </p>
+                    </div>
+                    <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-100">
+                      Tables {zone.tableRange[0]}–{zone.tableRange[1]}
+                    </Badge>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {zone.menuIds.map((menuId) => (
+                      <Badge
+                        key={`${zone.id}-${menuId}`}
+                        variant="outline"
+                        className="border-slate-200 text-slate-600"
+                      >
+                        {menuLookup.get(menuId)?.name ?? "Unknown menu"}
+                      </Badge>
+                    ))}
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setZoneDraft(zone)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="border-rose-200 text-rose-600 hover:bg-rose-50"
+                      onClick={() =>
+                        setZones((current) => removeById(current, zone.id))
+                      }
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {activeTab === "schedules" ? (
+        <div className="grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
+          <Card className="border-slate-200 bg-white/90 shadow-sm">
+            <CardHeader>
+              <CardTitle>
+                {scheduleDraft ? "Edit schedule" : "Create schedule"}
+              </CardTitle>
+              <CardDescription>
+                Choose the menus that should be live for a given day and time
+                range.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <Field label="Schedule name">
+                  <Input
+                    value={scheduleDraft?.name ?? ""}
+                    onChange={(event) =>
+                      setScheduleDraft((current) => ({
+                        ...(current ?? createEmptySchedule()),
+                        name: event.target.value,
+                      }))
+                    }
+                    placeholder="Happy Hour"
+                  />
+                </Field>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field label="Start time">
+                    <Input
+                      type="time"
+                      value={scheduleDraft?.startTime ?? "12:00"}
+                      onChange={(event) =>
+                        setScheduleDraft((current) => ({
+                          ...(current ?? createEmptySchedule()),
+                          startTime: event.target.value,
+                        }))
+                      }
+                    />
+                  </Field>
+                  <Field label="End time">
+                    <Input
+                      type="time"
+                      value={scheduleDraft?.endTime ?? "16:00"}
+                      onChange={(event) =>
+                        setScheduleDraft((current) => ({
+                          ...(current ?? createEmptySchedule()),
+                          endTime: event.target.value,
+                        }))
+                      }
+                    />
+                  </Field>
+                </div>
+                <div className="space-y-3">
+                  <p className="text-sm font-medium text-slate-700">Days</p>
+                  <div className="flex flex-wrap gap-2">
+                    {DAYS.map((day) => (
+                      <button
+                        key={day.value}
+                        type="button"
+                        onClick={() =>
+                          setScheduleDraft((current) => ({
+                            ...(current ?? createEmptySchedule()),
+                            days: toggleDay(current?.days ?? [], day.value),
+                          }))
+                        }
+                        className={cn(
+                          "rounded-full border px-3 py-2 text-sm transition",
+                          scheduleDraft?.days.includes(day.value)
+                            ? "border-slate-950 bg-slate-950 text-white"
+                            : "border-slate-200 bg-white text-slate-600",
+                        )}
+                      >
+                        {day.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-4">
+                    <p className="text-sm font-medium text-slate-700">
+                      Menus linked to this schedule
+                    </p>
+                    <Badge
+                      variant="outline"
+                      className="border-slate-200 text-slate-600"
+                    >
+                      {(scheduleDraft?.menuIds ?? []).length} selected
+                    </Badge>
+                  </div>
+                  <div className="space-y-2">
+                    {menus.map((menu) => (
+                      <label
+                        key={menu.id}
+                        className={cn(
+                          "flex items-center justify-between rounded-2xl border px-3 py-3 text-sm",
+                          scheduleDraft?.menuIds.includes(menu.id)
+                            ? "border-emerald-300 bg-emerald-50"
+                            : "border-slate-200 bg-white",
+                        )}
+                      >
+                        <div>
+                          <p className="font-medium text-slate-900">
+                            {menu.name}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {menu.categories.join(", ")}
+                          </p>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={
+                            scheduleDraft?.menuIds.includes(menu.id) ?? false
+                          }
+                          onChange={() =>
+                            setScheduleDraft((current) => ({
+                              ...(current ?? createEmptySchedule()),
+                              menuIds: toggleValue(
+                                current?.menuIds ?? [],
+                                menu.id,
+                              ),
+                            }))
+                          }
+                          className="h-4 w-4 rounded border-slate-300 text-purple-600"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex justify-end gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setScheduleDraft(createEmptySchedule())}
+                  >
+                    Reset
+                  </Button>
+                  <Button type="button" onClick={handleSaveSchedule}>
+                    Save schedule
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            {menuSchedules.map((schedule) => (
+              <Card
+                key={schedule.id}
+                className="border-slate-200 bg-white/90 shadow-sm"
+              >
+                <CardContent className="space-y-4 p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-lg font-semibold text-slate-950">
+                          {schedule.name}
+                        </h3>
+                        {activeSchedules.some(
+                          (activeSchedule) => activeSchedule.id === schedule.id,
+                        ) ? (
+                          <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+                            Live now
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <p className="mt-2 text-sm text-slate-500">
+                        {schedule.startTime} – {schedule.endTime}
+                      </p>
+                    </div>
+                    <Badge
+                      variant="outline"
+                      className="border-slate-200 text-slate-600"
+                    >
+                      {schedule.days
+                        .map(
+                          (day) =>
+                            DAYS.find((entry) => entry.value === day)?.label,
+                        )
+                        .filter(Boolean)
+                        .join(", ")}
+                    </Badge>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {schedule.menuIds.map((menuId) => (
+                      <Badge
+                        key={`${schedule.id}-${menuId}`}
+                        variant="outline"
+                        className="border-slate-200 text-slate-600"
+                      >
+                        {menuLookup.get(menuId)?.name ?? "Unknown menu"}
+                      </Badge>
+                    ))}
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setScheduleDraft(schedule)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="border-rose-200 text-rose-600 hover:bg-rose-50"
+                      onClick={() =>
+                        setMenuSchedules((current) =>
+                          removeById(current, schedule.id),
+                        )
+                      }
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <Button
+        type="button"
+        onClick={() => setIsPreviewOpen(true)}
+        className="fixed bottom-6 right-6 z-20 rounded-full px-5 shadow-lg"
+      >
+        Preview customer view
+      </Button>
+
+      {isPreviewOpen ? (
+        <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-950/70 p-4">
+          <div className="relative w-full max-w-2xl rounded-[2.5rem] bg-white p-4 shadow-2xl">
+            <button
+              type="button"
+              onClick={() => setIsPreviewOpen(false)}
+              className="absolute right-5 top-5 rounded-full border border-slate-200 bg-white px-3 py-1 text-sm text-slate-600"
+            >
+              Close
+            </button>
+            <div className="mb-4 flex flex-wrap items-end justify-between gap-4 px-2 pt-8">
+              <div>
+                <p className="text-sm font-medium text-purple-600">
+                  Customer preview
+                </p>
+                <h2 className="text-xl font-semibold text-slate-950">
+                  Live menu preview
+                </h2>
+              </div>
+              <Field label="Preview table">
                 <Input
                   type="number"
-                  min={1}
+                  min="1"
                   value={previewTableNumber}
                   onChange={(event) =>
                     setPreviewTableNumber(Number(event.target.value) || 1)
                   }
+                  className="w-32"
                 />
-              </label>
-              {previewZone ? (
-                <div className="rounded-full bg-blue-100 px-3 py-2 text-sm font-medium text-blue-700">
-                  Zone: {previewZone.name}
-                </div>
-              ) : (
-                <div className="rounded-full bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700">
-                  No zone match
-                </div>
-              )}
+              </Field>
             </div>
-
-            <div className="mx-auto w-full max-w-[390px] rounded-3xl border-[10px] border-slate-900 bg-background p-4 shadow-2xl">
-              <div className="rounded-[28px] bg-slate-50 p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                      Customer preview
-                    </p>
-                    <h3 className="text-xl font-semibold">
-                      Table {previewTableNumber}
-                    </h3>
-                  </div>
-                  <div className="text-right text-xs text-muted-foreground">
-                    <p>{activeMenus.length} active menus</p>
-                    <p>
-                      {activeSchedule
-                        ? activeSchedule.name
-                        : "No schedule limit"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
-                  <button
-                    type="button"
-                    onClick={() => setPreviewCategory("All")}
-                    className={cn(
-                      "rounded-full px-3 py-1.5 text-xs font-semibold whitespace-nowrap",
-                      previewCategory === "All"
-                        ? "bg-slate-900 text-white"
-                        : "bg-white text-slate-700",
-                    )}
-                  >
-                    All
-                  </button>
-                  {previewCategories.map((item) => (
-                    <button
-                      key={item}
-                      type="button"
-                      onClick={() => setPreviewCategory(item)}
-                      className={cn(
-                        "rounded-full px-3 py-1.5 text-xs font-semibold whitespace-nowrap",
-                        previewCategory === item
-                          ? "bg-slate-900 text-white"
-                          : "bg-white text-slate-700",
-                      )}
-                    >
-                      {item}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="mt-4 space-y-3">
-                  {previewVisibleItems.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-border bg-white px-4 py-8 text-center text-sm text-muted-foreground">
-                      No items visible for this table right now.
-                    </div>
-                  ) : null}
-                  {previewVisibleItems.map((item) => (
-                    <div
-                      key={item.id}
-                      className="overflow-hidden rounded-3xl border border-border bg-white shadow-sm"
-                    >
-                      <div className="h-36 bg-slate-100">
-                        {item.image ? (
-                          <img
-                            src={item.image}
-                            alt={item.name}
-                            className="h-full w-full object-cover"
-                          />
+            <div className="mx-auto max-w-[390px] rounded-[2.5rem] border-[10px] border-slate-950 bg-slate-50 shadow-inner">
+              <div className="h-[78vh] overflow-y-auto rounded-[2rem] p-4">
+                <CustomerMenuList
+                  readOnly
+                  items={previewItems}
+                  categoryOrder={categoryOrder}
+                  headerSlot={
+                    <div className="space-y-3 rounded-3xl bg-white p-4 shadow-sm">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-purple-600">
+                          Previewing /table
+                        </p>
+                        <h3 className="text-lg font-semibold text-slate-950">
+                          Table {previewTableNumber}
+                        </h3>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {previewZone ? (
+                          <Badge className="bg-sky-100 text-sky-700 hover:bg-sky-100">
+                            {previewZone.name}
+                          </Badge>
+                        ) : null}
+                        {activeSchedules.length ? (
+                          activeSchedules.map((schedule) => (
+                            <Badge
+                              key={schedule.id}
+                              className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100"
+                            >
+                              {schedule.name}
+                            </Badge>
+                          ))
                         ) : (
-                          <div className="flex h-full items-center justify-center text-slate-400">
-                            <ImageIcon className="h-8 w-8" />
-                          </div>
+                          <Badge
+                            variant="outline"
+                            className="border-slate-200 text-slate-600"
+                          >
+                            Active menus
+                          </Badge>
                         )}
                       </div>
-                      <div className="space-y-3 p-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <h4
-                              className={cn(
-                                "font-semibold",
-                                (item.available ?? true) === false &&
-                                  "text-slate-400 line-through",
-                              )}
-                            >
-                              {item.name}
-                            </h4>
-                            {item.description ? (
-                              <p className="mt-1 text-sm text-muted-foreground">
-                                {item.description}
-                              </p>
-                            ) : null}
-                          </div>
-                          {(item.available ?? true) === false ? (
-                            <span className="rounded-full bg-red-500 px-2 py-1 text-[10px] font-semibold text-white">
-                              Sold out
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium">
-                            {item.category}
-                          </span>
-                          {(item.dietary || []).map((tag) => (
-                            <span
-                              key={tag}
-                              className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700"
-                            >
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                        <div className="font-mono text-lg font-semibold">
-                          KES {item.price.toLocaleString()}
-                        </div>
-                      </div>
                     </div>
-                  ))}
-                </div>
+                  }
+                />
               </div>
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="space-y-2">
+      <span className="text-sm font-medium text-slate-700">{label}</span>
+      {children}
+    </label>
   );
 }

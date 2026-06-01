@@ -3,15 +3,21 @@ import type {
   CatalogueItem,
   ExternalMenu,
   Menu,
+  CreditCustomer,
   MenuSchedule,
   OrderTicket,
+  PurchaseOrder,
   Reservation,
+  RetailProduct,
+  RetailSale,
   StaffMember,
   StaffNotification,
   StaffPayout,
   StaffPerformanceChallenge,
   StaffRole,
   StaffShift,
+  StockAdjustment,
+  Supplier,
   Zone,
 } from "@/components/merchant/features/types";
 
@@ -53,6 +59,16 @@ export const STORAGE_KEYS = {
   staffPayouts: "fxengine.merchant.staffPayouts",
   staffChallenges: "fxengine.merchant.staffChallenges",
   staffInsights: "fxengine.merchant.staffInsights",
+} as const;
+
+export const RETAIL_STORAGE_KEYS = {
+  storeProfile: "fxengine.retail.storeProfile",
+  products: "fxengine.retail.products",
+  sales: "fxengine.retail.sales",
+  adjustments: "fxengine.retail.adjustments",
+  creditCustomers: "fxengine.retail.creditCustomers",
+  suppliers: "fxengine.retail.suppliers",
+  purchaseOrders: "fxengine.retail.purchaseOrders",
 } as const;
 
 export type PaymentMethod = "M-Pesa" | "Card" | "Split" | "Cash";
@@ -144,6 +160,43 @@ export type MerchantSettings = {
     primaryColor: string;
     logoUrl: string;
   };
+};
+
+export type RetailStoreProfile = {
+  id: string;
+  name: string;
+  location: string;
+  phone: string;
+  tillNumber: string;
+  whatsapp: string;
+  receiptFooter: string;
+};
+
+export type RetailSnapshot = {
+  storeProfile: RetailStoreProfile;
+  products: RetailProduct[];
+  sales: RetailSale[];
+  adjustments: StockAdjustment[];
+  creditCustomers: CreditCustomer[];
+  suppliers: Supplier[];
+  purchaseOrders: PurchaseOrder[];
+};
+
+export type RetailAnalytics = {
+  revenueToday: number;
+  revenueWeek: number;
+  revenueMonth: number;
+  salesCount: number;
+  unitsSold: number;
+  grossProfitEstimate: number;
+  paymentBreakdown: Array<{ name: string; value: number }>;
+  topProducts: Array<{
+    productId: string;
+    name: string;
+    qty: number;
+    revenue: number;
+  }>;
+  revenueTrend: Array<{ label: string; revenue: number }>;
 };
 
 export type MerchantSnapshot = {
@@ -238,6 +291,21 @@ function createStaffId(prefix: string, suffix: string) {
   return `${prefix}-${suffix}`;
 }
 
+function slugifyRetailValue(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
+function createRetailId(prefix: string, value: string) {
+  return `${prefix}-${slugifyRetailValue(value)}`;
+}
+
+function createRetailBarcode(seed: number) {
+  return `616000${String(seed).padStart(6, "0")}`;
+}
+
 export function isMenuScheduleActive(schedule: MenuSchedule, now = new Date()) {
   const day = getScheduleDayIndex(now);
   if (!schedule.days.includes(day)) return false;
@@ -259,6 +327,42 @@ export function getActiveMenuSchedule(
 ) {
   return (
     schedules.find((schedule) => isMenuScheduleActive(schedule, now)) ?? null
+  );
+}
+
+export function getActiveMenuSchedules(
+  schedules: MenuSchedule[],
+  now = new Date(),
+) {
+  return schedules.filter((schedule) => isMenuScheduleActive(schedule, now));
+}
+
+export function getCurrentActiveMenuIds(
+  menus: Menu[],
+  schedules: MenuSchedule[],
+  now = new Date(),
+) {
+  const activeMenuIds = getActiveMenus(menus).map((menu) => menu.id);
+  const scheduledMenuIds = getActiveMenuSchedules(schedules, now).flatMap(
+    (schedule) => schedule.menuIds ?? [],
+  );
+  return Array.from(
+    new Set(
+      scheduledMenuIds.length
+        ? activeMenuIds.filter((menuId) => scheduledMenuIds.includes(menuId))
+        : activeMenuIds,
+    ),
+  );
+}
+
+export function getMenuCategoriesByIds(menus: Menu[], menuIds: string[]) {
+  return Array.from(
+    new Set(
+      menus
+        .filter((menu) => menuIds.includes(menu.id))
+        .flatMap((menu) => menu.categories)
+        .filter(Boolean),
+    ),
   );
 }
 
@@ -557,6 +661,7 @@ function buildMenuSchedules(): MenuSchedule[] {
       startTime: "07:00",
       endTime: "11:30",
       categories: ["Sides", "Drinks", "Desserts"],
+      menuIds: ["menu-all-day"],
     },
     {
       id: "schedule-lunch",
@@ -565,6 +670,7 @@ function buildMenuSchedules(): MenuSchedule[] {
       startTime: "12:00",
       endTime: "16:00",
       categories: ["Mains", "Sides", "Drinks"],
+      menuIds: ["menu-all-day"],
     },
     {
       id: "schedule-evening",
@@ -573,6 +679,7 @@ function buildMenuSchedules(): MenuSchedule[] {
       startTime: "16:00",
       endTime: "23:00",
       categories: ["Mains", "Sides", "Cocktails", "Desserts", "Drinks"],
+      menuIds: ["menu-all-day", "menu-bar", "menu-dessert"],
     },
   ];
 }
@@ -1559,6 +1666,7 @@ export function writeStorage<T>(key: string, value: T) {
 export function ensureMerchantDemoData() {
   if (!canUseStorage()) return createMerchantDemoData();
 
+  ensureRetailDemoData();
   const demo = createMerchantDemoData();
 
   (
@@ -1733,6 +1841,9 @@ export function getOrderedCategories(
   });
 }
 
+export const getOrderedMerchantCategories = getOrderedCategories;
+export const getZoneForTable = getTableZone;
+
 export function getVisibleCatalogueForTable({
   catalogue,
   menus,
@@ -1778,4 +1889,1134 @@ export function getVisibleCatalogueForTable({
   }
 
   return catalogue.filter((item) => allowedCategories.has(item.category));
+}
+
+function retailProductImage(label: string, background: string) {
+  return `https://placehold.co/240x240/${background}/ffffff?text=${encodeURIComponent(label)}`;
+}
+
+function balanceCreditEntries(entries: CreditCustomer["entries"]) {
+  return entries.reduce((sum, entry) => {
+    return entry.type === "purchase" ? sum + entry.amount : sum - entry.amount;
+  }, 0);
+}
+
+function buildRetailStoreProfile(): RetailStoreProfile {
+  return {
+    id: "sades-corner-duka",
+    name: "Sade's Corner Duka",
+    location: "Westlands, Nairobi",
+    phone: "+254700247365",
+    tillNumber: TILL_NUMBER,
+    whatsapp: "+254700247365",
+    receiptFooter: "Asante kwa kununua na PesaSwap. Karibu tena.",
+  };
+}
+
+function buildRetailProducts(now = new Date()): RetailProduct[] {
+  const createdAt = minusTime(now, 45, 0).toISOString();
+  return [
+    {
+      id: "retail-pembe-2kg",
+      name: "Pembe Maize Flour 2kg",
+      sku: "GRO-PEM-2KG",
+      barcode: createRetailBarcode(1),
+      category: "Groceries",
+      costPrice: 155,
+      sellPrice: 180,
+      stock: 32,
+      reorderLevel: 12,
+      unit: "packets",
+      supplier: "Unga Distributors",
+      supplierPhone: "+254722410120",
+      image: retailProductImage("Pembe 2kg", "2563eb"),
+      isActive: true,
+      lastRestocked: minusTime(now, 6, 2).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-mumias-sugar",
+      name: "Mumias Sugar 1kg",
+      sku: "GRO-MUM-1KG",
+      barcode: createRetailBarcode(2),
+      category: "Groceries",
+      costPrice: 160,
+      sellPrice: 180,
+      stock: 18,
+      reorderLevel: 10,
+      unit: "packets",
+      supplier: "Mumias Wholesale",
+      supplierPhone: "+254733101010",
+      image: retailProductImage("Sugar", "16a34a"),
+      isActive: true,
+      lastRestocked: minusTime(now, 5, 4).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-fresh-fry-1l",
+      name: "Fresh Fry Cooking Oil 1L",
+      sku: "GRO-FFO-1L",
+      barcode: createRetailBarcode(3),
+      category: "Groceries",
+      costPrice: 245,
+      sellPrice: 280,
+      stock: 14,
+      reorderLevel: 8,
+      unit: "litres",
+      supplier: "Bidco Kenya",
+      supplierPhone: "+254722330055",
+      image: retailProductImage("Oil 1L", "f59e0b"),
+      isActive: true,
+      lastRestocked: minusTime(now, 8, 3).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-rice-2kg",
+      name: "Pishori Rice 2kg",
+      sku: "GRO-RIC-2KG",
+      barcode: createRetailBarcode(4),
+      category: "Groceries",
+      costPrice: 265,
+      sellPrice: 320,
+      stock: 11,
+      reorderLevel: 8,
+      unit: "packets",
+      supplier: "Nairobi Grain Stores",
+      supplierPhone: "+254734555111",
+      image: retailProductImage("Rice 2kg", "0f766e"),
+      isActive: true,
+      lastRestocked: minusTime(now, 11, 1).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-royco-100g",
+      name: "Royco Mchuzi Mix 100g",
+      sku: "GRO-ROY-100G",
+      barcode: createRetailBarcode(5),
+      category: "Groceries",
+      costPrice: 22,
+      sellPrice: 30,
+      stock: 56,
+      reorderLevel: 20,
+      unit: "packets",
+      supplier: "Unga Distributors",
+      supplierPhone: "+254722410120",
+      image: retailProductImage("Royco", "ea580c"),
+      isActive: true,
+      lastRestocked: minusTime(now, 2, 2).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-indomie-pack",
+      name: "Indomie Noodles Pack",
+      sku: "GRO-IND-PK",
+      barcode: createRetailBarcode(6),
+      category: "Groceries",
+      costPrice: 38,
+      sellPrice: 50,
+      stock: 44,
+      reorderLevel: 18,
+      unit: "packets",
+      supplier: "Quickmart Wholesale",
+      supplierPhone: "+254722447700",
+      image: retailProductImage("Indomie", "dc2626"),
+      isActive: true,
+      lastRestocked: minusTime(now, 4, 1).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-brookside-500ml",
+      name: "Brookside Milk 500ml",
+      sku: "BEV-BRO-500",
+      barcode: createRetailBarcode(7),
+      category: "Beverages",
+      costPrice: 52,
+      sellPrice: 65,
+      stock: 24,
+      reorderLevel: 10,
+      unit: "pieces",
+      supplier: "Brookside Route",
+      supplierPhone: "+254700889911",
+      image: retailProductImage("Milk", "3b82f6"),
+      isActive: true,
+      lastRestocked: minusTime(now, 1, 5).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-coke-500ml",
+      name: "Coca Cola 500ml",
+      sku: "BEV-COK-500",
+      barcode: createRetailBarcode(8),
+      category: "Beverages",
+      costPrice: 55,
+      sellPrice: 70,
+      stock: 36,
+      reorderLevel: 12,
+      unit: "pieces",
+      supplier: "Coca-Cola Beverages",
+      supplierPhone: "+254722980010",
+      image: retailProductImage("Coke", "b91c1c"),
+      isActive: true,
+      lastRestocked: minusTime(now, 3, 6).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-fanta-500ml",
+      name: "Fanta Orange 500ml",
+      sku: "BEV-FAN-500",
+      barcode: createRetailBarcode(9),
+      category: "Beverages",
+      costPrice: 55,
+      sellPrice: 70,
+      stock: 28,
+      reorderLevel: 12,
+      unit: "pieces",
+      supplier: "Coca-Cola Beverages",
+      supplierPhone: "+254722980010",
+      image: retailProductImage("Fanta", "f97316"),
+      isActive: true,
+      lastRestocked: minusTime(now, 3, 6).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-dasani-1l",
+      name: "Dasani Water 1L",
+      sku: "BEV-DAS-1L",
+      barcode: createRetailBarcode(10),
+      category: "Beverages",
+      costPrice: 40,
+      sellPrice: 50,
+      stock: 41,
+      reorderLevel: 20,
+      unit: "pieces",
+      supplier: "Coca-Cola Beverages",
+      supplierPhone: "+254722980010",
+      image: retailProductImage("Water", "0284c7"),
+      isActive: true,
+      lastRestocked: minusTime(now, 2, 3).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-tusker-500ml",
+      name: "Tusker Lager 500ml",
+      sku: "BEV-TUS-500",
+      barcode: createRetailBarcode(11),
+      category: "Beverages",
+      costPrice: 200,
+      sellPrice: 250,
+      stock: 9,
+      reorderLevel: 10,
+      unit: "pieces",
+      supplier: "EABL Distributor",
+      supplierPhone: "+254711100221",
+      image: retailProductImage("Tusker", "ca8a04"),
+      isActive: true,
+      lastRestocked: minusTime(now, 9, 2).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-redbull-250ml",
+      name: "Red Bull 250ml",
+      sku: "BEV-RBL-250",
+      barcode: createRetailBarcode(12),
+      category: "Beverages",
+      costPrice: 130,
+      sellPrice: 160,
+      stock: 7,
+      reorderLevel: 8,
+      unit: "pieces",
+      supplier: "Energy Brands EA",
+      supplierPhone: "+254744228811",
+      image: retailProductImage("Energy", "1d4ed8"),
+      isActive: true,
+      lastRestocked: minusTime(now, 10, 1).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-dettol-175g",
+      name: "Dettol Soap 175g",
+      sku: "PER-DET-175",
+      barcode: createRetailBarcode(13),
+      category: "Personal Care",
+      costPrice: 95,
+      sellPrice: 120,
+      stock: 22,
+      reorderLevel: 10,
+      unit: "pieces",
+      supplier: "Reckitt Benckiser",
+      supplierPhone: "+254701223344",
+      image: retailProductImage("Dettol", "15803d"),
+      isActive: true,
+      lastRestocked: minusTime(now, 7, 1).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-colgate-100ml",
+      name: "Colgate Toothpaste 100ml",
+      sku: "PER-COL-100",
+      barcode: createRetailBarcode(14),
+      category: "Personal Care",
+      costPrice: 105,
+      sellPrice: 135,
+      stock: 17,
+      reorderLevel: 8,
+      unit: "pieces",
+      supplier: "Orbit Consumer Supplies",
+      supplierPhone: "+254720448877",
+      image: retailProductImage("Colgate", "dc2626"),
+      isActive: true,
+      lastRestocked: minusTime(now, 8, 2).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-softcare-roll",
+      name: "Softcare Tissue Roll",
+      sku: "PER-SFT-RLL",
+      barcode: createRetailBarcode(15),
+      category: "Personal Care",
+      costPrice: 28,
+      sellPrice: 40,
+      stock: 60,
+      reorderLevel: 18,
+      unit: "pieces",
+      supplier: "Household Depot",
+      supplierPhone: "+254745442211",
+      image: retailProductImage("Tissue", "7c3aed"),
+      isActive: true,
+      lastRestocked: minusTime(now, 1, 1).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-pampers-small",
+      name: "Pampers Small Pack",
+      sku: "PER-PAM-SML",
+      barcode: createRetailBarcode(16),
+      category: "Personal Care",
+      costPrice: 310,
+      sellPrice: 360,
+      stock: 6,
+      reorderLevel: 6,
+      unit: "packets",
+      supplier: "Baby Needs Kenya",
+      supplierPhone: "+254712331100",
+      image: retailProductImage("Pampers", "ec4899"),
+      isActive: true,
+      lastRestocked: minusTime(now, 12, 2).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-omo-500g",
+      name: "Omo Washing Powder 500g",
+      sku: "HOU-OMO-500",
+      barcode: createRetailBarcode(17),
+      category: "Household",
+      costPrice: 78,
+      sellPrice: 95,
+      stock: 13,
+      reorderLevel: 8,
+      unit: "packets",
+      supplier: "Unilever Kenya",
+      supplierPhone: "+254733019988",
+      image: retailProductImage("Omo", "0ea5e9"),
+      isActive: true,
+      lastRestocked: minusTime(now, 9, 4).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-jik-750ml",
+      name: "Jik Bleach 750ml",
+      sku: "HOU-JIK-750",
+      barcode: createRetailBarcode(18),
+      category: "Household",
+      costPrice: 145,
+      sellPrice: 175,
+      stock: 8,
+      reorderLevel: 8,
+      unit: "pieces",
+      supplier: "Unilever Kenya",
+      supplierPhone: "+254733019988",
+      image: retailProductImage("Jik", "0284c7"),
+      isActive: true,
+      lastRestocked: minusTime(now, 10, 2).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-matchbox",
+      name: "Flamingo Matchbox",
+      sku: "HOU-MTC-BOX",
+      barcode: createRetailBarcode(19),
+      category: "Household",
+      costPrice: 8,
+      sellPrice: 15,
+      stock: 54,
+      reorderLevel: 25,
+      unit: "boxes",
+      supplier: "Household Depot",
+      supplierPhone: "+254745442211",
+      image: retailProductImage("Match", "9333ea"),
+      isActive: true,
+      lastRestocked: minusTime(now, 4, 2).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-kerosene-1l",
+      name: "Kerosene 1L",
+      sku: "HOU-KER-1L",
+      barcode: createRetailBarcode(20),
+      category: "Household",
+      costPrice: 172,
+      sellPrice: 195,
+      stock: 5,
+      reorderLevel: 8,
+      unit: "litres",
+      supplier: "Fuelmart Agency",
+      supplierPhone: "+254733880090",
+      image: retailProductImage("Kero", "475569"),
+      isActive: true,
+      lastRestocked: minusTime(now, 15, 1).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-charcoal-2kg",
+      name: "Charcoal Pack 2kg",
+      sku: "HOU-CHR-2KG",
+      barcode: createRetailBarcode(21),
+      category: "Household",
+      costPrice: 88,
+      sellPrice: 120,
+      stock: 4,
+      reorderLevel: 6,
+      unit: "packets",
+      supplier: "Household Depot",
+      supplierPhone: "+254745442211",
+      image: retailProductImage("Charcoal", "334155"),
+      isActive: true,
+      lastRestocked: minusTime(now, 14, 2).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-safaricom-50",
+      name: "Safaricom Airtime KES 50",
+      sku: "AIR-SAF-050",
+      barcode: createRetailBarcode(22),
+      category: "Airtime & Electronics",
+      costPrice: 48,
+      sellPrice: 50,
+      stock: 80,
+      reorderLevel: 30,
+      unit: "pieces",
+      supplier: "Safaricom Dealer",
+      supplierPhone: "+254722551177",
+      image: retailProductImage("Airtime 50", "16a34a"),
+      isActive: true,
+      lastRestocked: minusTime(now, 1, 0).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-safaricom-100",
+      name: "Safaricom Airtime KES 100",
+      sku: "AIR-SAF-100",
+      barcode: createRetailBarcode(23),
+      category: "Airtime & Electronics",
+      costPrice: 96,
+      sellPrice: 100,
+      stock: 64,
+      reorderLevel: 30,
+      unit: "pieces",
+      supplier: "Safaricom Dealer",
+      supplierPhone: "+254722551177",
+      image: retailProductImage("Airtime 100", "22c55e"),
+      isActive: true,
+      lastRestocked: minusTime(now, 1, 0).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-safaricom-250",
+      name: "Safaricom Airtime KES 250",
+      sku: "AIR-SAF-250",
+      barcode: createRetailBarcode(24),
+      category: "Airtime & Electronics",
+      costPrice: 242,
+      sellPrice: 250,
+      stock: 21,
+      reorderLevel: 12,
+      unit: "pieces",
+      supplier: "Safaricom Dealer",
+      supplierPhone: "+254722551177",
+      image: retailProductImage("Airtime 250", "65a30d"),
+      isActive: true,
+      lastRestocked: minusTime(now, 6, 0).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-usb-cable",
+      name: "USB Charging Cable",
+      sku: "AIR-USB-CBL",
+      barcode: createRetailBarcode(25),
+      category: "Airtime & Electronics",
+      costPrice: 180,
+      sellPrice: 250,
+      stock: 12,
+      reorderLevel: 6,
+      unit: "pieces",
+      supplier: "Tech Accessory Hub",
+      supplierPhone: "+254701559944",
+      image: retailProductImage("USB", "111827"),
+      isActive: true,
+      lastRestocked: minusTime(now, 13, 3).toISOString(),
+      createdAt,
+    },
+    {
+      id: "retail-earphones",
+      name: "In-Ear Earphones",
+      sku: "AIR-EAR-PHN",
+      barcode: createRetailBarcode(26),
+      category: "Airtime & Electronics",
+      costPrice: 260,
+      sellPrice: 350,
+      stock: 3,
+      reorderLevel: 5,
+      unit: "pieces",
+      supplier: "Tech Accessory Hub",
+      supplierPhone: "+254701559944",
+      image: retailProductImage("Earphones", "4f46e5"),
+      isActive: true,
+      lastRestocked: minusTime(now, 16, 2).toISOString(),
+      createdAt,
+    },
+  ];
+}
+
+function buildRetailSuppliers(products: RetailProduct[]): Supplier[] {
+  return [
+    {
+      id: "supplier-unga",
+      name: "Unga Distributors",
+      phone: "+254722410120",
+      email: "orders@unga.co.ke",
+      products: products
+        .filter((product) =>
+          [
+            "Unga Distributors",
+            "Mumias Wholesale",
+            "Bidco Kenya",
+            "Nairobi Grain Stores",
+            "Quickmart Wholesale",
+          ].includes(product.supplier || ""),
+        )
+        .map((product) => product.id),
+      lastOrderDate: minusTime(new Date(), 6, 2).toISOString(),
+    },
+    {
+      id: "supplier-household",
+      name: "Household Depot",
+      phone: "+254745442211",
+      email: "hello@householddepot.co.ke",
+      products: products
+        .filter((product) =>
+          [
+            "Household Depot",
+            "Unilever Kenya",
+            "Reckitt Benckiser",
+            "Orbit Consumer Supplies",
+            "Baby Needs Kenya",
+          ].includes(product.supplier || ""),
+        )
+        .map((product) => product.id),
+      lastOrderDate: minusTime(new Date(), 9, 3).toISOString(),
+    },
+    {
+      id: "supplier-connect",
+      name: "Safaricom Dealer",
+      phone: "+254722551177",
+      email: "dealer@safaricom.co.ke",
+      products: products
+        .filter((product) =>
+          [
+            "Safaricom Dealer",
+            "Tech Accessory Hub",
+            "Coca-Cola Beverages",
+            "EABL Distributor",
+            "Energy Brands EA",
+            "Brookside Route",
+            "Fuelmart Agency",
+          ].includes(product.supplier || ""),
+        )
+        .map((product) => product.id),
+      lastOrderDate: minusTime(new Date(), 3, 5).toISOString(),
+    },
+  ];
+}
+
+function buildRetailSales(
+  products: RetailProduct[],
+  now = new Date(),
+): RetailSale[] {
+  const productMap = new Map(products.map((product) => [product.id, product]));
+  const combos = [
+    ["retail-pembe-2kg", 2, "retail-brookside-500ml", 1],
+    ["retail-coke-500ml", 2, "retail-indomie-pack", 3],
+    ["retail-mumias-sugar", 1, "retail-fresh-fry-1l", 1],
+    ["retail-dettol-175g", 1, "retail-colgate-100ml", 1],
+    ["retail-safaricom-100", 1, "retail-softcare-roll", 2],
+    ["retail-tusker-500ml", 4, "retail-matchbox", 1],
+    ["retail-omo-500g", 1, "retail-jik-750ml", 1],
+    ["retail-redbull-250ml", 1, "retail-usb-cable", 1],
+    ["retail-safaricom-50", 2, "retail-coke-500ml", 1],
+    ["retail-rice-2kg", 1, "retail-royco-100g", 2],
+    ["retail-charcoal-2kg", 1, "retail-kerosene-1l", 1],
+    ["retail-pampers-small", 1, "retail-brookside-500ml", 2],
+    ["retail-earphones", 1, "retail-safaricom-250", 1],
+    ["retail-dasani-1l", 3, "retail-indomie-pack", 2],
+    ["retail-fanta-500ml", 2, "retail-softcare-roll", 1],
+    ["retail-pembe-2kg", 1, "retail-mumias-sugar", 1],
+    ["retail-dettol-175g", 2, "retail-omo-500g", 1],
+    ["retail-coke-500ml", 1, "retail-safaricom-50", 1],
+  ] as const;
+  const paymentMethods: RetailSale["paymentMethod"][] = [
+    "mpesa",
+    "cash",
+    "cash",
+    "mpesa",
+    "credit",
+  ];
+  const customers = [
+    { name: "Mama Brian", phone: "+254712334455" },
+    { name: "Kevin K.", phone: "+254722991100" },
+    { name: "Akinyi", phone: "+254733558811" },
+    { name: "Mr. Kamau", phone: "+254711009988" },
+    { name: "Njeri Boutique", phone: "+254745880011" },
+  ];
+
+  return combos.map((combo, index) => {
+    const items = [
+      { productId: combo[0], qty: combo[1] },
+      { productId: combo[2], qty: combo[3] },
+    ].map((entry) => {
+      const product = productMap.get(entry.productId);
+      if (!product)
+        throw new Error(`Missing retail product ${entry.productId}`);
+      return {
+        productId: product.id,
+        name: product.name,
+        qty: entry.qty,
+        unitPrice: product.sellPrice,
+      };
+    });
+    const total = items.reduce(
+      (sum, item) => sum + item.qty * item.unitPrice,
+      0,
+    );
+    const customer = customers[index % customers.length];
+    const paymentMethod = paymentMethods[index % paymentMethods.length];
+    const createdAt = minusTime(
+      now,
+      Math.floor(index / 2),
+      1 + (index % 4),
+      (index * 13) % 60,
+    ).toISOString();
+    return {
+      id: `sale-${index + 1}`,
+      items,
+      total,
+      paymentMethod,
+      customerName:
+        paymentMethod === "cash" && index % 3 === 0 ? undefined : customer.name,
+      customerPhone:
+        paymentMethod === "cash" && index % 3 === 0
+          ? undefined
+          : customer.phone,
+      mpesaRef: paymentMethod === "mpesa" ? `QJ${820100 + index}` : undefined,
+      createdAt,
+      refunded: index === 11,
+    };
+  });
+}
+
+function buildRetailCreditCustomers(now = new Date()): CreditCustomer[] {
+  const customers: CreditCustomer[] = [
+    {
+      id: "credit-mama-brian",
+      name: "Mama Brian",
+      phone: "+254712334455",
+      creditLimit: 7000,
+      balance: 0,
+      entries: [
+        {
+          id: "credit-entry-1",
+          type: "purchase",
+          amount: 2500,
+          description: "Groceries for estate delivery",
+          date: minusTime(now, 45, 0).toISOString(),
+          dueDate: minusTime(now, -15, 0).toISOString().slice(0, 10),
+          saleId: "sale-5",
+        },
+        {
+          id: "credit-entry-2",
+          type: "payment",
+          amount: 1200,
+          description: "Cash repayment",
+          date: minusTime(now, 18, 0).toISOString(),
+        },
+        {
+          id: "credit-entry-3",
+          type: "purchase",
+          amount: 900,
+          description: "Milk, sugar and flour",
+          date: minusTime(now, 9, 0).toISOString(),
+          dueDate: minusTime(now, -21, 0).toISOString().slice(0, 10),
+        },
+      ],
+      createdAt: minusTime(now, 120, 0).toISOString(),
+    },
+    {
+      id: "credit-njeri-boutique",
+      name: "Njeri Boutique",
+      phone: "+254745880011",
+      creditLimit: 10000,
+      balance: 0,
+      entries: [
+        {
+          id: "credit-entry-4",
+          type: "purchase",
+          amount: 5000,
+          description: "Tissue, detergents and beverages",
+          date: minusTime(now, 45, 0).toISOString(),
+          dueDate: minusTime(now, -5, 0).toISOString().slice(0, 10),
+          saleId: "sale-10",
+        },
+      ],
+      createdAt: minusTime(now, 200, 0).toISOString(),
+    },
+    {
+      id: "credit-boda-juma",
+      name: "Juma Boda",
+      phone: "+254722991100",
+      creditLimit: 3000,
+      balance: 0,
+      entries: [
+        {
+          id: "credit-entry-5",
+          type: "purchase",
+          amount: 600,
+          description: "Fuel and airtime top-up",
+          date: minusTime(now, 12, 0).toISOString(),
+          dueDate: minusTime(now, -18, 0).toISOString().slice(0, 10),
+        },
+        {
+          id: "credit-entry-6",
+          type: "payment",
+          amount: 200,
+          description: "M-Pesa partial repayment",
+          date: minusTime(now, 2, 0).toISOString(),
+        },
+      ],
+      createdAt: minusTime(now, 40, 0).toISOString(),
+    },
+  ];
+
+  return customers.map((customer) => ({
+    ...customer,
+    balance: balanceCreditEntries(customer.entries),
+  }));
+}
+
+function buildRetailPurchaseOrders(
+  products: RetailProduct[],
+  suppliers: Supplier[],
+  now = new Date(),
+): PurchaseOrder[] {
+  const productMap = new Map(products.map((product) => [product.id, product]));
+  const unga = suppliers[0];
+  const household = suppliers[1];
+  return [
+    {
+      id: "po-001",
+      supplierId: unga?.id || "supplier-unga",
+      supplierName: unga?.name || "Unga Distributors",
+      items: [
+        "retail-pembe-2kg",
+        "retail-mumias-sugar",
+        "retail-fresh-fry-1l",
+      ].map((productId, index) => {
+        const product = productMap.get(productId);
+        if (!product) throw new Error(`Missing retail product ${productId}`);
+        return {
+          productId,
+          name: product.name,
+          qty: 10 + index * 5,
+          unitCost: product.costPrice,
+        };
+      }),
+      total: [
+        "retail-pembe-2kg",
+        "retail-mumias-sugar",
+        "retail-fresh-fry-1l",
+      ].reduce((sum, productId, index) => {
+        const product = productMap.get(productId);
+        return sum + (product?.costPrice || 0) * (10 + index * 5);
+      }, 0),
+      status: "sent",
+      createdAt: minusTime(now, 6, 0).toISOString(),
+    },
+    {
+      id: "po-002",
+      supplierId: household?.id || "supplier-household",
+      supplierName: household?.name || "Household Depot",
+      items: [
+        "retail-charcoal-2kg",
+        "retail-kerosene-1l",
+        "retail-pampers-small",
+      ].map((productId, index) => {
+        const product = productMap.get(productId);
+        if (!product) throw new Error(`Missing retail product ${productId}`);
+        return {
+          productId,
+          name: product.name,
+          qty: 6 + index * 2,
+          unitCost: product.costPrice,
+        };
+      }),
+      total: [
+        "retail-charcoal-2kg",
+        "retail-kerosene-1l",
+        "retail-pampers-small",
+      ].reduce((sum, productId, index) => {
+        const product = productMap.get(productId);
+        return sum + (product?.costPrice || 0) * (6 + index * 2);
+      }, 0),
+      status: "received",
+      createdAt: minusTime(now, 14, 0).toISOString(),
+      receivedAt: minusTime(now, 10, 0).toISOString(),
+    },
+  ];
+}
+
+function buildRetailAdjustments(
+  products: RetailProduct[],
+  sales: RetailSale[],
+  now = new Date(),
+): StockAdjustment[] {
+  const adjustments: StockAdjustment[] = sales.flatMap((sale, saleIndex) =>
+    sale.items.map((item, itemIndex) => ({
+      id: `adj-sale-${saleIndex + 1}-${itemIndex + 1}`,
+      productId: item.productId,
+      type: "sold",
+      quantity: -item.qty,
+      reason: `Sale ${sale.id}`,
+      createdAt: new Date(
+        new Date(sale.createdAt).getTime() + itemIndex * 60_000,
+      ).toISOString(),
+    })),
+  );
+
+  const extraAdjustments: StockAdjustment[] = [
+    {
+      id: "adj-restock-1",
+      productId: "retail-tusker-500ml",
+      type: "received",
+      quantity: 24,
+      reason: "Weekend restock",
+      createdAt: minusTime(now, 9, 1).toISOString(),
+    },
+    {
+      id: "adj-damaged-1",
+      productId: "retail-brookside-500ml",
+      type: "damaged",
+      quantity: -3,
+      reason: "Damaged in chiller",
+      createdAt: minusTime(now, 3, 2).toISOString(),
+    },
+    {
+      id: "adj-returned-1",
+      productId: "retail-coke-500ml",
+      type: "returned",
+      quantity: 2,
+      reason: "Customer return",
+      createdAt: minusTime(now, 4, 5).toISOString(),
+    },
+    {
+      id: "adj-counted-1",
+      productId: products[0]?.id || "retail-pembe-2kg",
+      type: "counted",
+      quantity: -1,
+      reason: "Cycle count variance",
+      createdAt: minusTime(now, 1, 3).toISOString(),
+    },
+  ];
+
+  return [...adjustments, ...extraAdjustments].sort(
+    (a, b) => +new Date(b.createdAt) - +new Date(a.createdAt),
+  );
+}
+
+export function generateRetailDemoData(now = new Date()): RetailSnapshot {
+  const storeProfile = buildRetailStoreProfile();
+  const products = buildRetailProducts(now);
+  const sales = buildRetailSales(products, now);
+  const suppliers = buildRetailSuppliers(products);
+  const adjustments = buildRetailAdjustments(products, sales, now);
+  const creditCustomers = buildRetailCreditCustomers(now);
+  const purchaseOrders = buildRetailPurchaseOrders(products, suppliers, now);
+
+  return {
+    storeProfile,
+    products,
+    sales,
+    adjustments,
+    creditCustomers,
+    suppliers,
+    purchaseOrders,
+  };
+}
+
+export function getRetailAnalytics(
+  sales: RetailSale[],
+  products: RetailProduct[],
+): RetailAnalytics {
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const productMap = new Map(products.map((product) => [product.id, product]));
+  const validSales = sales.filter((sale) => !sale.refunded);
+
+  const revenueToday = validSales
+    .filter((sale) => new Date(sale.createdAt) >= startToday)
+    .reduce((sum, sale) => sum + sale.total, 0);
+  const revenueWeek = validSales
+    .filter((sale) => new Date(sale.createdAt) >= weekAgo)
+    .reduce((sum, sale) => sum + sale.total, 0);
+  const revenueMonth = validSales
+    .filter((sale) => new Date(sale.createdAt) >= monthAgo)
+    .reduce((sum, sale) => sum + sale.total, 0);
+  const unitsSold = validSales.reduce(
+    (sum, sale) =>
+      sum + sale.items.reduce((itemSum, item) => itemSum + item.qty, 0),
+    0,
+  );
+  const grossProfitEstimate = validSales.reduce((sum, sale) => {
+    return (
+      sum +
+      sale.items.reduce((itemSum, item) => {
+        const product = productMap.get(item.productId);
+        return (
+          itemSum + (item.unitPrice - (product?.costPrice || 0)) * item.qty
+        );
+      }, 0)
+    );
+  }, 0);
+
+  const paymentBreakdown = ["mpesa", "cash", "credit"].map((method) => ({
+    name: method,
+    value: validSales
+      .filter((sale) => sale.paymentMethod === method)
+      .reduce((sum, sale) => sum + sale.total, 0),
+  }));
+
+  const topProducts = Array.from(
+    validSales
+      .reduce((acc, sale) => {
+        sale.items.forEach((item) => {
+          const current = acc.get(item.productId) || {
+            productId: item.productId,
+            name: item.name,
+            qty: 0,
+            revenue: 0,
+          };
+          current.qty += item.qty;
+          current.revenue += item.qty * item.unitPrice;
+          acc.set(item.productId, current);
+        });
+        return acc;
+      }, new Map<string, { productId: string; name: string; qty: number; revenue: number }>())
+      .values(),
+  )
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 5);
+
+  const revenueTrend = Array.from({ length: 7 }).map((_, index) => {
+    const day = new Date(now.getTime() - (6 - index) * 24 * 60 * 60 * 1000);
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+    return {
+      label: start.toLocaleDateString("en-KE", { weekday: "short" }),
+      revenue: validSales
+        .filter((sale) => {
+          const createdAt = new Date(sale.createdAt);
+          return createdAt >= start && createdAt < end;
+        })
+        .reduce((sum, sale) => sum + sale.total, 0),
+    };
+  });
+
+  return {
+    revenueToday,
+    revenueWeek,
+    revenueMonth,
+    salesCount: validSales.length,
+    unitsSold,
+    grossProfitEstimate,
+    paymentBreakdown,
+    topProducts,
+    revenueTrend,
+  };
+}
+
+export function getLowStockProducts(products: RetailProduct[]) {
+  return [...products]
+    .filter((product) => product.stock <= product.reorderLevel)
+    .sort((a, b) => a.stock - b.stock);
+}
+
+export function getCreditAging(customers: CreditCustomer[]) {
+  const now = new Date();
+  const customerAging = customers.map((customer) => {
+    const buckets = { current: 0, thirty: 0, sixty: 0, ninety: 0 };
+    customer.entries
+      .filter((entry) => entry.type === "purchase")
+      .forEach((entry) => {
+        const baseDate = entry.dueDate
+          ? new Date(entry.dueDate)
+          : new Date(entry.date);
+        const ageDays = Math.max(
+          0,
+          Math.floor(
+            (now.getTime() - baseDate.getTime()) / (24 * 60 * 60 * 1000),
+          ),
+        );
+        if (ageDays >= 90) buckets.ninety += entry.amount;
+        else if (ageDays >= 60) buckets.sixty += entry.amount;
+        else if (ageDays >= 30) buckets.thirty += entry.amount;
+        else buckets.current += entry.amount;
+      });
+
+    const payments = customer.entries
+      .filter((entry) => entry.type === "payment")
+      .reduce((sum, entry) => sum + entry.amount, 0);
+    let remainingPayments = payments;
+    const orderedBuckets = ["ninety", "sixty", "thirty", "current"] as const;
+    const adjustedBuckets = { ...buckets };
+    orderedBuckets.forEach((bucket) => {
+      if (remainingPayments <= 0) return;
+      const offset = Math.min(adjustedBuckets[bucket], remainingPayments);
+      adjustedBuckets[bucket] -= offset;
+      remainingPayments -= offset;
+    });
+
+    return {
+      customerId: customer.id,
+      name: customer.name,
+      balance: customer.balance,
+      buckets: adjustedBuckets,
+      oldestDays: customer.entries
+        .filter((entry) => entry.type === "purchase")
+        .reduce((max, entry) => {
+          const baseDate = entry.dueDate
+            ? new Date(entry.dueDate)
+            : new Date(entry.date);
+          const ageDays = Math.max(
+            0,
+            Math.floor(
+              (now.getTime() - baseDate.getTime()) / (24 * 60 * 60 * 1000),
+            ),
+          );
+          return Math.max(max, ageDays);
+        }, 0),
+    };
+  });
+
+  const totals = customerAging.reduce(
+    (summary, customer) => {
+      summary.current += customer.buckets.current;
+      summary.thirty += customer.buckets.thirty;
+      summary.sixty += customer.buckets.sixty;
+      summary.ninety += customer.buckets.ninety;
+      return summary;
+    },
+    { current: 0, thirty: 0, sixty: 0, ninety: 0 },
+  );
+
+  return { customers: customerAging, totals };
+}
+
+export function ensureRetailDemoData() {
+  if (!canUseStorage()) return generateRetailDemoData();
+
+  const demo = generateRetailDemoData();
+  (
+    Object.entries(RETAIL_STORAGE_KEYS) as Array<
+      [keyof typeof RETAIL_STORAGE_KEYS, string]
+    >
+  ).forEach(([name, key]) => {
+    if (!window.localStorage.getItem(key)) writeStorage(key, demo[name]);
+  });
+
+  return loadRetailSnapshot();
+}
+
+export function loadRetailSnapshot(): RetailSnapshot {
+  const fallback = generateRetailDemoData();
+  return {
+    storeProfile: readStorage(
+      RETAIL_STORAGE_KEYS.storeProfile,
+      fallback.storeProfile,
+    ),
+    products: readStorage(RETAIL_STORAGE_KEYS.products, fallback.products),
+    sales: readStorage(RETAIL_STORAGE_KEYS.sales, fallback.sales),
+    adjustments: readStorage(
+      RETAIL_STORAGE_KEYS.adjustments,
+      fallback.adjustments,
+    ),
+    creditCustomers: readStorage(
+      RETAIL_STORAGE_KEYS.creditCustomers,
+      fallback.creditCustomers,
+    ).map((customer) => ({
+      ...customer,
+      balance: balanceCreditEntries(customer.entries),
+    })),
+    suppliers: readStorage(RETAIL_STORAGE_KEYS.suppliers, fallback.suppliers),
+    purchaseOrders: readStorage(
+      RETAIL_STORAGE_KEYS.purchaseOrders,
+      fallback.purchaseOrders,
+    ),
+  };
+}
+
+export function saveRetailStoreProfile(storeProfile: RetailStoreProfile) {
+  writeStorage(RETAIL_STORAGE_KEYS.storeProfile, storeProfile);
+}
+
+export function saveRetailProducts(products: RetailProduct[]) {
+  writeStorage(RETAIL_STORAGE_KEYS.products, products);
+}
+
+export function saveRetailSales(sales: RetailSale[]) {
+  writeStorage(RETAIL_STORAGE_KEYS.sales, sales);
+}
+
+export function saveStockAdjustments(adjustments: StockAdjustment[]) {
+  writeStorage(RETAIL_STORAGE_KEYS.adjustments, adjustments);
+}
+
+export function saveCreditCustomers(creditCustomers: CreditCustomer[]) {
+  writeStorage(
+    RETAIL_STORAGE_KEYS.creditCustomers,
+    creditCustomers.map((customer) => ({
+      ...customer,
+      balance: balanceCreditEntries(customer.entries),
+    })),
+  );
+}
+
+export function saveRetailSuppliers(suppliers: Supplier[]) {
+  writeStorage(RETAIL_STORAGE_KEYS.suppliers, suppliers);
+}
+
+export function savePurchaseOrders(purchaseOrders: PurchaseOrder[]) {
+  writeStorage(RETAIL_STORAGE_KEYS.purchaseOrders, purchaseOrders);
+}
+
+export function getRetailStoreSlug(profile?: RetailStoreProfile) {
+  return profile?.id || createRetailId("store", profile?.name || MERCHANT_NAME);
 }

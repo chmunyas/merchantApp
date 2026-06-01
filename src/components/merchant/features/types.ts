@@ -190,6 +190,7 @@ export type MenuSchedule = {
   startTime: string;
   endTime: string;
   categories: string[];
+  menuIds: string[];
 };
 
 export type Menu = {
@@ -354,4 +355,87 @@ export type AIStaffInsight = {
   confidence: number;
   createdAt: string;
   dismissed?: boolean;
+};
+
+// ─── Retail Types ───
+
+export type RetailProduct = {
+  id: string;
+  name: string;
+  sku: string;
+  barcode?: string;
+  category: string;
+  costPrice: number;
+  sellPrice: number;
+  stock: number;
+  reorderLevel: number;
+  unit: "pieces" | "kg" | "litres" | "packets" | "boxes" | "metres";
+  supplier?: string;
+  supplierPhone?: string;
+  image?: string;
+  isActive: boolean;
+  lastRestocked?: string;
+  createdAt: string;
+};
+
+export type RetailSale = {
+  id: string;
+  items: { productId: string; name: string; qty: number; unitPrice: number }[];
+  total: number;
+  paymentMethod: "mpesa" | "cash" | "credit";
+  customerName?: string;
+  customerPhone?: string;
+  mpesaRef?: string;
+  createdAt: string;
+  refunded?: boolean;
+};
+
+export type StockAdjustment = {
+  id: string;
+  productId: string;
+  type: "received" | "damaged" | "returned" | "counted" | "sold";
+  quantity: number;
+  reason?: string;
+  createdAt: string;
+};
+
+export type CreditCustomer = {
+  id: string;
+  name: string;
+  phone: string;
+  creditLimit: number;
+  balance: number;
+  entries: CreditEntry[];
+  createdAt: string;
+};
+
+export type CreditEntry = {
+  id: string;
+  type: "purchase" | "payment";
+  amount: number;
+  description: string;
+  date: string;
+  dueDate?: string;
+  saleId?: string;
+};
+
+export type Supplier = {
+  id: string;
+  name: string;
+  phone: string;
+  email?: string;
+  products: string[];
+  lastOrderDate?: string;
+};
+
+export type PurchaseOrder = {
+  id: string;
+  supplierId: string;
+  supplierName: string;
+  items: { productId: string; name: string; qty: number; unitCost: number }[];
+  total: number;
+  status: "draft" | "sent" | "received" | "paid";
+  createdAt: string;
+  receivedAt?: string;
+  paidAt?: string;
 };

@@ -20,9 +20,11 @@ import { Route as BeneficiariesRouteImport } from "./routes/beneficiaries";
 import { Route as IndexRouteImport } from "./routes/index";
 import { Route as DashboardIndexRouteImport } from "./routes/dashboard/index";
 import { Route as TableTableIdRouteImport } from "./routes/table.$tableId";
+import { Route as RetailStoreIdRouteImport } from "./routes/retail.$storeId";
 import { Route as DashboardStaffRouteImport } from "./routes/dashboard/staff";
 import { Route as DashboardSettingsRouteImport } from "./routes/dashboard/settings";
 import { Route as DashboardReviewsRouteImport } from "./routes/dashboard/reviews";
+import { Route as DashboardRetailRouteImport } from "./routes/dashboard/retail";
 import { Route as DashboardPaymentsRouteImport } from "./routes/dashboard/payments";
 import { Route as DashboardMenuRouteImport } from "./routes/dashboard/menu";
 import { Route as DashboardAnalyticsRouteImport } from "./routes/dashboard/analytics";
@@ -82,6 +84,11 @@ const TableTableIdRoute = TableTableIdRouteImport.update({
   path: "/$tableId",
   getParentRoute: () => TableRoute,
 } as any);
+const RetailStoreIdRoute = RetailStoreIdRouteImport.update({
+  id: "/retail/$storeId",
+  path: "/retail/$storeId",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const DashboardStaffRoute = DashboardStaffRouteImport.update({
   id: "/staff",
   path: "/staff",
@@ -95,6 +102,11 @@ const DashboardSettingsRoute = DashboardSettingsRouteImport.update({
 const DashboardReviewsRoute = DashboardReviewsRouteImport.update({
   id: "/reviews",
   path: "/reviews",
+  getParentRoute: () => DashboardRoute,
+} as any);
+const DashboardRetailRoute = DashboardRetailRouteImport.update({
+  id: "/retail",
+  path: "/retail",
   getParentRoute: () => DashboardRoute,
 } as any);
 const DashboardPaymentsRoute = DashboardPaymentsRouteImport.update({
@@ -126,9 +138,11 @@ export interface FileRoutesByFullPath {
   "/dashboard/analytics": typeof DashboardAnalyticsRoute;
   "/dashboard/menu": typeof DashboardMenuRoute;
   "/dashboard/payments": typeof DashboardPaymentsRoute;
+  "/dashboard/retail": typeof DashboardRetailRoute;
   "/dashboard/reviews": typeof DashboardReviewsRoute;
   "/dashboard/settings": typeof DashboardSettingsRoute;
   "/dashboard/staff": typeof DashboardStaffRoute;
+  "/retail/$storeId": typeof RetailStoreIdRoute;
   "/table/$tableId": typeof TableTableIdRoute;
   "/dashboard/": typeof DashboardIndexRoute;
 }
@@ -144,9 +158,11 @@ export interface FileRoutesByTo {
   "/dashboard/analytics": typeof DashboardAnalyticsRoute;
   "/dashboard/menu": typeof DashboardMenuRoute;
   "/dashboard/payments": typeof DashboardPaymentsRoute;
+  "/dashboard/retail": typeof DashboardRetailRoute;
   "/dashboard/reviews": typeof DashboardReviewsRoute;
   "/dashboard/settings": typeof DashboardSettingsRoute;
   "/dashboard/staff": typeof DashboardStaffRoute;
+  "/retail/$storeId": typeof RetailStoreIdRoute;
   "/table/$tableId": typeof TableTableIdRoute;
   "/dashboard": typeof DashboardIndexRoute;
 }
@@ -164,9 +180,11 @@ export interface FileRoutesById {
   "/dashboard/analytics": typeof DashboardAnalyticsRoute;
   "/dashboard/menu": typeof DashboardMenuRoute;
   "/dashboard/payments": typeof DashboardPaymentsRoute;
+  "/dashboard/retail": typeof DashboardRetailRoute;
   "/dashboard/reviews": typeof DashboardReviewsRoute;
   "/dashboard/settings": typeof DashboardSettingsRoute;
   "/dashboard/staff": typeof DashboardStaffRoute;
+  "/retail/$storeId": typeof RetailStoreIdRoute;
   "/table/$tableId": typeof TableTableIdRoute;
   "/dashboard/": typeof DashboardIndexRoute;
 }
@@ -185,9 +203,11 @@ export interface FileRouteTypes {
     | "/dashboard/analytics"
     | "/dashboard/menu"
     | "/dashboard/payments"
+    | "/dashboard/retail"
     | "/dashboard/reviews"
     | "/dashboard/settings"
     | "/dashboard/staff"
+    | "/retail/$storeId"
     | "/table/$tableId"
     | "/dashboard/";
   fileRoutesByTo: FileRoutesByTo;
@@ -203,9 +223,11 @@ export interface FileRouteTypes {
     | "/dashboard/analytics"
     | "/dashboard/menu"
     | "/dashboard/payments"
+    | "/dashboard/retail"
     | "/dashboard/reviews"
     | "/dashboard/settings"
     | "/dashboard/staff"
+    | "/retail/$storeId"
     | "/table/$tableId"
     | "/dashboard";
   id:
@@ -222,9 +244,11 @@ export interface FileRouteTypes {
     | "/dashboard/analytics"
     | "/dashboard/menu"
     | "/dashboard/payments"
+    | "/dashboard/retail"
     | "/dashboard/reviews"
     | "/dashboard/settings"
     | "/dashboard/staff"
+    | "/retail/$storeId"
     | "/table/$tableId"
     | "/dashboard/";
   fileRoutesById: FileRoutesById;
@@ -239,6 +263,7 @@ export interface RootRouteChildren {
   PaymentsRoute: typeof PaymentsRoute;
   ReportsRoute: typeof ReportsRoute;
   TableRoute: typeof TableRouteWithChildren;
+  RetailStoreIdRoute: typeof RetailStoreIdRoute;
 }
 
 declare module "@tanstack/react-router" {
@@ -320,6 +345,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof TableTableIdRouteImport;
       parentRoute: typeof TableRoute;
     };
+    "/retail/$storeId": {
+      id: "/retail/$storeId";
+      path: "/retail/$storeId";
+      fullPath: "/retail/$storeId";
+      preLoaderRoute: typeof RetailStoreIdRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/dashboard/staff": {
       id: "/dashboard/staff";
       path: "/staff";
@@ -339,6 +371,13 @@ declare module "@tanstack/react-router" {
       path: "/reviews";
       fullPath: "/dashboard/reviews";
       preLoaderRoute: typeof DashboardReviewsRouteImport;
+      parentRoute: typeof DashboardRoute;
+    };
+    "/dashboard/retail": {
+      id: "/dashboard/retail";
+      path: "/retail";
+      fullPath: "/dashboard/retail";
+      preLoaderRoute: typeof DashboardRetailRouteImport;
       parentRoute: typeof DashboardRoute;
     };
     "/dashboard/payments": {
@@ -369,6 +408,7 @@ interface DashboardRouteChildren {
   DashboardAnalyticsRoute: typeof DashboardAnalyticsRoute;
   DashboardMenuRoute: typeof DashboardMenuRoute;
   DashboardPaymentsRoute: typeof DashboardPaymentsRoute;
+  DashboardRetailRoute: typeof DashboardRetailRoute;
   DashboardReviewsRoute: typeof DashboardReviewsRoute;
   DashboardSettingsRoute: typeof DashboardSettingsRoute;
   DashboardStaffRoute: typeof DashboardStaffRoute;
@@ -379,6 +419,7 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardAnalyticsRoute: DashboardAnalyticsRoute,
   DashboardMenuRoute: DashboardMenuRoute,
   DashboardPaymentsRoute: DashboardPaymentsRoute,
+  DashboardRetailRoute: DashboardRetailRoute,
   DashboardReviewsRoute: DashboardReviewsRoute,
   DashboardSettingsRoute: DashboardSettingsRoute,
   DashboardStaffRoute: DashboardStaffRoute,
@@ -409,6 +450,7 @@ const rootRouteChildren: RootRouteChildren = {
   PaymentsRoute: PaymentsRoute,
   ReportsRoute: ReportsRoute,
   TableRoute: TableRouteWithChildren,
+  RetailStoreIdRoute: RetailStoreIdRoute,
 };
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
