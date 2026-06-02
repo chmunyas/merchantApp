@@ -10,6 +10,7 @@ import {
 
 import appCss from "../styles.css?url";
 import { AppSidebar } from "@/components/AppSidebar";
+import { AuthProvider } from "@/components/auth/AuthProvider";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
@@ -120,32 +121,38 @@ function RootComponent() {
     pathname.startsWith("/dashboard") ||
     pathname.startsWith("/pay") ||
     pathname.startsWith("/table") ||
-    pathname.startsWith("/admin");
+    pathname.startsWith("/admin") ||
+    pathname.startsWith("/sign-in") ||
+    pathname.startsWith("/staff-login");
 
   if (isStandaloneLayout) {
     return (
       <QueryClientProvider client={queryClient}>
-        <ErrorBoundary>
-          <div className="min-h-screen bg-background text-foreground">
-            <Outlet />
-            <Toaster position="top-right" richColors />
-          </div>
-        </ErrorBoundary>
+        <AuthProvider>
+          <ErrorBoundary>
+            <div className="min-h-screen bg-background text-foreground">
+              <Outlet />
+              <Toaster position="top-right" richColors />
+            </div>
+          </ErrorBoundary>
+        </AuthProvider>
       </QueryClientProvider>
     );
   }
 
   return (
     <QueryClientProvider client={queryClient}>
-      <ErrorBoundary>
-        <div className="min-h-screen bg-background text-foreground">
-          <AppSidebar />
-          <main className="pl-64">
-            <Outlet />
-          </main>
-          <Toaster position="top-right" richColors />
-        </div>
-      </ErrorBoundary>
+      <AuthProvider>
+        <ErrorBoundary>
+          <div className="min-h-screen bg-background text-foreground">
+            <AppSidebar />
+            <main className="pl-64">
+              <Outlet />
+            </main>
+            <Toaster position="top-right" richColors />
+          </div>
+        </ErrorBoundary>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

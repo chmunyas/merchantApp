@@ -8,26 +8,18 @@ import {
   Activity,
   LayoutDashboard,
   LockKeyhole,
-  LogOut,
   Menu,
   ShieldCheck,
   SlidersHorizontal,
   Store,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { toast } from "sonner";
+import { useMemo, useState } from "react";
 
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
+import { UserProfileMenu } from "@/components/auth/UserProfileMenu";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import {
-  adminLogin,
-  adminLogout,
-  ensureAdminDemoData,
-  getAdminSession,
-} from "@/lib/admin";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/admin")({
@@ -44,31 +36,10 @@ const navItems = [
   { to: "/admin/activity", label: "Audit Log", icon: Activity },
 ] as const;
 
-function AdminLayout() {
+function AdminShell() {
   const router = useRouter();
   const pathname = router.state.location.pathname;
-  const [ready, setReady] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [email, setEmail] = useState("admin@pesaswap.io");
-  const [password, setPassword] = useState("admin123");
-  const [error, setError] = useState("");
-  const [session, setSession] = useState(() => getAdminSession());
-
-  useEffect(() => {
-    ensureAdminDemoData();
-    const syncSession = () => {
-      setSession(getAdminSession());
-      setReady(true);
-    };
-
-    syncSession();
-    window.addEventListener("storage", syncSession);
-    window.addEventListener("focus", syncSession);
-    return () => {
-      window.removeEventListener("storage", syncSession);
-      window.removeEventListener("focus", syncSession);
-    };
-  }, []);
 
   const breadcrumb = useMemo(() => {
     const item = navItems.find(
@@ -76,113 +47,6 @@ function AdminLayout() {
     );
     return item?.label ?? "Overview";
   }, [pathname]);
-
-  function handleLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const result = adminLogin(email, password);
-    if (!result.success) {
-      setError(result.error ?? "Invalid credentials");
-      return;
-    }
-    setError("");
-    setSession(getAdminSession());
-    toast.success("Welcome to Admin Mode");
-  }
-
-  function handleLogout() {
-    adminLogout();
-    setSession(getAdminSession());
-    setMobileOpen(false);
-    toast.success("Logged out of Admin Mode");
-  }
-
-  if (!ready) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-200">
-        <div className="rounded-3xl border border-slate-800 bg-slate-900 px-6 py-5 text-sm">
-          Loading Admin Panel…
-        </div>
-      </div>
-    );
-  }
-
-  if (!session.authenticated) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-10 text-slate-100">
-        <Card className="w-full max-w-md rounded-3xl border-slate-800 bg-slate-900 shadow-2xl shadow-violet-950/30">
-          <CardContent className="p-8">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-500/15 text-violet-300">
-              <LockKeyhole className="h-7 w-7" />
-            </div>
-            <div className="mt-6 text-center">
-              <p className="text-xs uppercase tracking-[0.35em] text-violet-300">
-                PesaSwap
-              </p>
-              <h1 className="mt-3 text-3xl font-semibold text-white">
-                Master Admin Panel
-              </h1>
-              <p className="mt-2 text-sm text-slate-400">
-                Secure operator access for onboarding, controls, and platform
-                oversight.
-              </p>
-            </div>
-
-            <form className="mt-8 space-y-4" onSubmit={handleLogin}>
-              <div className="space-y-2">
-                <label
-                  className="text-sm font-medium text-slate-300"
-                  htmlFor="admin-email"
-                >
-                  Email address
-                </label>
-                <Input
-                  id="admin-email"
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  className="h-11 rounded-xl border-slate-700 bg-slate-950 text-slate-100"
-                  placeholder="admin@pesaswap.io"
-                />
-              </div>
-              <div className="space-y-2">
-                <label
-                  className="text-sm font-medium text-slate-300"
-                  htmlFor="admin-password"
-                >
-                  Password
-                </label>
-                <Input
-                  id="admin-password"
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  className="h-11 rounded-xl border-slate-700 bg-slate-950 text-slate-100"
-                  placeholder="••••••••"
-                />
-              </div>
-              {error ? (
-                <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-                  {error}
-                </div>
-              ) : null}
-              <Button className="h-11 w-full rounded-xl bg-violet-500 text-white hover:bg-violet-400">
-                Enter Admin Mode
-              </Button>
-            </form>
-
-            <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-400">
-              Demo access:{" "}
-              <span className="font-medium text-slate-100">
-                admin@pesaswap.io
-              </span>
-              <span className="mx-2 text-slate-600">/</span>
-              <span className="font-medium text-slate-100">admin123</span>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
 
   return (
     <div className="flex min-h-screen bg-slate-950 text-slate-100">
@@ -297,23 +161,7 @@ function AdminLayout() {
                 </h2>
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="hidden rounded-2xl border border-slate-800 bg-slate-900 px-4 py-2 text-right sm:block">
-                <div className="text-xs uppercase tracking-[0.25em] text-slate-500">
-                  Signed in
-                </div>
-                <div className="text-sm font-medium text-slate-100">
-                  {session.email}
-                </div>
-              </div>
-              <Button
-                variant="outline"
-                className="border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800"
-                onClick={handleLogout}
-              >
-                <LogOut className="h-4 w-4" /> Logout
-              </Button>
-            </div>
+            <UserProfileMenu variant="dark" />
           </div>
         </header>
 
@@ -322,5 +170,13 @@ function AdminLayout() {
         </main>
       </div>
     </div>
+  );
+}
+
+function AdminLayout() {
+  return (
+    <ProtectedRoute roles={["admin"]}>
+      <AdminShell />
+    </ProtectedRoute>
   );
 }

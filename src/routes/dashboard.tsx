@@ -19,8 +19,11 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
+import { UserProfileMenu } from "@/components/auth/UserProfileMenu";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/dashboard")({
@@ -39,9 +42,10 @@ const navItems = [
   { to: "/dashboard/settings", label: "Settings", icon: Settings },
 ] as const;
 
-function DashboardLayout() {
+function DashboardShell() {
   const router = useRouter();
   const pathname = router.state.location.pathname;
+  const { user } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [range, setRange] = useState("Today");
 
@@ -60,7 +64,9 @@ function DashboardLayout() {
             PesaSwap
           </p>
           <h1 className="mt-2 text-xl font-semibold">Merchant Dashboard</h1>
-          <p className="mt-1 text-sm text-slate-400">Sade's Atelier</p>
+          <p className="mt-1 text-sm text-slate-400">
+            {user?.name ?? "Merchant"}
+          </p>
         </div>
         <nav className="flex-1 space-y-1 px-3 py-4">
           {navItems.map((item) => {
@@ -159,9 +165,7 @@ function DashboardLayout() {
                 <option>This month</option>
                 <option>Custom</option>
               </select>
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 font-medium text-emerald-700">
-                SA
-              </div>
+              <UserProfileMenu variant="light" />
             </div>
           </div>
         </header>
@@ -171,5 +175,13 @@ function DashboardLayout() {
         </main>
       </div>
     </div>
+  );
+}
+
+function DashboardLayout() {
+  return (
+    <ProtectedRoute roles={["merchant", "admin"]}>
+      <DashboardShell />
+    </ProtectedRoute>
   );
 }

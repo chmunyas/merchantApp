@@ -10,6 +10,8 @@
 
 import { Route as rootRouteImport } from "./routes/__root";
 import { Route as TableRouteImport } from "./routes/table";
+import { Route as StaffLoginRouteImport } from "./routes/staff-login";
+import { Route as SignInRouteImport } from "./routes/sign-in";
 import { Route as ReportsRouteImport } from "./routes/reports";
 import { Route as PaymentsRouteImport } from "./routes/payments";
 import { Route as PayRouteImport } from "./routes/pay";
@@ -39,6 +41,16 @@ import { Route as AdminActivityRouteImport } from "./routes/admin/activity";
 const TableRoute = TableRouteImport.update({
   id: "/table",
   path: "/table",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const StaffLoginRoute = StaffLoginRouteImport.update({
+  id: "/staff-login",
+  path: "/staff-login",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const SignInRoute = SignInRouteImport.update({
+  id: "/sign-in",
+  path: "/sign-in",
   getParentRoute: () => rootRouteImport,
 } as any);
 const ReportsRoute = ReportsRouteImport.update({
@@ -177,6 +189,8 @@ export interface FileRoutesByFullPath {
   "/pay": typeof PayRoute;
   "/payments": typeof PaymentsRoute;
   "/reports": typeof ReportsRoute;
+  "/sign-in": typeof SignInRoute;
+  "/staff-login": typeof StaffLoginRoute;
   "/table": typeof TableRouteWithChildren;
   "/admin/activity": typeof AdminActivityRoute;
   "/admin/features": typeof AdminFeaturesRoute;
@@ -203,6 +217,8 @@ export interface FileRoutesByTo {
   "/pay": typeof PayRoute;
   "/payments": typeof PaymentsRoute;
   "/reports": typeof ReportsRoute;
+  "/sign-in": typeof SignInRoute;
+  "/staff-login": typeof StaffLoginRoute;
   "/table": typeof TableRouteWithChildren;
   "/admin/activity": typeof AdminActivityRoute;
   "/admin/features": typeof AdminFeaturesRoute;
@@ -232,6 +248,8 @@ export interface FileRoutesById {
   "/pay": typeof PayRoute;
   "/payments": typeof PaymentsRoute;
   "/reports": typeof ReportsRoute;
+  "/sign-in": typeof SignInRoute;
+  "/staff-login": typeof StaffLoginRoute;
   "/table": typeof TableRouteWithChildren;
   "/admin/activity": typeof AdminActivityRoute;
   "/admin/features": typeof AdminFeaturesRoute;
@@ -262,6 +280,8 @@ export interface FileRouteTypes {
     | "/pay"
     | "/payments"
     | "/reports"
+    | "/sign-in"
+    | "/staff-login"
     | "/table"
     | "/admin/activity"
     | "/admin/features"
@@ -288,6 +308,8 @@ export interface FileRouteTypes {
     | "/pay"
     | "/payments"
     | "/reports"
+    | "/sign-in"
+    | "/staff-login"
     | "/table"
     | "/admin/activity"
     | "/admin/features"
@@ -316,6 +338,8 @@ export interface FileRouteTypes {
     | "/pay"
     | "/payments"
     | "/reports"
+    | "/sign-in"
+    | "/staff-login"
     | "/table"
     | "/admin/activity"
     | "/admin/features"
@@ -345,6 +369,8 @@ export interface RootRouteChildren {
   PayRoute: typeof PayRoute;
   PaymentsRoute: typeof PaymentsRoute;
   ReportsRoute: typeof ReportsRoute;
+  SignInRoute: typeof SignInRoute;
+  StaffLoginRoute: typeof StaffLoginRoute;
   TableRoute: typeof TableRouteWithChildren;
   BookBusinessIdRoute: typeof BookBusinessIdRoute;
   RetailStoreIdRoute: typeof RetailStoreIdRoute;
@@ -357,6 +383,20 @@ declare module "@tanstack/react-router" {
       path: "/table";
       fullPath: "/table";
       preLoaderRoute: typeof TableRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/staff-login": {
+      id: "/staff-login";
+      path: "/staff-login";
+      fullPath: "/staff-login";
+      preLoaderRoute: typeof StaffLoginRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/sign-in": {
+      id: "/sign-in";
+      path: "/sign-in";
+      fullPath: "/sign-in";
+      preLoaderRoute: typeof SignInRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/reports": {
@@ -601,6 +641,8 @@ const rootRouteChildren: RootRouteChildren = {
   PayRoute: PayRoute,
   PaymentsRoute: PaymentsRoute,
   ReportsRoute: ReportsRoute,
+  SignInRoute: SignInRoute,
+  StaffLoginRoute: StaffLoginRoute,
   TableRoute: TableRouteWithChildren,
   BookBusinessIdRoute: BookBusinessIdRoute,
   RetailStoreIdRoute: RetailStoreIdRoute,
