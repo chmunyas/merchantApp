@@ -187,10 +187,18 @@ function StaffLoginPage() {
           )}
         </div>
 
-        {/* Hint */}
-        <p className="mt-8 text-xs text-slate-600">
-          Demo PIN: <span className="font-mono text-slate-400">1234</span>
-        </p>
+        {/* Hint & Forgot PIN */}
+        <div className="mt-8 space-y-2">
+          <p className="text-xs text-slate-600">
+            Demo PIN: <span className="font-mono text-slate-400">1234</span>
+          </p>
+          <button
+            onClick={() => void navigate({ to: "/reset-pin" })}
+            className="text-xs text-violet-400 hover:text-violet-300 hover:underline transition"
+          >
+            Forgot your PIN?
+          </button>
+        </div>
       </div>
 
       {/* Shake animation */}

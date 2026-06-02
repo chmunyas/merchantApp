@@ -1,11 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Download, FileDown, Plus, Trash2 } from "lucide-react";
+import { Download, FileDown, KeyRound, Plus, Trash2, User } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useAuth } from "@/lib/auth";
 import {
   createTableQrValue,
   ensureMerchantDemoData,
@@ -21,6 +22,116 @@ export const Route = createFileRoute("/dashboard/settings")({
 
 function generateDemoData() {
   return ensureMerchantDemoData();
+}
+
+function AccountSecuritySection() {
+  const { user } = useAuth();
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [pwLoading, setPwLoading] = useState(false);
+
+  function handleChangePassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (!currentPw.trim()) {
+      toast.error("Enter your current password");
+      return;
+    }
+    if (newPw.length < 6) {
+      toast.error("New password must be at least 6 characters");
+      return;
+    }
+    if (newPw !== confirmPw) {
+      toast.error("Passwords do not match");
+      return;
+    }
+    setPwLoading(true);
+    setTimeout(() => {
+      setPwLoading(false);
+      setCurrentPw("");
+      setNewPw("");
+      setConfirmPw("");
+      toast.success("Password updated successfully");
+    }, 1000);
+  }
+
+  return (
+    <div className="rounded-2xl border border-border bg-card p-6">
+      <div className="flex items-center gap-2 mb-4">
+        <User className="h-5 w-5 text-violet-600" />
+        <h3 className="text-lg font-semibold">Account & Security</h3>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Profile info */}
+        <div className="space-y-4">
+          <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
+            Profile
+          </h4>
+          <div className="flex items-center gap-4">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-lg font-bold text-emerald-700">
+              {(user?.name ?? "U")
+                .split(" ")
+                .map((p) => p[0])
+                .join("")
+                .slice(0, 2)
+                .toUpperCase()}
+            </div>
+            <div>
+              <p className="font-medium">{user?.name ?? "—"}</p>
+              <p className="text-sm text-muted-foreground">
+                {user?.email ?? user?.phone ?? "—"}
+              </p>
+              <span className="mt-1 inline-block rounded-md bg-violet-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-violet-700">
+                {user?.role ?? "user"}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Change password */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <KeyRound className="h-4 w-4 text-muted-foreground" />
+            <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
+              Change Password
+            </h4>
+          </div>
+          <form onSubmit={handleChangePassword} className="space-y-3">
+            <Input
+              type="password"
+              value={currentPw}
+              onChange={(e) => setCurrentPw(e.target.value)}
+              placeholder="Current password"
+              className="h-10 rounded-xl"
+            />
+            <Input
+              type="password"
+              value={newPw}
+              onChange={(e) => setNewPw(e.target.value)}
+              placeholder="New password (min 6 chars)"
+              className="h-10 rounded-xl"
+            />
+            <Input
+              type="password"
+              value={confirmPw}
+              onChange={(e) => setConfirmPw(e.target.value)}
+              placeholder="Confirm new password"
+              className="h-10 rounded-xl"
+            />
+            <Button
+              type="submit"
+              disabled={pwLoading}
+              size="sm"
+              className="rounded-xl"
+            >
+              {pwLoading ? "Updating…" : "Update password"}
+            </Button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function DashboardSettingsPage() {
@@ -97,6 +208,9 @@ function DashboardSettingsPage() {
 
   return (
     <div className="space-y-6">
+      {/* Account & Security */}
+      <AccountSecuritySection />
+
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <div className="rounded-2xl border border-border bg-card p-6">
           <h3 className="text-lg font-semibold">Business profile</h3>
