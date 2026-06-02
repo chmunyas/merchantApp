@@ -7,6 +7,7 @@ import {
 import {
   BarChart3,
   BriefcaseBusiness,
+  ChefHat,
   CreditCard,
   LayoutDashboard,
   Menu,
@@ -32,6 +33,7 @@ export const Route = createFileRoute("/dashboard")({
 
 const navItems = [
   { to: "/dashboard", label: "Overview", icon: LayoutDashboard },
+  { to: "/dashboard/orders", label: "Orders (KDS)", icon: ChefHat },
   { to: "/dashboard/payments", label: "Payments", icon: CreditCard },
   { to: "/dashboard/retail", label: "Retail", icon: ShoppingBag },
   { to: "/dashboard/services", label: "Services", icon: BriefcaseBusiness },

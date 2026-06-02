@@ -1,7 +1,7 @@
 /**
  * PesaSwap Real-Time Notifications
  * WebSocket-based merchant notifications with fallback polling.
- * 
+ *
  * Flow:
  * 1. Payment succeeds → PesaSwap webhook hits server
  * 2. Server broadcasts via WebSocket to connected merchant
@@ -162,7 +162,10 @@ class RealtimeManager {
   /**
    * Subscribe to specific event types
    */
-  on(eventType: RealtimeEvent["type"] | "*", handler: EventHandler): () => void {
+  on(
+    eventType: RealtimeEvent["type"] | "*",
+    handler: EventHandler,
+  ): () => void {
     if (!this.handlers.has(eventType)) {
       this.handlers.set(eventType, new Set());
     }
@@ -194,7 +197,9 @@ class RealtimeManager {
     }
 
     try {
-      this.ws = new WebSocket(`${wsUrl}/api/realtime?merchant=${encodeURIComponent(this.merchantId)}`);
+      this.ws = new WebSocket(
+        `${wsUrl}/api/realtime?merchant=${encodeURIComponent(this.merchantId)}`,
+      );
 
       this.ws.onopen = () => {
         this.connected = true;
@@ -230,7 +235,9 @@ class RealtimeManager {
 
   private scheduleReconnect(): void {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.warn("[PesaSwap] Max reconnect attempts reached, falling back to polling");
+      console.warn(
+        "[PesaSwap] Max reconnect attempts reached, falling back to polling",
+      );
       this.startPolling();
       return;
     }
@@ -321,15 +328,10 @@ export const realtime = new RealtimeManager();
 
 // --- React Hook ---
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 
 /**
  * React hook for subscribing to real-time PesaSwap events.
- *
- * @example
- * usePesaSwapEvent("payment.succeeded", (event) => {
- *   toast.success(`Payment received: KES ${event.data.amount}`);
- * });
  */
 export function usePesaSwapEvent(
   eventType: RealtimeEvent["type"] | "*",
@@ -351,12 +353,191 @@ export function usePesaSwapEvent(
 /**
  * Hook to connect/disconnect realtime on mount/unmount
  */
-export function usePesaSwapRealtime(merchantId: string): { connected: boolean } {
+export function usePesaSwapRealtime(merchantId: string): {
+  connected: boolean;
+} {
   useEffect(() => {
     realtime.connect(merchantId);
     return () => realtime.disconnect();
   }, [merchantId]);
 
-  // Re-render on connection changes would need state, keeping it simple
   return { connected: realtime.isConnected() };
+}
+
+// ============================================================
+// LOCAL ORDER BUS — BroadcastChannel for cross-tab communication
+// This enables customer tab → kitchen tab real-time in demo mode.
+// ============================================================
+
+export type OrderStatus =
+  | "new"
+  | "accepted"
+  | "preparing"
+  | "ready"
+  | "served"
+  | "cancelled";
+
+export type KitchenOrder = {
+  id: string;
+  tableId: string;
+  tableNumber: number;
+  items: KitchenOrderItem[];
+  status: OrderStatus;
+  total: number;
+  customerNote?: string;
+  fulfilment: "dine-in" | "takeaway" | "delivery";
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type KitchenOrderItem = {
+  id: string;
+  name: string;
+  quantity: number;
+  price: number;
+  notes?: string;
+  options?: string[];
+};
+
+type OrderBusMessage =
+  | { type: "order:new"; order: KitchenOrder }
+  | { type: "order:status"; orderId: string; status: OrderStatus }
+  | { type: "order:sync"; orders: KitchenOrder[] };
+
+type OrderBusListener = (msg: OrderBusMessage) => void;
+
+const ORDER_CHANNEL_NAME = "pesaswap:orders";
+const ORDERS_STORAGE_KEY = "pesaswap.kitchen.orders";
+
+let orderChannel: BroadcastChannel | null = null;
+const orderListeners = new Set<OrderBusListener>();
+
+function getOrderChannel(): BroadcastChannel {
+  if (!orderChannel && typeof BroadcastChannel !== "undefined") {
+    orderChannel = new BroadcastChannel(ORDER_CHANNEL_NAME);
+    orderChannel.onmessage = (evt: MessageEvent<OrderBusMessage>) => {
+      orderListeners.forEach((fn) => fn(evt.data));
+    };
+  }
+  return orderChannel!;
+}
+
+export function subscribeOrders(listener: OrderBusListener): () => void {
+  orderListeners.add(listener);
+  getOrderChannel();
+  return () => {
+    orderListeners.delete(listener);
+  };
+}
+
+function broadcastOrder(msg: OrderBusMessage): void {
+  try {
+    getOrderChannel()?.postMessage(msg);
+  } catch {
+    /* SSR / no BroadcastChannel */
+  }
+  // Also notify local listeners (same tab)
+  orderListeners.forEach((fn) => fn(msg));
+}
+
+export function generateOrderId(): string {
+  const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+  const ts = Date.now().toString(36).slice(-4).toUpperCase();
+  return `ORD-${rand}-${ts}`;
+}
+
+export function getKitchenOrders(): KitchenOrder[] {
+  try {
+    const raw = localStorage.getItem(ORDERS_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as KitchenOrder[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveKitchenOrders(orders: KitchenOrder[]): void {
+  localStorage.setItem(
+    ORDERS_STORAGE_KEY,
+    JSON.stringify(orders.slice(0, 200)),
+  );
+}
+
+/** Customer calls this when placing an order */
+export function submitNewOrder(order: KitchenOrder): void {
+  const orders = getKitchenOrders();
+  orders.unshift(order);
+  saveKitchenOrders(orders);
+  broadcastOrder({ type: "order:new", order });
+}
+
+/** Kitchen calls this to update order status */
+export function updateKitchenOrderStatus(
+  orderId: string,
+  status: OrderStatus,
+): KitchenOrder | null {
+  const orders = getKitchenOrders();
+  const order = orders.find((o) => o.id === orderId);
+  if (!order) return null;
+  order.status = status;
+  order.updatedAt = new Date().toISOString();
+  saveKitchenOrders(orders);
+  broadcastOrder({ type: "order:status", orderId, status });
+  return order;
+}
+
+/** Clear completed orders older than N minutes */
+export function clearOldOrders(maxAgeMinutes = 120): void {
+  const cutoff = Date.now() - maxAgeMinutes * 60 * 1000;
+  const orders = getKitchenOrders().filter((o) => {
+    if (o.status === "served" || o.status === "cancelled") {
+      return new Date(o.updatedAt).getTime() > cutoff;
+    }
+    return true;
+  });
+  saveKitchenOrders(orders);
+}
+
+/** React hook: live kitchen orders with real-time updates */
+export function useKitchenOrders() {
+  const [orders, setOrders] = useState<KitchenOrder[]>(() =>
+    getKitchenOrders(),
+  );
+
+  useEffect(() => {
+    // Sync on focus (in case another tab modified storage)
+    const syncFromStorage = () => setOrders(getKitchenOrders());
+    window.addEventListener("focus", syncFromStorage);
+    window.addEventListener("storage", syncFromStorage);
+
+    const unsub = subscribeOrders((msg) => {
+      if (msg.type === "order:new") {
+        setOrders((prev) => [
+          msg.order,
+          ...prev.filter((o) => o.id !== msg.order.id),
+        ]);
+      } else if (msg.type === "order:status") {
+        setOrders((prev) =>
+          prev.map((o) =>
+            o.id === msg.orderId
+              ? {
+                  ...o,
+                  status: msg.status,
+                  updatedAt: new Date().toISOString(),
+                }
+              : o,
+          ),
+        );
+      } else if (msg.type === "order:sync") {
+        setOrders(msg.orders);
+      }
+    });
+
+    return () => {
+      unsub();
+      window.removeEventListener("focus", syncFromStorage);
+      window.removeEventListener("storage", syncFromStorage);
+    };
+  }, []);
+
+  return orders;
 }

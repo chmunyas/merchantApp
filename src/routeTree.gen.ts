@@ -32,6 +32,7 @@ import { Route as DashboardServicesRouteImport } from "./routes/dashboard/servic
 import { Route as DashboardReviewsRouteImport } from "./routes/dashboard/reviews";
 import { Route as DashboardRetailRouteImport } from "./routes/dashboard/retail";
 import { Route as DashboardPaymentsRouteImport } from "./routes/dashboard/payments";
+import { Route as DashboardOrdersRouteImport } from "./routes/dashboard/orders";
 import { Route as DashboardMenuRouteImport } from "./routes/dashboard/menu";
 import { Route as DashboardAnalyticsRouteImport } from "./routes/dashboard/analytics";
 import { Route as BookBusinessIdRouteImport } from "./routes/book.$businessId";
@@ -154,6 +155,11 @@ const DashboardPaymentsRoute = DashboardPaymentsRouteImport.update({
   path: "/payments",
   getParentRoute: () => DashboardRoute,
 } as any);
+const DashboardOrdersRoute = DashboardOrdersRouteImport.update({
+  id: "/orders",
+  path: "/orders",
+  getParentRoute: () => DashboardRoute,
+} as any);
 const DashboardMenuRoute = DashboardMenuRouteImport.update({
   id: "/menu",
   path: "/menu",
@@ -205,6 +211,7 @@ export interface FileRoutesByFullPath {
   "/book/$businessId": typeof BookBusinessIdRoute;
   "/dashboard/analytics": typeof DashboardAnalyticsRoute;
   "/dashboard/menu": typeof DashboardMenuRoute;
+  "/dashboard/orders": typeof DashboardOrdersRoute;
   "/dashboard/payments": typeof DashboardPaymentsRoute;
   "/dashboard/retail": typeof DashboardRetailRoute;
   "/dashboard/reviews": typeof DashboardReviewsRoute;
@@ -234,6 +241,7 @@ export interface FileRoutesByTo {
   "/book/$businessId": typeof BookBusinessIdRoute;
   "/dashboard/analytics": typeof DashboardAnalyticsRoute;
   "/dashboard/menu": typeof DashboardMenuRoute;
+  "/dashboard/orders": typeof DashboardOrdersRoute;
   "/dashboard/payments": typeof DashboardPaymentsRoute;
   "/dashboard/retail": typeof DashboardRetailRoute;
   "/dashboard/reviews": typeof DashboardReviewsRoute;
@@ -266,6 +274,7 @@ export interface FileRoutesById {
   "/book/$businessId": typeof BookBusinessIdRoute;
   "/dashboard/analytics": typeof DashboardAnalyticsRoute;
   "/dashboard/menu": typeof DashboardMenuRoute;
+  "/dashboard/orders": typeof DashboardOrdersRoute;
   "/dashboard/payments": typeof DashboardPaymentsRoute;
   "/dashboard/retail": typeof DashboardRetailRoute;
   "/dashboard/reviews": typeof DashboardReviewsRoute;
@@ -299,6 +308,7 @@ export interface FileRouteTypes {
     | "/book/$businessId"
     | "/dashboard/analytics"
     | "/dashboard/menu"
+    | "/dashboard/orders"
     | "/dashboard/payments"
     | "/dashboard/retail"
     | "/dashboard/reviews"
@@ -328,6 +338,7 @@ export interface FileRouteTypes {
     | "/book/$businessId"
     | "/dashboard/analytics"
     | "/dashboard/menu"
+    | "/dashboard/orders"
     | "/dashboard/payments"
     | "/dashboard/retail"
     | "/dashboard/reviews"
@@ -359,6 +370,7 @@ export interface FileRouteTypes {
     | "/book/$businessId"
     | "/dashboard/analytics"
     | "/dashboard/menu"
+    | "/dashboard/orders"
     | "/dashboard/payments"
     | "/dashboard/retail"
     | "/dashboard/reviews"
@@ -552,6 +564,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof DashboardPaymentsRouteImport;
       parentRoute: typeof DashboardRoute;
     };
+    "/dashboard/orders": {
+      id: "/dashboard/orders";
+      path: "/orders";
+      fullPath: "/dashboard/orders";
+      preLoaderRoute: typeof DashboardOrdersRouteImport;
+      parentRoute: typeof DashboardRoute;
+    };
     "/dashboard/menu": {
       id: "/dashboard/menu";
       path: "/menu";
@@ -616,6 +635,7 @@ const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren);
 interface DashboardRouteChildren {
   DashboardAnalyticsRoute: typeof DashboardAnalyticsRoute;
   DashboardMenuRoute: typeof DashboardMenuRoute;
+  DashboardOrdersRoute: typeof DashboardOrdersRoute;
   DashboardPaymentsRoute: typeof DashboardPaymentsRoute;
   DashboardRetailRoute: typeof DashboardRetailRoute;
   DashboardReviewsRoute: typeof DashboardReviewsRoute;
@@ -628,6 +648,7 @@ interface DashboardRouteChildren {
 const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardAnalyticsRoute: DashboardAnalyticsRoute,
   DashboardMenuRoute: DashboardMenuRoute,
+  DashboardOrdersRoute: DashboardOrdersRoute,
   DashboardPaymentsRoute: DashboardPaymentsRoute,
   DashboardRetailRoute: DashboardRetailRoute,
   DashboardReviewsRoute: DashboardReviewsRoute,

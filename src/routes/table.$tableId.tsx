@@ -31,7 +31,7 @@ import type {
   CatalogueItem,
   StaffMember,
 } from "@/components/merchant/features/types";
-import { buildPaymentMetadata, executePayment } from "@/lib/pesaswap-payments";
+import { executePayment, buildPaymentMetadata } from "@/lib/pesaswap-payments";
 import {
   ensureMerchantDemoData,
   getActiveMenuSchedule,
@@ -43,6 +43,7 @@ import {
   type MerchantSnapshot,
   type MerchantTable,
 } from "@/lib/merchant-dashboard";
+import { generateOrderId, submitNewOrder } from "@/lib/realtime";
 
 export const Route = createFileRoute("/table/$tableId")({
   component: TableCustomerPage,
@@ -1600,6 +1601,30 @@ function TableCustomerPage() {
           }) satisfies BillItem,
       ),
     ];
+
+    // Broadcast to Kitchen Display (real-time via BroadcastChannel)
+    submitNewOrder({
+      id: generateOrderId(),
+      tableId,
+      tableNumber: (currentTable?.tableNumber ?? parseInt(tableId, 10)) || 0,
+      items: cart.map((item) => ({
+        id: item.key,
+        name: item.name,
+        quantity: item.quantity,
+        price: item.basePrice,
+        notes: item.notes || orderNote || undefined,
+        options: item.selectedOptions?.map((o) => o.optionName),
+      })),
+      status: "new",
+      total: cart.reduce(
+        (sum, item) => sum + item.basePrice * item.quantity,
+        0,
+      ),
+      customerNote: orderNote || undefined,
+      fulfilment: fulfilment as "dine-in" | "takeaway" | "delivery",
+      createdAt: now,
+      updatedAt: now,
+    });
 
     setBillItems(nextBillItems);
     setCart([]);
