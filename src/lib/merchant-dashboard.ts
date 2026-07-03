@@ -1957,6 +1957,69 @@ export function writeStorage<T>(key: string, value: T) {
   }
 }
 
+// --- Multi-venue scoping ---
+// Merchant data is namespaced per venue. The "main" venue keeps the base keys
+// so existing single-venue data is preserved; other venues get a suffix.
+
+export type Venue = {
+  id: string;
+  name: string;
+  code: string;
+  active: boolean;
+};
+
+const VENUES_KEY = "fxengine.merchant.venues";
+const CURRENT_VENUE_KEY = "fxengine.merchant.currentVenue";
+
+function buildVenues(): Venue[] {
+  return [
+    {
+      id: "main",
+      name: "Sade's Atelier — Westlands",
+      code: "WL-001",
+      active: true,
+    },
+    { id: "cbd", name: "Sade's Atelier — CBD", code: "CBD-002", active: true },
+    {
+      id: "kisumu",
+      name: "Sade's Lakeside — Kisumu",
+      code: "KSM-003",
+      active: true,
+    },
+  ];
+}
+
+export function getVenues(): Venue[] {
+  return readStorage<Venue[]>(VENUES_KEY, buildVenues());
+}
+
+export function getCurrentVenueId(): string {
+  return readStorage<string>(CURRENT_VENUE_KEY, "main");
+}
+
+export function setCurrentVenueId(id: string): void {
+  writeStorage(CURRENT_VENUE_KEY, id);
+}
+
+export function getCurrentVenue(): Venue {
+  const venues = getVenues();
+  const id = getCurrentVenueId();
+  return venues.find((venue) => venue.id === id) ?? venues[0];
+}
+
+function mkey(baseKey: string): string {
+  const venueId = getCurrentVenueId();
+  return venueId === "main" ? baseKey : `${baseKey}::${venueId}`;
+}
+
+function readMerchant<T>(key: string, fallback: T): T {
+  return readStorage(mkey(key), fallback);
+}
+
+function writeMerchant<T>(key: string, value: T): void {
+  writeStorage(mkey(key), value);
+}
+
 export const SCHEMA_VERSION = 2;
 const SCHEMA_VERSION_KEY = "fxengine.merchant.schemaVersion";
 
@@ -1992,8 +2055,8 @@ export function ensureMerchantDemoData() {
   (
     Object.entries(STORAGE_KEYS) as Array<[keyof typeof STORAGE_KEYS, string]>
   ).forEach(([name, key]) => {
-    if (!window.localStorage.getItem(key)) {
-      writeStorage(key, demo[name]);
+    if (!window.localStorage.getItem(mkey(key))) {
+      writeMerchant(key, demo[name]);
     }
   });
 
@@ -2006,10 +2069,10 @@ export function loadMerchantSnapshot(): MerchantSnapshot {
   const fallback = createMerchantDemoData();
 
   return {
-    catalogue: readStorage(STORAGE_KEYS.catalogue, fallback.catalogue),
-    menus: readStorage(STORAGE_KEYS.menus, fallback.menus),
-    zones: readStorage(STORAGE_KEYS.zones, fallback.zones),
-    areas: readStorage(STORAGE_KEYS.areas, fallback.areas),
+    catalogue: readMerchant(STORAGE_KEYS.catalogue, fallback.catalogue),
+    menus: readMerchant(STORAGE_KEYS.menus, fallback.menus),
+    zones: readMerchant(STORAGE_KEYS.zones, fallback.zones),
+    areas: readMerchant(STORAGE_KEYS.areas, fallback.areas),
     categoryOrder: readStorage(
       STORAGE_KEYS.categoryOrder,
       fallback.categoryOrder,
@@ -2022,27 +2085,27 @@ export function loadMerchantSnapshot(): MerchantSnapshot {
       STORAGE_KEYS.externalMenus,
       fallback.externalMenus,
     ),
-    tables: readStorage(STORAGE_KEYS.tables, fallback.tables),
+    tables: readMerchant(STORAGE_KEYS.tables, fallback.tables),
     tableCombinations: readStorage(
       STORAGE_KEYS.tableCombinations,
       fallback.tableCombinations,
     ),
-    orders: readStorage(STORAGE_KEYS.orders, fallback.orders),
-    reservations: readStorage(STORAGE_KEYS.reservations, fallback.reservations),
-    enquiries: readStorage(STORAGE_KEYS.enquiries, fallback.enquiries),
+    orders: readMerchant(STORAGE_KEYS.orders, fallback.orders),
+    reservations: readMerchant(STORAGE_KEYS.reservations, fallback.reservations),
+    enquiries: readMerchant(STORAGE_KEYS.enquiries, fallback.enquiries),
     depositPolicy: readStorage(
       STORAGE_KEYS.depositPolicy,
       fallback.depositPolicy,
     ),
-    reviews: readStorage(STORAGE_KEYS.reviews, fallback.reviews),
-    settings: readStorage(STORAGE_KEYS.settings, fallback.settings),
-    staffMembers: readStorage(STORAGE_KEYS.staffMembers, fallback.staffMembers),
-    staffShifts: readStorage(STORAGE_KEYS.staffShifts, fallback.staffShifts),
+    reviews: readMerchant(STORAGE_KEYS.reviews, fallback.reviews),
+    settings: readMerchant(STORAGE_KEYS.settings, fallback.settings),
+    staffMembers: readMerchant(STORAGE_KEYS.staffMembers, fallback.staffMembers),
+    staffShifts: readMerchant(STORAGE_KEYS.staffShifts, fallback.staffShifts),
     staffNotifications: readStorage(
       STORAGE_KEYS.staffNotifications,
       fallback.staffNotifications,
     ),
-    staffPayouts: readStorage(STORAGE_KEYS.staffPayouts, fallback.staffPayouts),
+    staffPayouts: readMerchant(STORAGE_KEYS.staffPayouts, fallback.staffPayouts),
     staffChallenges: readStorage(
       STORAGE_KEYS.staffChallenges,
       fallback.staffChallenges,
@@ -2051,9 +2114,9 @@ export function loadMerchantSnapshot(): MerchantSnapshot {
       STORAGE_KEYS.staffInsights,
       fallback.staffInsights,
     ),
-    workflows: readStorage(STORAGE_KEYS.workflows, fallback.workflows),
-    campaigns: readStorage(STORAGE_KEYS.campaigns, fallback.campaigns),
-    messageLog: readStorage(STORAGE_KEYS.messageLog, fallback.messageLog),
+    workflows: readMerchant(STORAGE_KEYS.workflows, fallback.workflows),
+    campaigns: readMerchant(STORAGE_KEYS.campaigns, fallback.campaigns),
+    messageLog: readMerchant(STORAGE_KEYS.messageLog, fallback.messageLog),
     loyaltyCustomers: readStorage(
       STORAGE_KEYS.loyaltyCustomers,
       fallback.loyaltyCustomers,
@@ -2062,31 +2125,31 @@ export function loadMerchantSnapshot(): MerchantSnapshot {
 }
 
 export function saveMerchantTables(tables: MerchantTable[]) {
-  writeStorage(STORAGE_KEYS.tables, tables);
+  writeMerchant(STORAGE_KEYS.tables, tables);
 }
 
 export function saveMerchantReservations(reservations: Reservation[]) {
-  writeStorage(STORAGE_KEYS.reservations, reservations);
+  writeMerchant(STORAGE_KEYS.reservations, reservations);
 }
 
 export function saveMerchantEnquiries(enquiries: Enquiry[]) {
-  writeStorage(STORAGE_KEYS.enquiries, enquiries);
+  writeMerchant(STORAGE_KEYS.enquiries, enquiries);
 }
 
 export function saveMerchantDepositPolicy(policy: DepositPolicy) {
-  writeStorage(STORAGE_KEYS.depositPolicy, policy);
+  writeMerchant(STORAGE_KEYS.depositPolicy, policy);
 }
 
 export function saveMerchantWorkflows(workflows: Workflow[]) {
-  writeStorage(STORAGE_KEYS.workflows, workflows);
+  writeMerchant(STORAGE_KEYS.workflows, workflows);
 }
 
 export function saveMerchantCampaigns(campaigns: Campaign[]) {
-  writeStorage(STORAGE_KEYS.campaigns, campaigns);
+  writeMerchant(STORAGE_KEYS.campaigns, campaigns);
 }
 
 export function saveMerchantMessageLog(messageLog: MessageLogEntry[]) {
-  writeStorage(STORAGE_KEYS.messageLog, messageLog);
+  writeMerchant(STORAGE_KEYS.messageLog, messageLog);
 }
 
 // Replace {{var}} placeholders in a message template.
@@ -2210,21 +2273,21 @@ export function suggestPartyAssignment(
 }
 
 export function saveMerchantCatalogue(catalogue: CatalogueItem[]) {
-  writeStorage(STORAGE_KEYS.catalogue, catalogue);
+  writeMerchant(STORAGE_KEYS.catalogue, catalogue);
 }
 
 export function saveMerchantMenus(menus: Menu[]) {
-  writeStorage(STORAGE_KEYS.menus, menus);
+  writeMerchant(STORAGE_KEYS.menus, menus);
 }
 
 export function saveMerchantZones(zones: Zone[]) {
-  writeStorage(STORAGE_KEYS.zones, zones);
+  writeMerchant(STORAGE_KEYS.zones, zones);
 }
 
 export function saveMerchantTableCombinations(
   tableCombinations: TableCombination[],
 ) {
-  writeStorage(STORAGE_KEYS.tableCombinations, tableCombinations);
+  writeMerchant(STORAGE_KEYS.tableCombinations, tableCombinations);
 }
 
 export function tableSeats(table: MerchantTable): number {
@@ -2396,7 +2459,7 @@ export function getCombinationTables(
 }
 
 export function saveMerchantAreas(areas: Area[]) {
-  writeStorage(STORAGE_KEYS.areas, areas);
+  writeMerchant(STORAGE_KEYS.areas, areas);
 }
 
 export function getVisibleAreas(areas: Area[]): Area[] {
@@ -2495,51 +2558,51 @@ export function getBookingsByArea(
 }
 
 export function saveMerchantCategoryOrder(categoryOrder: string[]) {
-  writeStorage(STORAGE_KEYS.categoryOrder, categoryOrder);
+  writeMerchant(STORAGE_KEYS.categoryOrder, categoryOrder);
 }
 
 export function saveMerchantMenuSchedules(menuSchedules: MenuSchedule[]) {
-  writeStorage(STORAGE_KEYS.menuSchedules, menuSchedules);
+  writeMerchant(STORAGE_KEYS.menuSchedules, menuSchedules);
 }
 
 export function saveMerchantExternalMenus(externalMenus: ExternalMenu[]) {
-  writeStorage(STORAGE_KEYS.externalMenus, externalMenus);
+  writeMerchant(STORAGE_KEYS.externalMenus, externalMenus);
 }
 
 export function saveMerchantReviews(reviews: MerchantReview[]) {
-  writeStorage(STORAGE_KEYS.reviews, reviews);
+  writeMerchant(STORAGE_KEYS.reviews, reviews);
 }
 
 export function saveMerchantSettings(settings: MerchantSettings) {
-  writeStorage(STORAGE_KEYS.settings, settings);
+  writeMerchant(STORAGE_KEYS.settings, settings);
 }
 
 export function saveMerchantStaffMembers(staffMembers: StaffMember[]) {
-  writeStorage(STORAGE_KEYS.staffMembers, staffMembers);
+  writeMerchant(STORAGE_KEYS.staffMembers, staffMembers);
 }
 
 export function saveMerchantStaffShifts(staffShifts: StaffShift[]) {
-  writeStorage(STORAGE_KEYS.staffShifts, staffShifts);
+  writeMerchant(STORAGE_KEYS.staffShifts, staffShifts);
 }
 
 export function saveMerchantStaffNotifications(
   staffNotifications: StaffNotification[],
 ) {
-  writeStorage(STORAGE_KEYS.staffNotifications, staffNotifications);
+  writeMerchant(STORAGE_KEYS.staffNotifications, staffNotifications);
 }
 
 export function saveMerchantStaffPayouts(staffPayouts: StaffPayout[]) {
-  writeStorage(STORAGE_KEYS.staffPayouts, staffPayouts);
+  writeMerchant(STORAGE_KEYS.staffPayouts, staffPayouts);
 }
 
 export function saveMerchantStaffChallenges(
   staffChallenges: StaffPerformanceChallenge[],
 ) {
-  writeStorage(STORAGE_KEYS.staffChallenges, staffChallenges);
+  writeMerchant(STORAGE_KEYS.staffChallenges, staffChallenges);
 }
 
 export function saveMerchantStaffInsights(staffInsights: AIStaffInsight[]) {
-  writeStorage(STORAGE_KEYS.staffInsights, staffInsights);
+  writeMerchant(STORAGE_KEYS.staffInsights, staffInsights);
 }
 
 export function flattenTransactions(tables: MerchantTable[]) {

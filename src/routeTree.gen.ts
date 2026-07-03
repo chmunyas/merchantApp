@@ -39,6 +39,7 @@ import { Route as DashboardMenuRouteImport } from './routes/dashboard/menu'
 import { Route as DashboardFloorplanRouteImport } from './routes/dashboard/floorplan'
 import { Route as DashboardEnquiriesRouteImport } from './routes/dashboard/enquiries'
 import { Route as DashboardDepositsRouteImport } from './routes/dashboard/deposits'
+import { Route as DashboardContactsRouteImport } from './routes/dashboard/contacts'
 import { Route as DashboardBookingsRouteImport } from './routes/dashboard/bookings'
 import { Route as DashboardAutomationsRouteImport } from './routes/dashboard/automations'
 import { Route as DashboardAnalyticsRouteImport } from './routes/dashboard/analytics'
@@ -197,6 +198,11 @@ const DashboardDepositsRoute = DashboardDepositsRouteImport.update({
   path: '/deposits',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardContactsRoute = DashboardContactsRouteImport.update({
+  id: '/contacts',
+  path: '/contacts',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardBookingsRoute = DashboardBookingsRouteImport.update({
   id: '/bookings',
   path: '/bookings',
@@ -255,6 +261,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/analytics': typeof DashboardAnalyticsRoute
   '/dashboard/automations': typeof DashboardAutomationsRoute
   '/dashboard/bookings': typeof DashboardBookingsRoute
+  '/dashboard/contacts': typeof DashboardContactsRoute
   '/dashboard/deposits': typeof DashboardDepositsRoute
   '/dashboard/enquiries': typeof DashboardEnquiriesRoute
   '/dashboard/floorplan': typeof DashboardFloorplanRoute
@@ -292,6 +299,7 @@ export interface FileRoutesByTo {
   '/dashboard/analytics': typeof DashboardAnalyticsRoute
   '/dashboard/automations': typeof DashboardAutomationsRoute
   '/dashboard/bookings': typeof DashboardBookingsRoute
+  '/dashboard/contacts': typeof DashboardContactsRoute
   '/dashboard/deposits': typeof DashboardDepositsRoute
   '/dashboard/enquiries': typeof DashboardEnquiriesRoute
   '/dashboard/floorplan': typeof DashboardFloorplanRoute
@@ -332,6 +340,7 @@ export interface FileRoutesById {
   '/dashboard/analytics': typeof DashboardAnalyticsRoute
   '/dashboard/automations': typeof DashboardAutomationsRoute
   '/dashboard/bookings': typeof DashboardBookingsRoute
+  '/dashboard/contacts': typeof DashboardContactsRoute
   '/dashboard/deposits': typeof DashboardDepositsRoute
   '/dashboard/enquiries': typeof DashboardEnquiriesRoute
   '/dashboard/floorplan': typeof DashboardFloorplanRoute
@@ -373,6 +382,7 @@ export interface FileRouteTypes {
     | '/dashboard/analytics'
     | '/dashboard/automations'
     | '/dashboard/bookings'
+    | '/dashboard/contacts'
     | '/dashboard/deposits'
     | '/dashboard/enquiries'
     | '/dashboard/floorplan'
@@ -410,6 +420,7 @@ export interface FileRouteTypes {
     | '/dashboard/analytics'
     | '/dashboard/automations'
     | '/dashboard/bookings'
+    | '/dashboard/contacts'
     | '/dashboard/deposits'
     | '/dashboard/enquiries'
     | '/dashboard/floorplan'
@@ -449,6 +460,7 @@ export interface FileRouteTypes {
     | '/dashboard/analytics'
     | '/dashboard/automations'
     | '/dashboard/bookings'
+    | '/dashboard/contacts'
     | '/dashboard/deposits'
     | '/dashboard/enquiries'
     | '/dashboard/floorplan'
@@ -698,6 +710,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardDepositsRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/contacts': {
+      id: '/dashboard/contacts'
+      path: '/contacts'
+      fullPath: '/dashboard/contacts'
+      preLoaderRoute: typeof DashboardContactsRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/bookings': {
       id: '/dashboard/bookings'
       path: '/bookings'
@@ -770,6 +789,7 @@ interface DashboardRouteChildren {
   DashboardAnalyticsRoute: typeof DashboardAnalyticsRoute
   DashboardAutomationsRoute: typeof DashboardAutomationsRoute
   DashboardBookingsRoute: typeof DashboardBookingsRoute
+  DashboardContactsRoute: typeof DashboardContactsRoute
   DashboardDepositsRoute: typeof DashboardDepositsRoute
   DashboardEnquiriesRoute: typeof DashboardEnquiriesRoute
   DashboardFloorplanRoute: typeof DashboardFloorplanRoute
@@ -789,6 +809,7 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardAnalyticsRoute: DashboardAnalyticsRoute,
   DashboardAutomationsRoute: DashboardAutomationsRoute,
   DashboardBookingsRoute: DashboardBookingsRoute,
+  DashboardContactsRoute: DashboardContactsRoute,
   DashboardDepositsRoute: DashboardDepositsRoute,
   DashboardEnquiriesRoute: DashboardEnquiriesRoute,
   DashboardFloorplanRoute: DashboardFloorplanRoute,

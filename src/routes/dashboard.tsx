@@ -8,13 +8,16 @@ import {
   Armchair,
   BarChart3,
   BriefcaseBusiness,
+  Building2,
   CalendarDays,
   ChefHat,
+  Contact,
   CreditCard,
   Inbox,
   LayoutDashboard,
   LayoutGrid,
   Menu,
+  Search,
   Settings,
   ShoppingBag,
   Star,
@@ -29,11 +32,16 @@ import { useEffect, useMemo, useState } from "react";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { UserProfileMenu } from "@/components/auth/UserProfileMenu";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useAuth } from "@/lib/auth";
 import {
   ensureMerchantDemoData,
+  getCurrentVenue,
   getPendingEnquiryCount,
+  getVenues,
+  setCurrentVenueId,
+  type Venue,
 } from "@/lib/merchant-dashboard";
 import { cn } from "@/lib/utils";
 
@@ -41,58 +49,77 @@ export const Route = createFileRoute("/dashboard")({
   component: DashboardLayout,
 });
 
-const navItems = [
-  { to: "/dashboard", label: "Overview", icon: LayoutDashboard },
-  { to: "/dashboard/orders", label: "Orders (KDS)", icon: ChefHat },
-  { to: "/dashboard/tables", label: "Tables", icon: LayoutGrid },
-  { to: "/dashboard/floorplan", label: "Floorplan", icon: Armchair },
-  { to: "/dashboard/bookings", label: "Bookings", icon: CalendarDays },
-  { to: "/dashboard/enquiries", label: "Enquiries", icon: Inbox },
-  { to: "/dashboard/deposits", label: "Deposits", icon: Wallet },
-  { to: "/dashboard/payments", label: "Payments", icon: CreditCard },
-  { to: "/dashboard/retail", label: "Retail", icon: ShoppingBag },
-  { to: "/dashboard/services", label: "Services", icon: BriefcaseBusiness },
-  { to: "/dashboard/staff", label: "Staff", icon: Users },
-  { to: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
-  { to: "/dashboard/menu", label: "Menu", icon: UtensilsCrossed },
-  { to: "/dashboard/reviews", label: "Reviews", icon: Star },
-  { to: "/dashboard/automations", label: "Automations", icon: Zap },
-  { to: "/dashboard/settings", label: "Settings", icon: Settings },
+const navGroups = [
+  {
+    label: "Insights",
+    items: [
+      { to: "/dashboard", label: "Overview", icon: LayoutDashboard },
+      { to: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
+    ],
+  },
+  {
+    label: "Operations",
+    items: [
+      { to: "/dashboard/orders", label: "Orders (KDS)", icon: ChefHat },
+      { to: "/dashboard/tables", label: "Tables", icon: LayoutGrid },
+      { to: "/dashboard/floorplan", label: "Floorplan", icon: Armchair },
+    ],
+  },
+  {
+    label: "Bookings",
+    items: [
+      { to: "/dashboard/bookings", label: "Bookings", icon: CalendarDays },
+      { to: "/dashboard/enquiries", label: "Enquiries", icon: Inbox },
+      { to: "/dashboard/deposits", label: "Deposits", icon: Wallet },
+    ],
+  },
+  {
+    label: "Sales",
+    items: [
+      { to: "/dashboard/payments", label: "Payments", icon: CreditCard },
+      { to: "/dashboard/retail", label: "Retail", icon: ShoppingBag },
+      { to: "/dashboard/services", label: "Services", icon: BriefcaseBusiness },
+    ],
+  },
+  {
+    label: "Engage",
+    items: [
+      { to: "/dashboard/contacts", label: "Contacts", icon: Contact },
+      { to: "/dashboard/automations", label: "Automations", icon: Zap },
+      { to: "/dashboard/reviews", label: "Reviews", icon: Star },
+    ],
+  },
+  {
+    label: "Setup",
+    items: [
+      { to: "/dashboard/menu", label: "Menu", icon: UtensilsCrossed },
+      { to: "/dashboard/staff", label: "Staff", icon: Users },
+      { to: "/dashboard/settings", label: "Settings", icon: Settings },
+    ],
+  },
 ] as const;
 
-function DashboardShell() {
-  const router = useRouter();
-  const pathname = router.state.location.pathname;
-  const { user } = useAuth();
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [range, setRange] = useState("Today");
-  const [newEnquiries, setNewEnquiries] = useState(0);
+const navItems = navGroups.flatMap((group) =>
+  group.items.map((item) => ({ to: item.to, label: item.label })),
+);
 
-  useEffect(() => {
-    setNewEnquiries(getPendingEnquiryCount(ensureMerchantDemoData().enquiries));
-  }, [pathname]);
-
-  const breadcrumb = useMemo(() => {
-    const item = navItems.find(
-      (entry) => pathname === entry.to || pathname.startsWith(`${entry.to}/`),
-    );
-    return item?.label || "Overview";
-  }, [pathname]);
-
+function NavSections({
+  pathname,
+  newEnquiries,
+  onNavigate,
+}: {
+  pathname: string;
+  newEnquiries: number;
+  onNavigate?: () => void;
+}) {
   return (
-    <div className="flex min-h-screen bg-slate-50 text-slate-950">
-      <aside className="hidden w-60 shrink-0 flex-col bg-slate-900 text-white lg:flex">
-        <div className="border-b border-slate-800 px-6 py-6">
-          <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
-            PesaSwap
+    <nav className="flex-1 space-y-5 px-3 py-4">
+      {navGroups.map((group) => (
+        <div key={group.label} className="space-y-1">
+          <p className="px-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+            {group.label}
           </p>
-          <h1 className="mt-2 text-xl font-semibold">Merchant Dashboard</h1>
-          <p className="mt-1 text-sm text-slate-400">
-            {user?.name ?? "Merchant"}
-          </p>
-        </div>
-        <nav className="flex-1 space-y-1 px-3 py-4">
-          {navItems.map((item) => {
+          {group.items.map((item) => {
             const Icon = item.icon;
             const active =
               pathname === item.to || pathname.startsWith(`${item.to}/`);
@@ -100,8 +127,9 @@ function DashboardShell() {
               <Link
                 key={item.to}
                 to={item.to}
+                onClick={onNavigate}
                 className={cn(
-                  "flex items-center gap-3 rounded-r-xl px-4 py-3 text-sm font-medium transition hover:bg-slate-800",
+                  "flex items-center gap-3 rounded-r-xl px-4 py-2.5 text-sm font-medium transition hover:bg-slate-800",
                   active && "bg-slate-800 border-l-2 border-emerald-500",
                 )}
               >
@@ -115,13 +143,73 @@ function DashboardShell() {
               </Link>
             );
           })}
-        </nav>
+        </div>
+      ))}
+    </nav>
+  );
+}
+
+function DashboardShell() {
+  const router = useRouter();
+  const pathname = router.state.location.pathname;
+  const { user } = useAuth();
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [range, setRange] = useState("Today");
+  const [newEnquiries, setNewEnquiries] = useState(0);
+  const [venues, setVenues] = useState<Venue[]>([]);
+  const [currentVenue, setCurrentVenue] = useState<Venue | null>(null);
+  const [venuePickerOpen, setVenuePickerOpen] = useState(false);
+  const [venueSearch, setVenueSearch] = useState("");
+
+  useEffect(() => {
+    setNewEnquiries(getPendingEnquiryCount(ensureMerchantDemoData().enquiries));
+    setVenues(getVenues());
+    setCurrentVenue(getCurrentVenue());
+  }, [pathname]);
+
+  const breadcrumb = useMemo(() => {
+    const item = navItems.find(
+      (entry) => pathname === entry.to || pathname.startsWith(`${entry.to}/`),
+    );
+    return item?.label || "Overview";
+  }, [pathname]);
+
+  const filteredVenues = useMemo(() => {
+    const query = venueSearch.trim().toLowerCase();
+    if (!query) return venues;
+    return venues.filter(
+      (venue) =>
+        venue.name.toLowerCase().includes(query) ||
+        venue.code.toLowerCase().includes(query),
+    );
+  }, [venues, venueSearch]);
+
+  function switchVenue(id: string) {
+    setCurrentVenueId(id);
+    window.location.reload();
+  }
+
+  return (
+    <div className="flex min-h-screen bg-slate-50 text-slate-950">
+      <aside className="hidden w-60 shrink-0 flex-col bg-slate-900 text-white lg:flex">
+        <div className="border-b border-slate-800 px-6 py-6">
+          <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
+            PesaSwap
+          </p>
+          <h1 className="mt-2 text-xl font-semibold">Merchant Dashboard</h1>
+          <p className="mt-1 text-sm text-slate-400">
+            {user?.name ?? "Merchant"}
+          </p>
+        </div>
+        <div className="overflow-y-auto">
+          <NavSections pathname={pathname} newEnquiries={newEnquiries} />
+        </div>
       </aside>
 
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
         <SheetContent
           side="left"
-          className="w-72 border-slate-800 bg-slate-900 p-0 text-white sm:max-w-none"
+          className="w-72 overflow-y-auto border-slate-800 bg-slate-900 p-0 text-white sm:max-w-none"
         >
           <div className="flex items-center justify-between border-b border-slate-800 px-5 py-5">
             <div>
@@ -139,32 +227,11 @@ function DashboardShell() {
               <X className="h-4 w-4" />
             </Button>
           </div>
-          <nav className="space-y-1 px-3 py-4">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const active =
-                pathname === item.to || pathname.startsWith(`${item.to}/`);
-              return (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  onClick={() => setMobileOpen(false)}
-                  className={cn(
-                    "flex items-center gap-3 rounded-r-xl px-4 py-3 text-sm font-medium transition hover:bg-slate-800",
-                    active && "bg-slate-800 border-l-2 border-emerald-500",
-                  )}
-                >
-                  <Icon className="h-4 w-4" />
-                  <span>{item.label}</span>
-                  {item.label === "Enquiries" && newEnquiries > 0 ? (
-                    <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[11px] font-semibold text-white">
-                      {newEnquiries}
-                    </span>
-                  ) : null}
-                </Link>
-              );
-            })}
-          </nav>
+          <NavSections
+            pathname={pathname}
+            newEnquiries={newEnquiries}
+            onNavigate={() => setMobileOpen(false)}
+          />
         </SheetContent>
       </Sheet>
 
@@ -188,6 +255,16 @@ function DashboardShell() {
               </div>
             </div>
             <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setVenuePickerOpen(true)}
+                className="hidden items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm shadow-sm hover:bg-slate-50 sm:flex"
+              >
+                <Building2 className="h-4 w-4 text-slate-400" />
+                <span className="max-w-[160px] truncate font-medium">
+                  {currentVenue?.name ?? "Venue"}
+                </span>
+              </button>
               <select
                 value={range}
                 onChange={(event) => setRange(event.target.value)}
@@ -207,6 +284,79 @@ function DashboardShell() {
           <Outlet />
         </main>
       </div>
+
+      {venuePickerOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/60 p-4 pt-24"
+          onClick={() => setVenuePickerOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-3xl bg-white p-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-slate-950">
+                Select venue
+              </h3>
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => setVenuePickerOpen(false)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="relative mt-4">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                value={venueSearch}
+                onChange={(event) => setVenueSearch(event.target.value)}
+                placeholder="Search venues..."
+                className="pl-9"
+              />
+            </div>
+            <div className="mt-4 max-h-80 space-y-2 overflow-y-auto">
+              {filteredVenues.map((venue) => {
+                const active = venue.id === currentVenue?.id;
+                return (
+                  <button
+                    key={venue.id}
+                    type="button"
+                    onClick={() => switchVenue(venue.id)}
+                    className={cn(
+                      "flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition",
+                      active
+                        ? "border-emerald-300 bg-emerald-50"
+                        : "border-slate-200 bg-white hover:bg-slate-50",
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
+                        <Building2 className="h-4 w-4" />
+                      </span>
+                      <div>
+                        <p className="font-medium text-slate-900">
+                          {venue.name}
+                        </p>
+                        <p className="text-xs text-slate-400">{venue.code}</p>
+                      </div>
+                    </div>
+                    {active ? (
+                      <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                        Current
+                      </span>
+                    ) : venue.active ? (
+                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-500">
+                        Active
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

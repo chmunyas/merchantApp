@@ -10,6 +10,24 @@ directory = "dist/client"
 [vars]
 PESASWAP_URL = "https://app.Pesaswap.io"
 
+# --- Cloudflare edge capabilities ---
+
+# Workers AI: the natural-language ops agent + embeddings for pgvector memory.
+# Enable for a real deploy. Workers AI runs on Cloudflare, so it is NOT available
+# in offline `wrangler dev` — the agent falls back to rule-based SQL locally:
+#   [ai]
+#   binding = "AI"
+
+# Hyperdrive: pooled, low-latency access to the PostgreSQL database from the
+# edge. Postgres is the single source of truth. Provision with:
+#   wrangler hyperdrive create pesaswap-db --connection-string="postgres://USER:PASS@HOST:5432/DB"
+# then paste the returned id below. `wrangler dev` uses localConnectionString
+# (override per-container with WRANGLER_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE).
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "REPLACE_WITH_HYPERDRIVE_ID"
+localConnectionString = "postgres://pesaswap:pesaswap@localhost:5433/pesaswap"
+
 # Secrets (set via `wrangler secret put`):
 # - PESASWAP_API_KEY
 # - PESASWAP_WEBHOOK_SECRET

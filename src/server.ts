@@ -3,6 +3,7 @@ import "./lib/error-capture";
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 import { handlePaymentRoute } from "./api/payments";
+import { handleBackendRoute } from "./api/backend";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -73,6 +74,10 @@ export default {
       // Handle PesaSwap API routes first
       const apiResponse = await handlePaymentRoute(request);
       if (apiResponse) return apiResponse;
+
+      // Cloud backend (Postgres via Hyperdrive / Workers AI)
+      const backendResponse = await handleBackendRoute(request, env);
+      if (backendResponse) return backendResponse;
 
       // Fall through to TanStack Start SSR
       const handler = await getServerEntry();

@@ -16,8 +16,27 @@ services:
       - "8787:8787"
     environment:
       - WRANGLER_SEND_METRICS=false
+      # Hyperdrive local connection -> the prod Postgres service (workerd path).
+      - CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgres://pesaswap:pesaswap@postgres:5432/pesaswap
     volumes:
       # Server secrets for the local Workers runtime. With nodejs_compat these
       # become process.env inside the Worker (PESASWAP_API_KEY, etc.).
       - ./.env:/app/.dev.vars:ro
+    depends_on:
+      - postgres
     restart: unless-stopped
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: pesaswap-postgres-prod
+    environment:
+      - POSTGRES_USER=pesaswap
+      - POSTGRES_PASSWORD=pesaswap
+      - POSTGRES_DB=pesaswap
+    volumes:
+      - pgdata-prod:/var/lib/postgresql/data
+      - ./db:/docker-entrypoint-initdb.d:ro
+    restart: unless-stopped
+
+volumes:
+  pgdata-prod:

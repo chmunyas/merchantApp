@@ -14,8 +14,29 @@ services:
     environment:
       # Poll for file changes so hot-reload works across the Docker bind mount.
       - CHOKIDAR_USEPOLLING=true
+      # Cloud backend (Postgres). In production this is a Hyperdrive binding.
+      - DATABASE_URL=postgres://pesaswap:pesaswap@postgres:5432/pesaswap
     volumes:
       # Live-reload: mount the source, but keep the image's installed node_modules.
       - .:/app
       - /app/node_modules
+    depends_on:
+      - postgres
     restart: unless-stopped
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: pesaswap-postgres
+    environment:
+      - POSTGRES_USER=pesaswap
+      - POSTGRES_PASSWORD=pesaswap
+      - POSTGRES_DB=pesaswap
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db:/docker-entrypoint-initdb.d:ro
+    restart: unless-stopped
+
+volumes:
+  pgdata:
