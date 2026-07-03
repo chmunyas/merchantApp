@@ -14,7 +14,7 @@ import type { ReactNode } from "react";
 export const Route = createFileRoute("/merchant")({
   head: () => ({
     meta: [
-      { title: "Merchant App â FX Engine" },
+      { title: "Merchant App — PesaSwap" },
       {
         name: "description",
         content:
@@ -30,19 +30,19 @@ function MerchantPage() {
     <>
       <TopHeader crumb="Merchant App" />
       <div className="px-6 lg:px-8 py-10 max-w-6xl mx-auto animate-slide-up space-y-24">
-        {/* HERO â full interactive app */}
+        {/* HERO — full interactive app */}
         <section className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
           <div className="lg:col-span-5 space-y-8 lg:sticky lg:top-8">
             <div>
               <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground mb-2">
-                FX Engine Â· Mobile
+                PesaSwap · Mobile
               </p>
               <h1 className="text-4xl font-bold tracking-tight leading-tight">
                 A multi-currency terminal in every pocket.
               </h1>
               <p className="text-sm text-muted-foreground mt-4 leading-relaxed">
                 Four focused capabilities, one merchant app. Each flow is
-                purpose-built â Revolut-clean, Wise-precise.
+                purpose-built — Revolut-clean, Wise-precise.
               </p>
             </div>
 
@@ -89,10 +89,10 @@ function MerchantPage() {
         {/* CAPABILITY FLOWS */}
         <FlowSection
           id="qr"
-          eyebrow="Capability Â· 01"
+          eyebrow="Capability · 01"
           title="QR invoicing"
           headline="Request a payment in three taps."
-          body="Type the amount, pick a currency, and a QR appears â payable from any wallet, banking app or FX Engine scanner. Share it as a link, AirDrop or print it. EMVCo, UPI, PIX and FX Engine native payloads supported."
+          body="Type the amount, pick a currency, and a QR appears — payable from any wallet, banking app or PesaSwap scanner. Share it as a link, AirDrop or print it. EMVCo, UPI, PIX and PesaSwap native payloads supported."
           bullets={[
             "Dynamic QR with embedded invoice ID & FX routing hint",
             "Share-sheet, copy-link and printable PDF options",
@@ -103,12 +103,12 @@ function MerchantPage() {
 
         <FlowSection
           id="invoice"
-          eyebrow="Capability Â· 02"
+          eyebrow="Capability · 02"
           title="Invoice ledger"
           headline="Every receivable, in one calm view."
-          body="The ledger filters by paid, pending and overdue with Wise-style clarity. Each row carries the customer, currency, settlement provider and timestamp â exportable to your accounting stack with one tap."
+          body="The ledger filters by paid, pending and overdue with Wise-style clarity. Each row carries the customer, currency, settlement provider and timestamp — exportable to your accounting stack with one tap."
           bullets={[
-            "Segmented filters: Paid Â· Pending Â· Overdue",
+            "Segmented filters: Paid · Pending · Overdue",
             "Multi-currency totals with weekly settlement view",
             "CSV / Xero / QuickBooks export",
           ]}
@@ -118,10 +118,10 @@ function MerchantPage() {
 
         <FlowSection
           id="smart"
-          eyebrow="Capability Â· 03"
+          eyebrow="Capability · 03"
           title="Smart settlement"
           headline="Always the best route. Always transparent."
-          body="When a payment lands in EUR but you settle in USD, FX Engine compares Wise, Currencycloud, LMAX and Verto live. It shows you mid-market, the spread, the fee and the ETA â then routes through the winner automatically."
+          body="When a payment lands in EUR but you settle in USD, PesaSwap compares Wise, Currencycloud, LMAX and Verto live. It shows you mid-market, the spread, the fee and the ETA — then routes through the winner automatically."
           bullets={[
             "Live mid-market vs provider rates",
             "Fee, spread and ETA shown per provider",
@@ -132,10 +132,10 @@ function MerchantPage() {
 
         <FlowSection
           id="pwa"
-          eyebrow="Capability Â· 04"
+          eyebrow="Capability · 04"
           title="PWA & mobile"
           headline="Installable. Offline. Biometric-secure."
-          body="FX Engine works as a native iOS / Android app and an installable PWA. Drafts are queued offline, synced when the merchant comes back online. Camera-grade QR scanner, push receipts and Face ID-protected ledger."
+          body="PesaSwap works as a native iOS / Android app and an installable PWA. Drafts are queued offline, synced when the merchant comes back online. Camera-grade QR scanner, push receipts and Face ID-protected ledger."
           bullets={[
             "Add to home screen on iOS, Android & desktop",
             "Offline draft invoicing with background sync",

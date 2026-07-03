@@ -96,7 +96,7 @@ Your invoice ${invoice.id} for ${invoice.currency} ${invoice.amount.toLocaleStri
 
 Pay here: ${payUrl}
 
-— Sent via FX Engine`,
+— Sent via PesaSwap`,
   );
   const phone = invoice.customerPhone
     ? invoice.customerPhone.replace(/[^0-9]/g, "")

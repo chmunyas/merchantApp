@@ -209,6 +209,24 @@ export type Zone = {
   tableRange: [number, number];
 };
 
+export type TableCombination = {
+  id: string;
+  name: string;
+  tableNumbers: number[];
+  minCapacity: number;
+  maxCapacity: number;
+  priority: 1 | 2 | 3 | 4 | 5;
+  active: boolean;
+};
+
+export type Area = {
+  id: string;
+  name: string;
+  hiddenFromDayPlanner: boolean;
+  tableNumbers: number[];
+  order: number;
+};
+
 export type ExternalMenu = {
   id: string;
   name: string;
@@ -233,6 +251,7 @@ export type OrderTicket = {
 export type Reservation = {
   id: string;
   tableNumber: number;
+  combinationId?: string;
   customerName: string;
   phone: string;
   date: string; // ISO date
@@ -240,6 +259,71 @@ export type Reservation = {
   covers: number;
   status: "confirmed" | "seated" | "cancelled" | "no-show";
   notes?: string;
+  depositAmount?: number;
+  depositStatus?: "pending" | "paid" | "refunded";
+  depositPaidAt?: string;
+};
+
+export type EnquiryStatus = "new" | "approved" | "declined";
+
+export type Enquiry = {
+  id: string;
+  customerName: string;
+  phone: string;
+  date: string; // YYYY-MM-DD
+  time: string; // "HH:MM"
+  covers: number;
+  notes?: string;
+  status: EnquiryStatus;
+  source: "web" | "phone" | "walk-in";
+  createdAt: string; // ISO
+  reservationId?: string;
+};
+
+export type DepositPolicy = {
+  enabled: boolean;
+  perGuestKES: number;
+  minCovers: number;
+};
+
+export type MessageChannel = "sms" | "whatsapp" | "email";
+
+export type WorkflowTrigger =
+  | "booking_created"
+  | "reminder"
+  | "post_visit"
+  | "no_show";
+
+export type Workflow = {
+  id: string;
+  name: string;
+  trigger: WorkflowTrigger;
+  channel: MessageChannel;
+  offsetHours?: number;
+  message: string;
+  active: boolean;
+};
+
+export type CampaignSegment = "all" | "gold_plus" | "lapsed";
+
+export type Campaign = {
+  id: string;
+  name: string;
+  segment: CampaignSegment;
+  channel: MessageChannel;
+  message: string;
+  status: "draft" | "sent";
+  sentAt?: string;
+  recipients?: number;
+};
+
+export type MessageLogEntry = {
+  id: string;
+  channel: MessageChannel;
+  to: string;
+  body: string;
+  source: string;
+  createdAt: string;
 };
 
 export type LoyaltyCustomer = {

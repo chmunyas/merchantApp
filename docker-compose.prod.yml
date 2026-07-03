@@ -1,0 +1,23 @@
+name: pesaswap-merchant-prod
+
+services:
+  merchant-app-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      args:
+        # Client publishable key is baked into the bundle at build time.
+        # docker compose auto-substitutes these from the local .env file.
+        VITE_PESASWAP_PUBLISHABLE_KEY: ${VITE_PESASWAP_PUBLISHABLE_KEY:-}
+        VITE_BACKEND_URL: ${VITE_BACKEND_URL:-}
+    image: pesaswap-merchant-app:prod
+    container_name: pesaswap-merchant-app-prod
+    ports:
+      - "8787:8787"
+    environment:
+      - WRANGLER_SEND_METRICS=false
+    volumes:
+      # Server secrets for the local Workers runtime. With nodejs_compat these
+      # become process.env inside the Worker (PESASWAP_API_KEY, etc.).
+      - ./.env:/app/.dev.vars:ro
+    restart: unless-stopped

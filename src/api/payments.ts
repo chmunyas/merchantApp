@@ -76,6 +76,7 @@ const idempotencyCache = new Map<string, { response: unknown; expires: number }>
 // --- Route Handler ---
 
 export async function handlePaymentRoute(request: Request): Promise<Response | null> {
+  ensureIdempotencyCleanup();
   const url = new URL(request.url);
   const path = url.pathname;
 
@@ -601,8 +602,14 @@ function withCors(response: Response, corsHeaders: Record<string, string>): Resp
 }
 
 // --- Cleanup stale idempotency cache every 10 minutes ---
+// Started lazily from within a request handler because Cloudflare Workers
+// disallow timers (setInterval/setTimeout) in global (module top-level) scope.
 
-if (typeof setInterval !== "undefined") {
+let idempotencyCleanupStarted = false;
+
+function ensureIdempotencyCleanup(): void {
+  if (idempotencyCleanupStarted || typeof setInterval === "undefined") return;
+  idempotencyCleanupStarted = true;
   setInterval(() => {
     const now = Date.now();
     idempotencyCache.forEach((value, key) => {

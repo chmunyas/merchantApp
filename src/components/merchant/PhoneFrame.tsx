@@ -10,7 +10,7 @@ export function PhoneFrame({ children }: { children: ReactNode }) {
         </div>
       </div>
       <p className="text-center mt-4 text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
-        FX Engine Merchant Â· iOS / Android
+        PesaSwap Merchant · iOS / Android
       </p>
     </div>
   );

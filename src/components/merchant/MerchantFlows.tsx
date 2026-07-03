@@ -31,14 +31,14 @@ type Currency = (typeof CURRENCIES)[number];
 const CCY_SYMBOL: Record<Currency, string> = { USD: "$", EUR: "â¬", GBP: "Â£", NGN: "â¦" };
 
 /* ============================================================
-   1. QR INVOICING FLOW â Revolut-style focused single-task screen
+   1. QR INVOICING FLOW — Revolut-style focused single-task screen
    ============================================================ */
 export function QRInvoicingFlow() {
   const [step, setStep] = useState<WizardStep>("details");
   const [amount, setAmount] = useState("1240");
   const [currency, setCurrency] = useState<Currency>("USD");
   const [customer, setCustomer] = useState("Lumio Studios");
-  const [reference, setReference] = useState("Design retainer Â· June");
+  const [reference, setReference] = useState("Design retainer · June");
   const [invoiceId, setInvoiceId] = useState("INV-10247");
   const [submitted, setSubmitted] = useState(false);
 
@@ -81,12 +81,12 @@ export function QRInvoicingFlow() {
   const confirmSubmission = () => {
     setSubmitted(true);
     toast.success(`${invoiceId} sent to ${customer}`, {
-      description: `${CCY_SYMBOL[currency]}${Number(amount).toLocaleString()} Â· QR & link delivered`,
+      description: `${CCY_SYMBOL[currency]}${Number(amount).toLocaleString()} · QR & link delivered`,
     });
   };
 
   return (
-    <FlowShell title="QR invoicing" subtitle="Guided Â· 3 steps">
+    <FlowShell title="QR invoicing" subtitle="Guided · 3 steps">
       <StepIndicator step={step} />
 
       {step === "details" && (
@@ -229,7 +229,7 @@ export function QRInvoicingFlow() {
                   {submitted ? "Invoice submitted" : "Ready to submit"}
                 </p>
                 <p className="text-[10px] font-mono text-muted-foreground">
-                  {submitted ? "QR active Â· awaiting payment" : "Confirm details below"}
+                  {submitted ? "QR active · awaiting payment" : "Confirm details below"}
                 </p>
               </div>
             </div>
@@ -341,7 +341,7 @@ function Row({ k, v, bold }: { k: string; v: string; bold?: boolean }) {
 }
 
 /* ============================================================
-   2. INVOICE LEDGER FLOW â Wise-style segmented list
+   2. INVOICE LEDGER FLOW — Wise-style segmented list
    ============================================================ */
 export function InvoiceLedgerFlow() {
   const [filter, setFilter] = useState<"All" | "Paid" | "Pending" | "Overdue">("All");
@@ -409,7 +409,7 @@ export function InvoiceLedgerFlow() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold truncate">{r.who}</p>
-                <p className="text-[10px] font-mono text-muted-foreground">{r.id} Â· {r.date}</p>
+                <p className="text-[10px] font-mono text-muted-foreground">{r.id} · {r.date}</p>
               </div>
               <div className="text-right">
                 <p className="text-xs font-bold font-mono">
@@ -428,7 +428,7 @@ export function InvoiceLedgerFlow() {
 }
 
 /* ============================================================
-   3. SMART SETTLEMENT FLOW â provider routing, Wise-like clarity
+   3. SMART SETTLEMENT FLOW — provider routing, Wise-like clarity
    ============================================================ */
 export function SmartSettlementFlow() {
   const providers = [
@@ -462,7 +462,7 @@ export function SmartSettlementFlow() {
         </div>
 
         <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground px-1">
-          Routing engine Â· 4 providers
+          Routing engine · 4 providers
         </p>
 
         <div className="space-y-2">
@@ -487,7 +487,7 @@ export function SmartSettlementFlow() {
                   <span className="text-xs font-bold font-mono">${out}</span>
                 </div>
                 <div className="flex justify-between text-[10px] font-mono text-muted-foreground mt-1">
-                  <span>{p.rate.toFixed(4)} Â· fee ${p.fee}</span>
+                  <span>{p.rate.toFixed(4)} · fee ${p.fee}</span>
                   <span>~{p.eta}</span>
                 </div>
               </div>
@@ -504,7 +504,7 @@ export function SmartSettlementFlow() {
 }
 
 /* ============================================================
-   4. PWA FLOW â install, offline, push, scanner
+   4. PWA FLOW — install, offline, push, scanner
    ============================================================ */
 export function PWAFlow() {
   const [online, setOnline] = useState(true);
@@ -515,7 +515,7 @@ export function PWAFlow() {
           <div className="flex items-center gap-2">
             <Smartphone className="size-4" />
             <p className="text-[10px] font-mono uppercase tracking-widest opacity-70">
-              Install FX Engine
+              Install PesaSwap
             </p>
           </div>
           <p className="text-lg font-bold mt-2 leading-snug">
@@ -541,7 +541,7 @@ export function PWAFlow() {
 
         <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
           <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
-            Offline drafts Â· synced when online
+            Offline drafts · synced when online
           </p>
           {[
             { id: "DRAFT-014", who: "Sade's Atelier", amt: "USD 320" },
@@ -586,7 +586,7 @@ function FlowShell({
       <div className="flex justify-between items-center px-6 pt-3 pb-1 text-[11px] font-mono">
         <span>9:41</span>
         <span className="flex items-center gap-1">
-          <span className="size-1.5 bg-accent rounded-full" /> FXÂ·Live
+          <span className="size-1.5 bg-accent rounded-full" /> FX·Live
         </span>
       </div>
       <div className="px-5 pt-3">

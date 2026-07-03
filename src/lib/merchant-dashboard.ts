@@ -1,11 +1,18 @@
 import type {
   AIStaffInsight,
+  Area,
   Booking,
+  Campaign,
+  CampaignSegment,
   CatalogueItem,
   JobCard,
+  LoyaltyCustomer,
   ExternalMenu,
   Menu,
+  MessageLogEntry,
   CreditCustomer,
+  DepositPolicy,
+  Enquiry,
   MenuSchedule,
   OrderTicket,
   PurchaseOrder,
@@ -24,6 +31,9 @@ import type {
   StaffShift,
   StockAdjustment,
   Supplier,
+  TableCombination,
+  Workflow,
+  WorkflowTrigger,
   Zone,
 } from "@/components/merchant/features/types";
 
@@ -51,12 +61,16 @@ export const STORAGE_KEYS = {
   catalogue: "fxengine.merchant.catalogue",
   menus: "fxengine.merchant.menus",
   zones: "fxengine.merchant.zones",
+  areas: "fxengine.merchant.areas",
   categoryOrder: "fxengine.merchant.categoryOrder",
   menuSchedules: "fxengine.merchant.menuSchedules",
   externalMenus: "fxengine.merchant.externalMenus",
   tables: "fxengine.merchant.tables",
+  tableCombinations: "fxengine.merchant.tableCombinations",
   orders: "fxengine.merchant.orders",
   reservations: "fxengine.merchant.reservations",
+  enquiries: "fxengine.merchant.enquiries",
+  depositPolicy: "fxengine.merchant.depositPolicy",
   reviews: "fxengine.merchant.reviews",
   settings: "fxengine.merchant.settings",
   staffMembers: "fxengine.merchant.staffMembers",
@@ -65,6 +79,10 @@ export const STORAGE_KEYS = {
   staffPayouts: "fxengine.merchant.staffPayouts",
   staffChallenges: "fxengine.merchant.staffChallenges",
   staffInsights: "fxengine.merchant.staffInsights",
+  workflows: "fxengine.merchant.workflows",
+  campaigns: "fxengine.merchant.campaigns",
+  messageLog: "fxengine.merchant.messageLog",
+  loyaltyCustomers: "fxengine.merchant.loyaltyCustomers",
 } as const;
 
 export const RETAIL_STORAGE_KEYS = {
@@ -117,6 +135,9 @@ export type MerchantPayment = {
 export type MerchantTable = {
   id: string;
   tableNumber: number;
+  capacity?: number;
+  name?: string;
+  bookable?: boolean;
   server: string;
   items: MerchantTableItem[];
   status: TableStatus;
@@ -209,12 +230,16 @@ export type MerchantSnapshot = {
   catalogue: CatalogueItem[];
   menus: Menu[];
   zones: Zone[];
+  areas: Area[];
   categoryOrder: string[];
   menuSchedules: MenuSchedule[];
   externalMenus: ExternalMenu[];
   tables: MerchantTable[];
+  tableCombinations: TableCombination[];
   orders: OrderTicket[];
   reservations: Reservation[];
+  enquiries: Enquiry[];
+  depositPolicy: DepositPolicy;
   reviews: MerchantReview[];
   settings: MerchantSettings;
   staffMembers: StaffMember[];
@@ -223,6 +248,10 @@ export type MerchantSnapshot = {
   staffPayouts: StaffPayout[];
   staffChallenges: StaffPerformanceChallenge[];
   staffInsights: AIStaffInsight[];
+  workflows: Workflow[];
+  campaigns: Campaign[];
+  messageLog: MessageLogEntry[];
+  loyaltyCustomers: LoyaltyCustomer[];
 };
 
 const customerNames = [
@@ -654,6 +683,229 @@ function buildZones(): Zone[] {
   ];
 }
 
+function buildWorkflows(): Workflow[] {
+  return [
+    {
+      id: "wf-confirm",
+      name: "Booking confirmation",
+      trigger: "booking_created",
+      channel: "sms",
+      message:
+        "Hi {{name}}, your table for {{covers}} at {{venue}} on {{date}} {{time}} is confirmed. Reply to change.",
+      active: true,
+    },
+    {
+      id: "wf-remind",
+      name: "Same-day reminder",
+      trigger: "reminder",
+      channel: "whatsapp",
+      offsetHours: 3,
+      message:
+        "Reminder: see you at {{venue}} today at {{time}} for {{covers}}. Running late? Let us know.",
+      active: true,
+    },
+    {
+      id: "wf-review",
+      name: "Post-visit review request",
+      trigger: "post_visit",
+      channel: "sms",
+      offsetHours: 2,
+      message:
+        "Thanks for dining at {{venue}}, {{name}}! How did we do? Leave a quick review.",
+      active: true,
+    },
+    {
+      id: "wf-noshow",
+      name: "No-show follow-up",
+      trigger: "no_show",
+      channel: "sms",
+      message:
+        "We missed you today, {{name}}. Rebook anytime - we'd love to host you.",
+      active: false,
+    },
+  ];
+}
+
+function buildCampaigns(): Campaign[] {
+  return [
+    {
+      id: "camp-brunch",
+      name: "Weekend brunch offer",
+      segment: "all",
+      channel: "sms",
+      message: "This weekend at {{venue}}: 2-for-1 brunch cocktails. Book now!",
+      status: "draft",
+    },
+    {
+      id: "camp-vip",
+      name: "VIP tasting night",
+      segment: "gold_plus",
+      channel: "whatsapp",
+      message:
+        "Exclusive for our VIPs: a 6-course tasting night. Reserve your seat.",
+      status: "draft",
+    },
+  ];
+}
+
+function buildLoyaltyCustomers(now: Date): LoyaltyCustomer[] {
+  const daysAgo = (days: number) =>
+    new Date(now.getTime() - days * 86_400_000).toISOString();
+  return [
+    {
+      phone: "+254712000001",
+      name: "Amina Yusuf",
+      points: 1200,
+      totalSpent: 48000,
+      visits: 9,
+      tier: "Platinum",
+      lastVisit: daysAgo(3),
+    },
+    {
+      phone: "+254712000002",
+      name: "Brian Otieno",
+      points: 600,
+      totalSpent: 22000,
+      visits: 5,
+      tier: "Gold",
+      lastVisit: daysAgo(8),
+    },
+    {
+      phone: "+254712000003",
+      name: "Cynthia Wambui",
+      points: 150,
+      totalSpent: 6000,
+      visits: 2,
+      tier: "Silver",
+      lastVisit: daysAgo(12),
+    },
+    {
+      phone: "+254712000004",
+      name: "Dennis Kiptoo",
+      points: 40,
+      totalSpent: 1500,
+      visits: 1,
+      tier: "Bronze",
+      lastVisit: daysAgo(45),
+    },
+    {
+      phone: "+254712000005",
+      name: "Esther Njoki",
+      points: 900,
+      totalSpent: 33000,
+      visits: 7,
+      tier: "Gold",
+      lastVisit: daysAgo(60),
+    },
+  ];
+}
+
+function buildDepositPolicy(): DepositPolicy {
+  return { enabled: true, perGuestKES: 500, minCovers: 6 };
+}
+
+function buildEnquiries(now: Date): Enquiry[] {
+  const today = now.toISOString().slice(0, 10);
+  const minutesAgo = (mins: number) =>
+    new Date(now.getTime() - mins * 60_000).toISOString();
+  return [
+    {
+      id: "enq-1",
+      customerName: "Wanjiru Kamau",
+      phone: "+254712345678",
+      date: today,
+      time: "19:30",
+      covers: 6,
+      notes: "Anniversary dinner, terrace if possible",
+      status: "new",
+      source: "web",
+      createdAt: minutesAgo(35),
+    },
+    {
+      id: "enq-2",
+      customerName: "David Otieno",
+      phone: "+254723456789",
+      date: today,
+      time: "13:00",
+      covers: 4,
+      notes: "Business lunch",
+      status: "new",
+      source: "phone",
+      createdAt: minutesAgo(120),
+    },
+    {
+      id: "enq-3",
+      customerName: "Achieng Party",
+      phone: "+254734567890",
+      date: today,
+      time: "20:00",
+      covers: 10,
+      notes: "Birthday - need a large/combined table",
+      status: "new",
+      source: "web",
+      createdAt: minutesAgo(15),
+    },
+  ];
+}
+
+function buildAreas(): Area[] {
+  return [
+    {
+      id: "area-terrace",
+      name: "Terrace",
+      hiddenFromDayPlanner: false,
+      tableNumbers: [1, 2, 3, 4],
+      order: 1,
+    },
+    {
+      id: "area-dining",
+      name: "Main Dining",
+      hiddenFromDayPlanner: false,
+      tableNumbers: [5, 6, 7, 8],
+      order: 2,
+    },
+    {
+      id: "area-lounge",
+      name: "Lounge & Bar",
+      hiddenFromDayPlanner: false,
+      tableNumbers: [9, 10, 11, 12],
+      order: 3,
+    },
+  ];
+}
+
+function buildTableCombinations(): TableCombination[] {
+  return [
+    {
+      id: "combo-terrace-long",
+      name: "Terrace Long Table",
+      tableNumbers: [1, 2, 3],
+      minCapacity: 6,
+      maxCapacity: 12,
+      priority: 4,
+      active: true,
+    },
+    {
+      id: "combo-lounge-booth",
+      name: "Lounge Booth Merge",
+      tableNumbers: [9, 10],
+      minCapacity: 5,
+      maxCapacity: 8,
+      priority: 3,
+      active: true,
+    },
+    {
+      id: "combo-private-dining",
+      name: "Private Dining (Dining Room)",
+      tableNumbers: [5, 6, 7, 8],
+      minCapacity: 10,
+      maxCapacity: 20,
+      priority: 5,
+      active: false,
+    },
+  ];
+}
+
 function buildCategoryOrder(): string[] {
   return ["Mains", "Sides", "Drinks", "Cocktails", "Desserts"];
 }
@@ -841,6 +1093,21 @@ function buildOrders(payments: MerchantPayment[]): OrderTicket[] {
 function buildReservations(now: Date): Reservation[] {
   return [
     {
+      id: "res-combo-terrace",
+      tableNumber: 1,
+      combinationId: "combo-terrace-long",
+      customerName: "Okoro Party",
+      phone: "+254790112233",
+      date: now.toISOString().slice(0, 10),
+      time: "19:00",
+      covers: 8,
+      status: "seated",
+      notes: "Combined terrace long table",
+      depositAmount: 4000,
+      depositStatus: "paid",
+      depositPaidAt: now.toISOString(),
+    },
+    {
       id: "res-1",
       tableNumber: 2,
       customerName: "Njeri Family",
@@ -982,6 +1249,11 @@ function buildSettings(): MerchantSettings {
   };
 }
 
+export const DEFAULT_TABLE_CAPACITY = 4;
+
+// Seed seat counts per table (index 0 => table 1). Mix of 2/4/6/8-tops.
+const TABLE_CAPACITIES = [4, 2, 6, 4, 4, 8, 2, 4, 6, 4, 2, 6];
+
 function buildTables(
   catalogue: CatalogueItem[],
   payments: MerchantPayment[],
@@ -1037,6 +1309,7 @@ function buildTables(
     return {
       id: `table-${tableNumber}`,
       tableNumber,
+      capacity: TABLE_CAPACITIES[index] ?? DEFAULT_TABLE_CAPACITY,
       server: STAFF_NAMES[index % STAFF_NAMES.length],
       items: currentItems,
       status,
@@ -1610,29 +1883,40 @@ export function createMerchantDemoData(now = new Date()): MerchantSnapshot {
   const catalogue = buildCatalogue();
   const menus = buildMenus(now);
   const zones = buildZones();
+  const areas = buildAreas();
   const categoryOrder = buildCategoryOrder();
   const menuSchedules = buildMenuSchedules();
   const externalMenus = buildExternalMenus(now);
   const payments = buildPayments(catalogue, now);
   const tables = buildTables(catalogue, payments);
+  const tableCombinations = buildTableCombinations();
   const orders = buildOrders(
     payments.filter((payment) => payment.status !== "failed"),
   );
   const reservations = buildReservations(now);
+  const enquiries = buildEnquiries(now);
+  const depositPolicy = buildDepositPolicy();
   const reviews = buildReviews(payments);
   const settings = buildSettings();
   const staffDemo = generateStaffDemoData(now);
+  const workflows = buildWorkflows();
+  const campaigns = buildCampaigns();
+  const loyaltyCustomers = buildLoyaltyCustomers(now);
 
   return {
     catalogue,
     menus,
     zones,
+    areas,
     categoryOrder,
     menuSchedules,
     externalMenus,
     tables,
+    tableCombinations,
     orders,
     reservations,
+    enquiries,
+    depositPolicy,
     reviews,
     settings,
     staffMembers: staffDemo.staffMembers,
@@ -1641,6 +1925,10 @@ export function createMerchantDemoData(now = new Date()): MerchantSnapshot {
     staffPayouts: staffDemo.staffPayouts,
     staffChallenges: staffDemo.staffChallenges,
     staffInsights: staffDemo.staffInsights,
+    workflows,
+    campaigns,
+    messageLog: [],
+    loyaltyCustomers,
   };
 }
 
@@ -1669,6 +1957,32 @@ export function writeStorage<T>(key: string, value: T) {
   }
 }
 
+export const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION_KEY = "fxengine.merchant.schemaVersion";
+
+// Bring older persisted data up to the current shape without wiping user data.
+function migrateMerchantData(): void {
+  if (!canUseStorage()) return;
+  const stored = Number(window.localStorage.getItem(SCHEMA_VERSION_KEY) ?? "1");
+  if (stored >= SCHEMA_VERSION) return;
+
+  // v1 -> v2: tables gained `capacity`/`bookable`; backfill so booking
+  // capacity, combinations and the floor plan never see undefined seats.
+  const tables = readStorage<MerchantTable[]>(STORAGE_KEYS.tables, []);
+  if (tables.length > 0) {
+    writeStorage(
+      STORAGE_KEYS.tables,
+      tables.map((table) => ({
+        ...table,
+        capacity: table.capacity ?? DEFAULT_TABLE_CAPACITY,
+        bookable: table.bookable ?? true,
+      })),
+    );
+  }
+
+  writeStorage(SCHEMA_VERSION_KEY, SCHEMA_VERSION);
+}
+
 export function ensureMerchantDemoData() {
   if (!canUseStorage()) return createMerchantDemoData();
 
@@ -1683,6 +1997,8 @@ export function ensureMerchantDemoData() {
     }
   });
 
+  migrateMerchantData();
+
   return loadMerchantSnapshot();
 }
 
@@ -1693,6 +2009,7 @@ export function loadMerchantSnapshot(): MerchantSnapshot {
     catalogue: readStorage(STORAGE_KEYS.catalogue, fallback.catalogue),
     menus: readStorage(STORAGE_KEYS.menus, fallback.menus),
     zones: readStorage(STORAGE_KEYS.zones, fallback.zones),
+    areas: readStorage(STORAGE_KEYS.areas, fallback.areas),
     categoryOrder: readStorage(
       STORAGE_KEYS.categoryOrder,
       fallback.categoryOrder,
@@ -1706,8 +2023,17 @@ export function loadMerchantSnapshot(): MerchantSnapshot {
       fallback.externalMenus,
     ),
     tables: readStorage(STORAGE_KEYS.tables, fallback.tables),
+    tableCombinations: readStorage(
+      STORAGE_KEYS.tableCombinations,
+      fallback.tableCombinations,
+    ),
     orders: readStorage(STORAGE_KEYS.orders, fallback.orders),
     reservations: readStorage(STORAGE_KEYS.reservations, fallback.reservations),
+    enquiries: readStorage(STORAGE_KEYS.enquiries, fallback.enquiries),
+    depositPolicy: readStorage(
+      STORAGE_KEYS.depositPolicy,
+      fallback.depositPolicy,
+    ),
     reviews: readStorage(STORAGE_KEYS.reviews, fallback.reviews),
     settings: readStorage(STORAGE_KEYS.settings, fallback.settings),
     staffMembers: readStorage(STORAGE_KEYS.staffMembers, fallback.staffMembers),
@@ -1725,11 +2051,162 @@ export function loadMerchantSnapshot(): MerchantSnapshot {
       STORAGE_KEYS.staffInsights,
       fallback.staffInsights,
     ),
+    workflows: readStorage(STORAGE_KEYS.workflows, fallback.workflows),
+    campaigns: readStorage(STORAGE_KEYS.campaigns, fallback.campaigns),
+    messageLog: readStorage(STORAGE_KEYS.messageLog, fallback.messageLog),
+    loyaltyCustomers: readStorage(
+      STORAGE_KEYS.loyaltyCustomers,
+      fallback.loyaltyCustomers,
+    ),
   };
 }
 
 export function saveMerchantTables(tables: MerchantTable[]) {
   writeStorage(STORAGE_KEYS.tables, tables);
+}
+
+export function saveMerchantReservations(reservations: Reservation[]) {
+  writeStorage(STORAGE_KEYS.reservations, reservations);
+}
+
+export function saveMerchantEnquiries(enquiries: Enquiry[]) {
+  writeStorage(STORAGE_KEYS.enquiries, enquiries);
+}
+
+export function saveMerchantDepositPolicy(policy: DepositPolicy) {
+  writeStorage(STORAGE_KEYS.depositPolicy, policy);
+}
+
+export function saveMerchantWorkflows(workflows: Workflow[]) {
+  writeStorage(STORAGE_KEYS.workflows, workflows);
+}
+
+export function saveMerchantCampaigns(campaigns: Campaign[]) {
+  writeStorage(STORAGE_KEYS.campaigns, campaigns);
+}
+
+export function saveMerchantMessageLog(messageLog: MessageLogEntry[]) {
+  writeStorage(STORAGE_KEYS.messageLog, messageLog);
+}
+
+// Replace {{var}} placeholders in a message template.
+export function renderTemplate(
+  template: string,
+  vars: Record<string, string | number>,
+): string {
+  return template.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => {
+    const value = vars[key];
+    return value === undefined ? "" : String(value);
+  });
+}
+
+export function getCampaignRecipients(
+  segment: CampaignSegment,
+  customers: LoyaltyCustomer[],
+  now: Date = new Date(),
+): LoyaltyCustomer[] {
+  if (segment === "all") return customers;
+  if (segment === "gold_plus") {
+    return customers.filter(
+      (customer) => customer.tier === "Gold" || customer.tier === "Platinum",
+    );
+  }
+  const cutoff = now.getTime() - 30 * 86_400_000;
+  return customers.filter(
+    (customer) => new Date(customer.lastVisit).getTime() < cutoff,
+  );
+}
+
+// Which bookings an automation trigger applies to on a given date.
+export function matchReservationsForTrigger(
+  trigger: WorkflowTrigger,
+  reservations: Reservation[],
+  date: string,
+): Reservation[] {
+  const forDate = reservations.filter((reservation) => reservation.date === date);
+  switch (trigger) {
+    case "booking_created":
+      return forDate.filter((reservation) => reservation.status === "confirmed");
+    case "reminder":
+      return forDate.filter(
+        (reservation) =>
+          reservation.status === "confirmed" || reservation.status === "seated",
+      );
+    case "post_visit":
+      return forDate.filter((reservation) => reservation.status === "seated");
+    case "no_show":
+      return forDate.filter((reservation) => reservation.status === "no-show");
+    default:
+      return [];
+  }
+}
+
+export function getDepositDue(policy: DepositPolicy, covers: number): number {
+  if (!policy.enabled || covers < policy.minCovers) return 0;
+  return policy.perGuestKES * covers;
+}
+
+export function getDepositStats(
+  policy: DepositPolicy,
+  reservations: Reservation[],
+) {
+  let collected = 0;
+  let pending = 0;
+  let refunded = 0;
+  for (const reservation of reservations) {
+    if (reservation.status === "cancelled" || reservation.status === "no-show") {
+      continue;
+    }
+    if (reservation.depositStatus === "paid") {
+      collected += reservation.depositAmount ?? 0;
+    } else if (reservation.depositStatus === "refunded") {
+      refunded += reservation.depositAmount ?? 0;
+    } else {
+      pending += getDepositDue(policy, reservation.covers);
+    }
+  }
+  return { collected, pending, refunded };
+}
+
+export function getNewEnquiries(enquiries: Enquiry[]): Enquiry[] {
+  return enquiries
+    .filter((enquiry) => enquiry.status === "new")
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+export function getPendingEnquiryCount(enquiries: Enquiry[]): number {
+  return enquiries.filter((enquiry) => enquiry.status === "new").length;
+}
+
+export type PartyAssignment =
+  | { kind: "table"; tableNumber: number }
+  | { kind: "combination"; combinationId: string };
+
+// Best fit for a party at a slot: smallest free single table, else the highest
+// priority free combination. Reused by bookings and enquiry approval.
+export function suggestPartyAssignment(
+  tables: MerchantTable[],
+  combinations: TableCombination[],
+  reservations: Reservation[],
+  date: string,
+  time: string,
+  covers: number,
+): PartyAssignment | null {
+  const occupied = getOccupiedTableNumbers(
+    reservations,
+    combinations,
+    date,
+    time,
+  );
+  const table = getAvailableTablesForParty(tables, covers, occupied)[0];
+  if (table) return { kind: "table", tableNumber: table.tableNumber };
+  const combination = getAvailableCombinationsForParty(
+    combinations,
+    covers,
+    occupied,
+  )[0];
+  if (combination) return { kind: "combination", combinationId: combination.id };
+  return null;
 }
 
 export function saveMerchantCatalogue(catalogue: CatalogueItem[]) {
@@ -1742,6 +2219,279 @@ export function saveMerchantMenus(menus: Menu[]) {
 
 export function saveMerchantZones(zones: Zone[]) {
   writeStorage(STORAGE_KEYS.zones, zones);
+}
+
+export function saveMerchantTableCombinations(
+  tableCombinations: TableCombination[],
+) {
+  writeStorage(STORAGE_KEYS.tableCombinations, tableCombinations);
+}
+
+export function tableSeats(table: MerchantTable): number {
+  return table.capacity ?? DEFAULT_TABLE_CAPACITY;
+}
+
+export function isTableBookable(table: MerchantTable): boolean {
+  return table.bookable !== false;
+}
+
+export function getBookableTables(tables: MerchantTable[]): MerchantTable[] {
+  return tables.filter(isTableBookable);
+}
+
+export function tableLabel(table: MerchantTable): string {
+  return table.name?.trim() ? table.name.trim() : `Table ${table.tableNumber}`;
+}
+
+export function getCombinationSeats(
+  combination: TableCombination,
+  tables: MerchantTable[],
+): number {
+  return combination.tableNumbers.reduce((total, tableNumber) => {
+    const table = tables.find((entry) => entry.tableNumber === tableNumber);
+    return total + (table ? tableSeats(table) : 0);
+  }, 0);
+}
+
+// Booking allocation: pick the highest-priority active combination whose
+// capacity window fits the party size (mirrors Stampede's 1-5 priority model).
+export function pickCombinationForParty(
+  combinations: TableCombination[],
+  covers: number,
+): TableCombination | null {
+  return (
+    combinations
+      .filter(
+        (combination) =>
+          combination.active &&
+          covers >= combination.minCapacity &&
+          covers <= combination.maxCapacity,
+      )
+      .sort((a, b) => b.priority - a.priority)[0] ?? null
+  );
+}
+
+// Table numbers already taken by a booking for a given date + time slot.
+// A combination booking occupies every table it merges. Cancelled and
+// no-show bookings free their tables.
+export function getOccupiedTableNumbers(
+  reservations: Reservation[],
+  combinations: TableCombination[],
+  date: string,
+  time: string,
+): Set<number> {
+  const occupied = new Set<number>();
+  for (const reservation of reservations) {
+    if (reservation.date !== date || reservation.time !== time) continue;
+    if (
+      reservation.status === "cancelled" ||
+      reservation.status === "no-show"
+    ) {
+      continue;
+    }
+    if (reservation.combinationId) {
+      const combination = combinations.find(
+        (entry) => entry.id === reservation.combinationId,
+      );
+      if (combination) {
+        combination.tableNumbers.forEach((tableNumber) =>
+          occupied.add(tableNumber),
+        );
+        continue;
+      }
+    }
+    occupied.add(reservation.tableNumber);
+  }
+  return occupied;
+}
+
+// Bookable single tables that seat the party and are free for the slot,
+// smallest suitable table first (avoid wasting large tables).
+export function getAvailableTablesForParty(
+  tables: MerchantTable[],
+  covers: number,
+  occupied: Set<number>,
+): MerchantTable[] {
+  return getBookableTables(tables)
+    .filter(
+      (table) =>
+        tableSeats(table) >= covers && !occupied.has(table.tableNumber),
+    )
+    .sort((a, b) => tableSeats(a) - tableSeats(b));
+}
+
+// Active combinations whose capacity window fits the party and whose member
+// tables are all free for the slot, highest priority first.
+export function getAvailableCombinationsForParty(
+  combinations: TableCombination[],
+  covers: number,
+  occupied: Set<number>,
+): TableCombination[] {
+  return combinations
+    .filter(
+      (combination) =>
+        combination.active &&
+        covers >= combination.minCapacity &&
+        covers <= combination.maxCapacity &&
+        combination.tableNumbers.every(
+          (tableNumber) => !occupied.has(tableNumber),
+        ),
+    )
+    .sort((a, b) => b.priority - a.priority);
+}
+
+// A combination is "live" (physically in use, billed as one) once a booking
+// that references it has been seated.
+export function getSeatedCombinationIds(
+  reservations: Reservation[],
+): Set<string> {
+  const ids = new Set<string>();
+  for (const reservation of reservations) {
+    if (reservation.combinationId && reservation.status === "seated") {
+      ids.add(reservation.combinationId);
+    }
+  }
+  return ids;
+}
+
+export function getLiveCombinationForTable(
+  combinations: TableCombination[],
+  reservations: Reservation[],
+  tableNumber: number,
+): TableCombination | null {
+  const seated = getSeatedCombinationIds(reservations);
+  return (
+    combinations.find(
+      (combination) =>
+        seated.has(combination.id) &&
+        combination.tableNumbers.includes(tableNumber),
+    ) ?? null
+  );
+}
+
+export function getSeatedCombinationsByTable(
+  combinations: TableCombination[],
+  reservations: Reservation[],
+): Map<number, TableCombination> {
+  const seated = getSeatedCombinationIds(reservations);
+  const byTable = new Map<number, TableCombination>();
+  for (const combination of combinations) {
+    if (!seated.has(combination.id)) continue;
+    for (const tableNumber of combination.tableNumbers) {
+      byTable.set(tableNumber, combination);
+    }
+  }
+  return byTable;
+}
+
+export function getCombinationTables(
+  combination: TableCombination,
+  tables: MerchantTable[],
+): MerchantTable[] {
+  return combination.tableNumbers
+    .map((tableNumber) =>
+      tables.find((table) => table.tableNumber === tableNumber),
+    )
+    .filter((table): table is MerchantTable => Boolean(table));
+}
+
+export function saveMerchantAreas(areas: Area[]) {
+  writeStorage(STORAGE_KEYS.areas, areas);
+}
+
+export function getVisibleAreas(areas: Area[]): Area[] {
+  return areas
+    .filter((area) => !area.hiddenFromDayPlanner)
+    .sort((a, b) => a.order - b.order);
+}
+
+export function getAreaForTable(
+  areas: Area[],
+  tableNumber: number,
+): Area | null {
+  return (
+    [...areas]
+      .sort((a, b) => a.order - b.order)
+      .find((area) => area.tableNumbers.includes(tableNumber)) ?? null
+  );
+}
+
+export function getReservationTableNumbers(
+  reservation: Reservation,
+  combinations: TableCombination[],
+): number[] {
+  if (reservation.combinationId) {
+    const combination = combinations.find(
+      (entry) => entry.id === reservation.combinationId,
+    );
+    if (combination) return combination.tableNumbers;
+  }
+  return [reservation.tableNumber];
+}
+
+export function getBookingStats(reservations: Reservation[], date: string) {
+  const forDate = reservations.filter(
+    (reservation) =>
+      reservation.date === date &&
+      reservation.status !== "cancelled" &&
+      reservation.status !== "no-show",
+  );
+  return {
+    bookings: forDate.length,
+    covers: forDate.reduce((sum, reservation) => sum + reservation.covers, 0),
+    confirmed: forDate.filter((entry) => entry.status === "confirmed").length,
+    seated: forDate.filter((entry) => entry.status === "seated").length,
+  };
+}
+
+export type AreaBookings = {
+  area: Area | null;
+  reservations: Reservation[];
+};
+
+// Bookings for a date, grouped by (visible) area. Bookings whose tables aren't
+// in any visible area fall into a trailing "Unassigned" group (area: null).
+export function getBookingsByArea(
+  areas: Area[],
+  reservations: Reservation[],
+  combinations: TableCombination[],
+  date: string,
+): AreaBookings[] {
+  const visible = getVisibleAreas(areas);
+  const forDate = reservations
+    .filter(
+      (reservation) =>
+        reservation.date === date &&
+        reservation.status !== "cancelled" &&
+        reservation.status !== "no-show",
+    )
+    .sort((a, b) => a.time.localeCompare(b.time));
+
+  const groups: AreaBookings[] = visible.map((area) => ({
+    area,
+    reservations: [],
+  }));
+  const unassigned: Reservation[] = [];
+
+  for (const reservation of forDate) {
+    const tableNumbers = getReservationTableNumbers(reservation, combinations);
+    const group = groups.find((entry) => {
+      const area = entry.area;
+      return (
+        area !== null &&
+        tableNumbers.some((tableNumber) =>
+          area.tableNumbers.includes(tableNumber),
+        )
+      );
+    });
+    if (group) group.reservations.push(reservation);
+    else unassigned.push(reservation);
+  }
+
+  if (unassigned.length > 0) {
+    groups.push({ area: null, reservations: unassigned });
+  }
+  return groups;
 }
 
 export function saveMerchantCategoryOrder(categoryOrder: string[]) {
@@ -1798,6 +2548,9 @@ export function flattenTransactions(tables: MerchantTable[]) {
       table.payments.map((payment) => ({
         ...payment,
         tableNumber: table.tableNumber,
+        // Persisted (localStorage) payments from older schema versions may lack
+        // metadata; guarantee an object so consumers can read keys safely.
+        metadata: payment.metadata ?? {},
       })),
     )
     .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));

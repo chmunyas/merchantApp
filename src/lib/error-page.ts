@@ -4,7 +4,7 @@ export function renderErrorPage(): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>500 — FX Engine</title>
+  <title>500 — PesaSwap</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -38,7 +38,7 @@ export function renderErrorPage(): string {
   <div class="container">
     <p class="code">500</p>
     <h1>Something went wrong</h1>
-    <p>FX Engine encountered an unexpected error. Please try again or contact support if the issue persists.</p>
+    <p>PesaSwap encountered an unexpected error. Please try again or contact support if the issue persists.</p>
     <a href="/">Back to dashboard</a>
   </div>
 </body>

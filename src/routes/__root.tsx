@@ -13,6 +13,7 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { AuthProvider } from "@/components/auth/AuthProvider";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { useEffect } from "react";
 
 function NotFoundComponent() {
   return (
@@ -61,25 +62,42 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       meta: [
         { charSet: "utf-8" },
         { name: "viewport", content: "width=device-width, initial-scale=1" },
-        { title: "FX Engine â Multi-currency Treasury" },
+        { name: "application-name", content: "PesaSwap" },
+        { name: "apple-mobile-web-app-title", content: "PesaSwap" },
+        { name: "theme-color", content: "#0f172a" },
+        { name: "mobile-web-app-capable", content: "yes" },
+        { name: "apple-mobile-web-app-capable", content: "yes" },
+        {
+          name: "apple-mobile-web-app-status-bar-style",
+          content: "black-translucent",
+        },
+        { title: "PesaSwap Merchant" },
         {
           name: "description",
           content:
-            "Friendly treasury OS with a multi-currency wallet and best-rate FX routing across Wise, Currencycloud, LMAX and Verto.",
+            "PesaSwap merchant POS for tables, bookings, orders and M-Pesa payments.",
         },
         {
           property: "og:title",
-          content: "FX Engine â Multi-currency Treasury",
+          content: "PesaSwap Merchant",
         },
         {
           property: "og:description",
-          content: "Best-rate FX routing across top liquidity providers.",
+          content: "Fast M-Pesa, card and split payments for merchants.",
         },
         { property: "og:type", content: "website" },
         { name: "twitter:card", content: "summary" },
       ],
       links: [
         { rel: "stylesheet", href: appCss },
+        { rel: "manifest", href: "/manifest.webmanifest" },
+        {
+          rel: "icon",
+          type: "image/png",
+          sizes: "192x192",
+          href: "/icons/icon-192.png",
+        },
+        { rel: "apple-touch-icon", href: "/icons/apple-touch-icon-180.png" },
         { rel: "preconnect", href: "https://fonts.googleapis.com" },
         {
           rel: "preconnect",
@@ -117,10 +135,17 @@ function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const router = useRouter();
   const pathname = router.state.location.pathname;
+
+  useEffect(() => {
+    if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+  }, []);
   const isStandaloneLayout =
     pathname.startsWith("/dashboard") ||
     pathname.startsWith("/pay") ||
     pathname.startsWith("/table") ||
+    pathname.startsWith("/enquire") ||
     pathname.startsWith("/admin") ||
     pathname.startsWith("/sign-in") ||
     pathname.startsWith("/staff-login");

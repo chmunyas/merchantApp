@@ -159,7 +159,7 @@ export function MerchantApp() {
         <span>9:41</span>
         <span className="flex items-center gap-1">
           <span className="size-1.5 bg-accent rounded-full" />
-          FXÂ·Live
+          FX·Live
         </span>
       </div>
 
@@ -177,7 +177,7 @@ export function MerchantApp() {
             onCreate={(inv) => {
               ledger.add(inv);
               toast.success("Invoice created", {
-                description: `${inv.id} Â· ${inv.currency} ${inv.amount}`,
+                description: `${inv.id} · ${inv.currency} ${inv.amount}`,
               });
               setShowInvoice(inv);
               setTab("list");
@@ -301,7 +301,7 @@ export function MerchantApp() {
           onConfirm={(provider) => {
             ledger.markPaid(payTarget.id, provider);
             toast.success(`Paid via ${provider}`, {
-              description: `${payTarget.currency} ${payTarget.amount.toLocaleString()} Â· ${payTarget.id}`,
+              description: `${payTarget.currency} ${payTarget.amount.toLocaleString()} · ${payTarget.id}`,
             });
             setPayTarget(null);
             setShowInvoice(payTarget);
@@ -548,7 +548,7 @@ function ScanView({
   function tryDecode(text: string) {
     const trimmed = text.trim();
     if (!trimmed) return;
-    // 1. JSON FX Engine payload
+    // 1. JSON PesaSwap payload
     try {
       const obj = JSON.parse(trimmed);
       if (obj && obj.type === "fx-engine/invoice" && obj.id) {
@@ -585,7 +585,7 @@ function ScanView({
     if (known) return onDetected(known);
 
     toast.error("Unrecognized QR payload", {
-      description: "Try an FX Engine invoice.",
+      description: "Try a PesaSwap invoice.",
     });
   }
 
@@ -669,7 +669,7 @@ function ScanView({
           Supported
         </p>
         <div className="flex flex-wrap gap-1.5">
-          {["EMVCo QR", "PIX BR", "UPI IN", "PromptPay TH", "FX Engine"].map(
+          {["EMVCo QR", "PIX BR", "UPI IN", "PromptPay TH", "PesaSwap"].map(
             (s) => (
               <span
                 key={s}
@@ -853,7 +853,7 @@ function InvoiceDetailSheet({
   const timeline = timelineFor(invoice);
   const [showRecordPayment, setShowRecordPayment] = useState(false);
   const [partialAmount, setPartialAmount] = useState("");
-  const [partialVia, setPartialVia] = useState("FX Engine");
+  const [partialVia, setPartialVia] = useState("PesaSwap");
   const paid = totalPaid(invoice);
   const remaining = amountRemaining(invoice);
 
@@ -994,7 +994,7 @@ function InvoiceDetailSheet({
               onChange={(e) => setPartialVia(e.target.value)}
               className="w-full rounded-xl border border-border bg-muted px-4 py-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-accent"
             >
-              <option>FX Engine</option>
+              <option>PesaSwap</option>
               <option>Bank Transfer</option>
               <option>M-Pesa</option>
               <option>Cash</option>
@@ -1372,7 +1372,7 @@ function PaySheet({
             {invoice.currency} {total.toFixed(2)}
           </p>
           <p className="text-[10px] opacity-60 mt-1">
-            incl. {invoice.currency} {fee.toFixed(2)} fee Â· rate{" "}
+            incl. {invoice.currency} {fee.toFixed(2)} fee · rate{" "}
             {selected.rate}
           </p>
         </div>
@@ -1401,7 +1401,7 @@ function PaySheet({
                       <div>
                         <p className="text-xs font-semibold">{p.id}</p>
                         <p className="text-[10px] font-mono text-muted-foreground">
-                          rate {p.rate} Â· fee {(p.fee * 100).toFixed(2)}%
+                          rate {p.rate} · fee {(p.fee * 100).toFixed(2)}%
                         </p>
                       </div>
                       {active && <Check className="size-4" />}
@@ -1452,7 +1452,7 @@ function PaySheet({
               )}
             </button>
             <p className="text-[10px] text-center text-muted-foreground">
-              Secured by FX Engine Â· 3D-Secure where applicable
+              Secured by PesaSwap · 3D-Secure where applicable
             </p>
           </>
         )}

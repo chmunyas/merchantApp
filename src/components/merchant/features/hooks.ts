@@ -134,7 +134,7 @@ export function useInvoices() {
   return {
     invoices,
     add: (inv: Invoice) => setInvoices((prev) => [inv, ...prev]),
-    markPaid: (id: string, via = "FX Engine") =>
+    markPaid: (id: string, via = "PesaSwap") =>
       setInvoices((prev) =>
         prev.map((i) =>
           i.id === id
@@ -167,7 +167,7 @@ export function useInvoices() {
       setInvoices((prev) =>
         prev.map((i) => (i.id === id ? { ...i, ...patch } : i)),
       ),
-    recordPayment: (id: string, paymentAmount: number, via = "FX Engine") =>
+    recordPayment: (id: string, paymentAmount: number, via = "PesaSwap") =>
       setInvoices((prev) =>
         prev.map((i) => {
           if (i.id !== id) return i;

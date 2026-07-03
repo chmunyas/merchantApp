@@ -5,26 +5,36 @@ import {
   useRouter,
 } from "@tanstack/react-router";
 import {
+  Armchair,
   BarChart3,
   BriefcaseBusiness,
+  CalendarDays,
   ChefHat,
   CreditCard,
+  Inbox,
   LayoutDashboard,
+  LayoutGrid,
   Menu,
   Settings,
   ShoppingBag,
   Star,
   Users,
   UtensilsCrossed,
+  Wallet,
   X,
+  Zap,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { UserProfileMenu } from "@/components/auth/UserProfileMenu";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useAuth } from "@/lib/auth";
+import {
+  ensureMerchantDemoData,
+  getPendingEnquiryCount,
+} from "@/lib/merchant-dashboard";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/dashboard")({
@@ -34,6 +44,11 @@ export const Route = createFileRoute("/dashboard")({
 const navItems = [
   { to: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { to: "/dashboard/orders", label: "Orders (KDS)", icon: ChefHat },
+  { to: "/dashboard/tables", label: "Tables", icon: LayoutGrid },
+  { to: "/dashboard/floorplan", label: "Floorplan", icon: Armchair },
+  { to: "/dashboard/bookings", label: "Bookings", icon: CalendarDays },
+  { to: "/dashboard/enquiries", label: "Enquiries", icon: Inbox },
+  { to: "/dashboard/deposits", label: "Deposits", icon: Wallet },
   { to: "/dashboard/payments", label: "Payments", icon: CreditCard },
   { to: "/dashboard/retail", label: "Retail", icon: ShoppingBag },
   { to: "/dashboard/services", label: "Services", icon: BriefcaseBusiness },
@@ -41,6 +56,7 @@ const navItems = [
   { to: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/dashboard/menu", label: "Menu", icon: UtensilsCrossed },
   { to: "/dashboard/reviews", label: "Reviews", icon: Star },
+  { to: "/dashboard/automations", label: "Automations", icon: Zap },
   { to: "/dashboard/settings", label: "Settings", icon: Settings },
 ] as const;
 
@@ -50,6 +66,11 @@ function DashboardShell() {
   const { user } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [range, setRange] = useState("Today");
+  const [newEnquiries, setNewEnquiries] = useState(0);
+
+  useEffect(() => {
+    setNewEnquiries(getPendingEnquiryCount(ensureMerchantDemoData().enquiries));
+  }, [pathname]);
 
   const breadcrumb = useMemo(() => {
     const item = navItems.find(
@@ -86,6 +107,11 @@ function DashboardShell() {
               >
                 <Icon className="h-4 w-4" />
                 <span>{item.label}</span>
+                {item.label === "Enquiries" && newEnquiries > 0 ? (
+                  <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[11px] font-semibold text-white">
+                    {newEnquiries}
+                  </span>
+                ) : null}
               </Link>
             );
           })}
@@ -130,6 +156,11 @@ function DashboardShell() {
                 >
                   <Icon className="h-4 w-4" />
                   <span>{item.label}</span>
+                  {item.label === "Enquiries" && newEnquiries > 0 ? (
+                    <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[11px] font-semibold text-white">
+                      {newEnquiries}
+                    </span>
+                  ) : null}
                 </Link>
               );
             })}

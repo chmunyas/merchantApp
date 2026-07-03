@@ -11,7 +11,7 @@ const beneficiaries = [
 export const Route = createFileRoute("/beneficiaries")({
   head: () => ({
     meta: [
-      { title: "Beneficiaries â FX Engine" },
+      { title: "Beneficiaries — PesaSwap" },
       { name: "description", content: "Manage payment beneficiaries across currencies and banks." },
     ],
   }),

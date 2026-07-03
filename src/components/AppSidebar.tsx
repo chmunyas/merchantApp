@@ -19,7 +19,7 @@ export function AppSidebar() {
         <div className="size-8 bg-foreground rounded-sm flex items-center justify-center">
           <div className="size-3.5 border-2 border-background rotate-45" />
         </div>
-        <span className="font-bold tracking-tight text-xl">FX Engine</span>
+        <span className="font-bold tracking-tight text-xl">PesaSwap</span>
       </div>
 
       <nav className="flex flex-col gap-1">

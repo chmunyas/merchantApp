@@ -11,7 +11,7 @@ const stats = [
 export const Route = createFileRoute("/reports")({
   head: () => ({
     meta: [
-      { title: "Reports â FX Engine" },
+      { title: "Reports — PesaSwap" },
       { name: "description", content: "Treasury performance, FX volume and provider savings." },
     ],
   }),

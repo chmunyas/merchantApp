@@ -25,6 +25,7 @@ import {
 import {
   ensureMerchantDemoData,
   flattenTransactions,
+  getSeatedCombinationsByTable,
   loadMerchantSnapshot,
   type MerchantSnapshot,
 } from "@/lib/merchant-dashboard";
@@ -40,6 +41,11 @@ const currency = new Intl.NumberFormat("en-KE", {
 });
 
 const pieColors = ["#10b981", "#3b82f6", "#f59e0b", "#8b5cf6"];
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "—" : format(date, "dd MMM, HH:mm");
+}
 
 function generateDemoData() {
   return ensureMerchantDemoData();
@@ -74,10 +80,10 @@ function DashboardOverviewPage() {
       (table) => table.status !== "closed",
     ).length;
     const qrTransactions = transactions.filter(
-      (transaction) => transaction.metadata.flow_type === "qr_pay",
+      (transaction) => transaction.metadata?.flow_type === "qr_pay",
     ).length;
     const manualTransactions = transactions.filter(
-      (transaction) => transaction.metadata.channel === "manual-entry",
+      (transaction) => transaction.metadata?.channel === "manual-entry",
     ).length;
 
     const revenueTrend = Array.from({ length: 7 }).map((_, index) => {
@@ -122,6 +128,18 @@ function DashboardOverviewPage() {
       methodBreakdown,
       transactions: transactions.slice(0, 10),
     };
+  }, [snapshot]);
+
+  const combinedByTable = useMemo(() => {
+    const map = new Map<number, string>();
+    if (!snapshot) return map;
+    getSeatedCombinationsByTable(
+      snapshot.tableCombinations,
+      snapshot.reservations,
+    ).forEach((combination, tableNumber) => {
+      map.set(tableNumber, combination.name);
+    });
+    return map;
   }, [snapshot]);
 
   if (!snapshot || !metrics) {
@@ -302,6 +320,11 @@ function DashboardOverviewPage() {
                     {table.status.replace("-", " ")}
                   </span>
                 </div>
+                {combinedByTable.has(table.tableNumber) ? (
+                  <div className="mt-3 inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-medium text-emerald-700">
+                    Combined · {combinedByTable.get(table.tableNumber)}
+                  </div>
+                ) : null}
                 <div className="mt-4 text-sm text-muted-foreground">
                   {table.items.length} items in play
                 </div>
@@ -332,7 +355,7 @@ function DashboardOverviewPage() {
                   <div className="font-medium">{transaction.customerName}</div>
                   <div className="text-xs text-muted-foreground">
                     {transaction.reference} · Table {transaction.tableNumber} ·{" "}
-                    {format(new Date(transaction.createdAt), "dd MMM, HH:mm")}
+                    {formatDateTime(transaction.createdAt)}
                   </div>
                 </div>
                 <div className="text-right">

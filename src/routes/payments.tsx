@@ -5,7 +5,7 @@ import { TransactionsTable } from "@/components/TransactionsTable";
 export const Route = createFileRoute("/payments")({
   head: () => ({
     meta: [
-      { title: "Payments â FX Engine" },
+      { title: "Payments — PesaSwap" },
       { name: "description", content: "Send, receive and track cross-border payments." },
     ],
   }),

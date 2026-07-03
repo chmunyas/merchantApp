@@ -30,11 +30,14 @@ import type {
   BNPLTransaction,
   CatalogueItem,
   StaffMember,
+  TableCombination,
 } from "@/components/merchant/features/types";
 import { executePayment, buildPaymentMetadata } from "@/lib/pesaswap-payments";
 import {
   ensureMerchantDemoData,
   getActiveMenuSchedule,
+  getCombinationTables,
+  getLiveCombinationForTable,
   getTableZone,
   getVisibleCatalogueForTable,
   readStorage,
@@ -42,6 +45,7 @@ import {
   type MerchantReview,
   type MerchantSnapshot,
   type MerchantTable,
+  type MerchantTableItem,
 } from "@/lib/merchant-dashboard";
 import { generateOrderId, submitNewOrder } from "@/lib/realtime";
 
@@ -160,6 +164,8 @@ function TableCustomerPage() {
   const [activeCategory, setActiveCategory] = useState<string>("All");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [billItems, setBillItems] = useState<BillItem[]>([]);
+  const [activeCombination, setActiveCombination] =
+    useState<TableCombination | null>(null);
   const [payments, setPayments] = useState<StoredPayment[]>([]);
   const [staffMember, setStaffMember] = useState<StaffMember | null>(null);
   const [arrivalAt, setArrivalAt] = useState<string>(defaultArrivalTime());
@@ -226,9 +232,22 @@ function TableCustomerPage() {
       merchantSnapshot.tables,
       resolvedTableNumber ?? normalizeTableNumber(tableId),
     );
+    const liveCombination =
+      resolvedTableNumber != null
+        ? getLiveCombinationForTable(
+            merchantSnapshot.tableCombinations,
+            merchantSnapshot.reservations,
+            resolvedTableNumber,
+          )
+        : null;
+    const billingItems: MerchantTableItem[] = liveCombination
+      ? getCombinationTables(liveCombination, merchantSnapshot.tables).flatMap(
+          (table) => table.items,
+        )
+      : (currentTable?.items ?? []);
     const initialBill = hydrateBillItems(
       readStorage<BillItem[]>(billKey, []),
-      currentTable,
+      billingItems,
     );
     const storedCart = readStorage<CartItem[]>(cartKey, []);
     const storedPayments = readStorage<StoredPayment[]>(paymentsKey, []);
@@ -260,6 +279,7 @@ function TableCustomerPage() {
     setSnapshot(merchantSnapshot);
     setStaffMember(assignedStaff);
     setBillItems(initialBill);
+    setActiveCombination(liveCombination);
     setPayments(storedPayments);
     setLatestReceipt(storedReceipt);
     setArrivalAt(storedArrival);
@@ -524,6 +544,13 @@ function TableCustomerPage() {
                 Table {tableNumber}
                 {activeZone ? ` · ${activeZone.name}` : ""}
               </div>
+              {activeCombination ? (
+                <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-emerald-400/15 px-3 py-1 text-xs font-medium text-emerald-200">
+                  <Users className="h-3.5 w-3.5" />
+                  Combined bill · {activeCombination.name} (Tables{" "}
+                  {activeCombination.tableNumbers.join(", ")})
+                </div>
+              ) : null}
               <h1 className="mt-3 text-2xl font-semibold">
                 Order, tip, and pay in one flow
               </h1>
@@ -2155,15 +2182,13 @@ function normalizeTableNumber(value: string | number | undefined) {
 
 function hydrateBillItems(
   storedBill: BillItem[],
-  currentTable: MerchantTable | null,
+  sourceItems: MerchantTableItem[],
 ) {
   if (Array.isArray(storedBill) && storedBill.length > 0) {
     return storedBill;
   }
 
-  if (!currentTable) return [];
-
-  return currentTable.items.map(
+  return sourceItems.map(
     (item, index) =>
       ({
         basePrice: item.price,

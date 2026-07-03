@@ -1,0 +1,21 @@
+name: pesaswap-merchant-dev
+
+services:
+  merchant-app:
+    build: .
+    image: pesaswap-merchant-app:local
+    container_name: pesaswap-merchant-app
+    ports:
+      - "8080:8080"
+    # Loads PESASWAP_* / VITE_* variables into the container. Create it with:
+    #   Copy-Item .env.example .env   (PowerShell)   or   cp .env.example .env
+    env_file:
+      - .env
+    environment:
+      # Poll for file changes so hot-reload works across the Docker bind mount.
+      - CHOKIDAR_USEPOLLING=true
+    volumes:
+      # Live-reload: mount the source, but keep the image's installed node_modules.
+      - .:/app
+      - /app/node_modules
+    restart: unless-stopped

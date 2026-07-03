@@ -6,7 +6,7 @@ import { ProviderComparison } from "@/components/ProviderComparison";
 export const Route = createFileRoute("/converter")({
   head: () => ({
     meta: [
-      { title: "Converter â FX Engine" },
+      { title: "Converter — PesaSwap" },
       { name: "description", content: "Compare live FX rates across top providers and execute at the best rate." },
     ],
   }),

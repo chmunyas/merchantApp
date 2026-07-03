@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+
+# Production-style local run: builds the Cloudflare Worker bundle and serves it
+# with the real Workers runtime (workerd, via Wrangler) — the same runtime used
+# in production. Use this to validate SSR + API behaviour under Cloudflare
+# Workers locally. For a lighter hot-reload workflow use the plain `Dockerfile`.
+
+### Stage 1: build the Worker bundle (dist/server + dist/client) ###
+FROM node:22-bookworm-slim AS builder
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+
+# Client-side VITE_* vars are inlined into the bundle at build time.
+ARG VITE_PESASWAP_PUBLISHABLE_KEY=""
+ARG VITE_BACKEND_URL=""
+ENV VITE_PESASWAP_PUBLISHABLE_KEY=${VITE_PESASWAP_PUBLISHABLE_KEY}
+ENV VITE_BACKEND_URL=${VITE_BACKEND_URL}
+RUN npm run build
+
+### Stage 2: run the built Worker in the Workers runtime (workerd) ###
+FROM node:22-bookworm-slim AS runner
+WORKDIR /app
+
+# node_modules is required so Wrangler can resolve/bundle the Worker's imports
+# (react, clsx, …) and provides the pinned Wrangler + matching workerd binary.
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY package.json package-lock.json wrangler.toml ./
+
+EXPOSE 8787
+
+# Local Workers runtime, reachable from the host. Server secrets are read from
+# .dev.vars (mounted by docker compose); non-secret vars come from wrangler.toml.
+CMD ["node_modules/.bin/wrangler", "dev", "--ip", "0.0.0.0", "--port", "8787"]
