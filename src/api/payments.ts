@@ -29,7 +29,7 @@ function getEnv(runtimeEnv?: unknown): Env {
   return {
     PESASWAP_API_KEY: pick("PESASWAP_API_KEY"),
     PESASWAP_WEBHOOK_SECRET: pick("PESASWAP_WEBHOOK_SECRET"),
-    PESASWAP_URL: pick("PESASWAP_URL") || "https://app.Pesaswap.io",
+    PESASWAP_URL: pick("PESASWAP_URL") || "https://api.sandbox.pesaswap.io",
   };
 }
 

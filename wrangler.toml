@@ -8,7 +8,9 @@ compatibility_flags = ["nodejs_compat"]
 directory = "dist/client"
 
 [vars]
-PESASWAP_URL = "https://app.Pesaswap.io"
+# API base for server->PesaSwap calls (src/api/payments.ts). Sandbox is live;
+# switch to https://api.pesaswap.io for production. NOT app.pesaswap.io (dashboard).
+PESASWAP_URL = "https://api.sandbox.pesaswap.io"
 
 # --- Cloudflare edge capabilities ---
 
