@@ -146,10 +146,47 @@ function DashboardSettingsPage() {
   const qrRefs = useRef<Record<number, HTMLCanvasElement | null>>({});
   const logoInputRef = useRef<HTMLInputElement | null>(null);
   const [savingBrand, setSavingBrand] = useState(false);
+  const [staff, setStaff] = useState<
+    Array<{
+      id: string;
+      name: string;
+      role: string;
+      phone: string | null;
+      active: boolean;
+    }>
+  >([]);
+
+  async function loadStaff() {
+    const fetchStaff = () =>
+      authFetch("/api/staff")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => (d?.staff ?? []) as typeof staff)
+        .catch(() => [] as typeof staff);
+    let list = await fetchStaff();
+    // One-time migration of the legacy localStorage users blob to the server.
+    if (list.length === 0 && localStorage.getItem("staff_migrated") !== "1") {
+      localStorage.setItem("staff_migrated", "1");
+      const legacy = loadMerchantSnapshot()?.settings.users ?? [];
+      if (legacy.length > 0) {
+        await Promise.all(
+          legacy.map((u) =>
+            authFetch("/api/staff", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ name: u.name, role: u.role, phone: u.phone }),
+            }).catch(() => undefined),
+          ),
+        );
+        list = await fetchStaff();
+      }
+    }
+    setStaff(list);
+  }
 
   useEffect(() => {
     generateDemoData();
     setSnapshot(loadMerchantSnapshot());
+    void loadStaff();
     // Load server-persisted branding (logo / colour / name) for this merchant.
     authFetch("/api/branding")
       .then((r) => (r.ok ? r.json() : null))
@@ -259,14 +296,24 @@ function DashboardSettingsPage() {
     popup.document.close();
   }
 
-  function addUser() {
-    if (!snapshot || !newUser.name.trim()) return;
-    updateSettings((settings) => ({
-      ...settings,
-      users: [...settings.users, { ...newUser, id: `user-${Date.now()}` }],
-    }));
-    setNewUser({ id: "", name: "", role: "Server", phone: "", active: true });
-    toast.success("User added");
+  async function addUser() {
+    if (!newUser.name.trim()) return;
+    const res = await authFetch("/api/staff", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: newUser.name,
+        role: newUser.role,
+        phone: newUser.phone,
+      }),
+    });
+    if (res.ok) {
+      setNewUser({ id: "", name: "", role: "Server", phone: "", active: true });
+      toast.success("User added");
+      void loadStaff();
+    } else {
+      toast.error("Could not add user");
+    }
   }
 
   if (!snapshot) {
@@ -534,7 +581,7 @@ function DashboardSettingsPage() {
         <div className="rounded-2xl border border-border bg-card p-6">
           <h3 className="text-lg font-semibold">User management</h3>
           <div className="mt-4 space-y-3">
-            {snapshot.settings.users.map((user) => (
+            {staff.map((user) => (
               <div
                 key={user.id}
                 className="flex flex-col gap-3 rounded-2xl border border-border p-4 sm:flex-row sm:items-center sm:justify-between"
@@ -554,14 +601,12 @@ function DashboardSettingsPage() {
                   <Button
                     variant="destructive"
                     size="icon"
-                    onClick={() =>
-                      updateSettings((settings) => ({
-                        ...settings,
-                        users: settings.users.filter(
-                          (entry) => entry.id !== user.id,
-                        ),
-                      }))
-                    }
+                    onClick={async () => {
+                      await authFetch(`/api/staff/${user.id}`, {
+                        method: "DELETE",
+                      });
+                      void loadStaff();
+                    }}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>

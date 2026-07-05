@@ -42,8 +42,13 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
 - **P2** Dispute / chargeback tooling.
 
 ## Data model (server-authoritative migration)
-- **P1/P2** Migrate the localStorage-blob core entities (**menus, tables, orders,
-  staff, settings**) from `merchant_state` to dedicated Postgres tables to kill the
+- ✅ **DONE (staff)** `staff` table + `/api/staff` per-row CRUD + settings UI wired
+  (one-time localStorage→server migration). **Reference pattern** for the rest.
+- ✅ **DONE (settings/branding)** `venue_branding` (logo/colour/name) via `/api/branding`.
+- **P1** Migrate the remaining localStorage-blob entities (**menus, tables, orders**)
+  from `merchant_state` to dedicated tables following the `staff` pattern: a
+  venue-scoped table + `/api/<entity>` per-row CRUD (`requireAuth` +
+  `venueFromPayload`) + client wiring with a one-time migration. Kills the
   cross-device whole-array clobber risk. (`invoices/contacts/enquiries/menu_items/
   kb/sequences/conversations/payments` are already server-authoritative.)
 - **P2** Serve the **venues list from Postgres** so a signed-up merchant sees their
