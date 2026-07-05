@@ -22,11 +22,21 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   CAPTCHA on signup.
 - **P2** **APM / error tracking** (e.g. Sentry) + uptime + alerting (only basic
   `console.error` capture today).
+- **P2** **CI auto-deploy** — create a scoped API token (Workers Scripts:Edit +
+  Hyperdrive:Read), set `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_DEPLOY_ENABLED=true`
+  (the Global API Key isn't suitable for CI); deploys are manual from the
+  container today.
+- **P2** Set `A2A_API_KEY` (or `OMNI_API_KEY`) to enable staff-scoped `/api/a2a`
+  integrations — staff role is now gated behind it (anonymous callers run as
+  `customer`).
 
 ## Payments & settlement
 - **P1** Certified provider **sandbox → production credentials**; PCI-DSS SAQ-A
   attestation (keep: no PAN on the server; pay links to hosted checkout).
-- **P1** **Webhook signature verification** hardening on `/api/webhooks/pesaswap`.
+- ✅ **DONE** **Webhook signature verification** on `/api/webhooks/pesaswap` —
+  reads the secret from the Worker `env` and rejects when unset/invalid
+  (fail-closed). **Remaining P1:** set `PESASWAP_WEBHOOK_SECRET` + `PESASWAP_API_KEY`
+  secrets to enable live payments (the webhook 503s until the secret is set).
 - **P2** Persist **webhook + refund** events to the `payments` ledger (create is
   persisted today) and add **settlement/payout reconciliation**.
 - **P2** Dispute / chargeback tooling.
@@ -43,9 +53,32 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
 - **P2** A real **billing processor** (plans, metering, invoices), usage dashboards,
   and hard quota enforcement across all entities (only recurring is capped today).
 
+## White-label & reseller (foundation shipped this session)
+- ✅ **DONE** Reseller **org layer** — `organizations` + `venues.org_id` +
+  `app_users.org_id`; `POST /api/org` (admin), `GET /api/org?slug` (public),
+  `GET /api/org/merchants` (reseller admin); merchant signup accepts `?org=slug`.
+- ✅ **DONE** Per-merchant **branding** — logo/colour/name persisted
+  (`venue_branding`), `GET/PUT /api/branding`, Settings upload UI + reseller
+  "powered by" co-brand.
+- **P1** **Apply branding to surfaces** — consume `/api/branding` in the app shell
+  (dashboard header/sidebar, currently hardcoded "PesaSwap") and public pages
+  (pay link, booking/enquiry) so the merchant/bank brand actually shows.
+- **P1** **Bank-admin portal UI** — a reseller dashboard to onboard/manage
+  merchants, edit org branding, and see aggregate analytics + revenue share.
+- **P1** **Org-scoped login** — a reseller-admin role + `org` claim on login (only
+  merchant *signup* carries the org claim today); RBAC for reseller vs merchant.
+- **P2** **Co-branded signup** — `/get-started?org=<slug>` reads `GET /api/org` and
+  applies the bank's brand; optional bank **invite** flow (vs open slug signup).
+- **P2** **Reseller settlement** — wire `organizations.pesaswap_partner_id` into
+  payment creation so a bank's merchants settle under its PesaSwap partner, plus a
+  revenue-share / commission ledger.
+- **P2** **Logo storage** — move inline data-URL logos (≤512KB) to Cloudflare R2 /
+  Images; **per-merchant PWA manifest + icons** for a branded installable app.
+
 ## Testing & CI
-- **P1** Run the **E2E job in CI** against the ephemeral Postgres service (job added
-  in `.github/workflows/ci.yml`; verify on GitHub Actions).
+- ✅ **DONE** **E2E job in CI** — runs the HTTP + Playwright suites against the
+  ephemeral Postgres service; green on GitHub Actions (curl health-poll on
+  127.0.0.1 instead of wait-on).
 - **P2** Add **branch protection** on `main` requiring `CI / quality` + `CI / E2E`.
 - **P2** More **integration/E2E** coverage (payment webhook, campaigns, DLQ).
 
