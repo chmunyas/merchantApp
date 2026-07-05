@@ -10,7 +10,7 @@ describe("venueFromPayload (tenant isolation)", () => {
     expect(venueFromPayload({ venue: "claimVenue" }, url)).toBe("claimVenue");
   });
 
-  it("falls back to the query param when the token has no venue", () => {
+  it("lets a platform admin (no venue claim) target a venue via the query param", () => {
     expect(venueFromPayload({ role: "admin" }, url)).toBe("queryVenue");
   });
 
@@ -20,8 +20,11 @@ describe("venueFromPayload (tenant isolation)", () => {
     );
   });
 
-  it("ignores a non-string venue claim", () => {
-    expect(venueFromPayload({ venue: 123 } as never, url)).toBe("queryVenue");
+  it("pins a non-admin token with an invalid/absent claim to main (no ?venue= escalation)", () => {
+    // Security (Alert 3): a non-admin principal cannot use ?venue= to reach
+    // another tenant when its token carries no valid venue claim.
+    expect(venueFromPayload({ venue: 123 } as never, url)).toBe("main");
+    expect(venueFromPayload({ role: "merchant" }, url)).toBe("main");
   });
 });
 
