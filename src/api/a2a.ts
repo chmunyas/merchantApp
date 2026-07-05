@@ -34,7 +34,11 @@ export async function handleA2aRoute(
         "Restaurant/merchant CRM agent. Books tables, answers FAQs, manages enquiries, contacts and invoices in natural language.",
       version: "1.0.0",
       protocol: "a2a-simple",
-      endpoints: { message: "/api/a2a" },
+      endpoints: {
+        message: "/api/a2a",
+        catalog: "/api/agent/catalog",
+        checkout: "/api/agent/checkout",
+      },
       capabilities: [
         "create_enquiry",
         "check_availability",
@@ -44,12 +48,24 @@ export async function handleA2aRoute(
         "search_kb",
         "create_invoice",
         "escalate_to_human",
+        "get_catalog",
+        "checkout",
       ],
       skills: [
         { id: "book", description: "Book a table (guests, date, time)" },
         { id: "faq", description: "Answer venue FAQs from the knowledge base" },
         { id: "crm", description: "Query bookings, covers, contacts (staff)" },
         { id: "invoice", description: "Create and send an invoice (staff)" },
+        {
+          id: "catalog",
+          description:
+            "Return a machine-readable venue catalog with KES prices.",
+        },
+        {
+          id: "buy",
+          description:
+            "Create a secure checkout pay link for selected items or an amount.",
+        },
       ],
     });
   }

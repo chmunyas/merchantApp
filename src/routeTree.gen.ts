@@ -30,6 +30,7 @@ import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
 import { Route as TableTableIdRouteImport } from './routes/table.$tableId'
 import { Route as RetailStoreIdRouteImport } from './routes/retail.$storeId'
+import { Route as QCodeRouteImport } from './routes/q.$code'
 import { Route as DashboardWhatsappRouteImport } from './routes/dashboard/whatsapp'
 import { Route as DashboardTelegramRouteImport } from './routes/dashboard/telegram'
 import { Route as DashboardTablesRouteImport } from './routes/dashboard/tables'
@@ -39,6 +40,7 @@ import { Route as DashboardServicesRouteImport } from './routes/dashboard/servic
 import { Route as DashboardReviewsRouteImport } from './routes/dashboard/reviews'
 import { Route as DashboardRetailRouteImport } from './routes/dashboard/retail'
 import { Route as DashboardReportsRouteImport } from './routes/dashboard/reports'
+import { Route as DashboardQrRouteImport } from './routes/dashboard/qr'
 import { Route as DashboardPaymentsRouteImport } from './routes/dashboard/payments'
 import { Route as DashboardOrdersRouteImport } from './routes/dashboard/orders'
 import { Route as DashboardMenuRouteImport } from './routes/dashboard/menu'
@@ -48,6 +50,7 @@ import { Route as DashboardInboxRouteImport } from './routes/dashboard/inbox'
 import { Route as DashboardFloorplanRouteImport } from './routes/dashboard/floorplan'
 import { Route as DashboardEnquiriesRouteImport } from './routes/dashboard/enquiries'
 import { Route as DashboardDepositsRouteImport } from './routes/dashboard/deposits'
+import { Route as DashboardCopilotRouteImport } from './routes/dashboard/copilot'
 import { Route as DashboardContactsRouteImport } from './routes/dashboard/contacts'
 import { Route as DashboardBookingsRouteImport } from './routes/dashboard/bookings'
 import { Route as DashboardAutomationsRouteImport } from './routes/dashboard/automations'
@@ -162,6 +165,11 @@ const RetailStoreIdRoute = RetailStoreIdRouteImport.update({
   path: '/retail/$storeId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const QCodeRoute = QCodeRouteImport.update({
+  id: '/q/$code',
+  path: '/q/$code',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DashboardWhatsappRoute = DashboardWhatsappRouteImport.update({
   id: '/whatsapp',
   path: '/whatsapp',
@@ -207,6 +215,11 @@ const DashboardReportsRoute = DashboardReportsRouteImport.update({
   path: '/reports',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardQrRoute = DashboardQrRouteImport.update({
+  id: '/qr',
+  path: '/qr',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardPaymentsRoute = DashboardPaymentsRouteImport.update({
   id: '/payments',
   path: '/payments',
@@ -250,6 +263,11 @@ const DashboardEnquiriesRoute = DashboardEnquiriesRouteImport.update({
 const DashboardDepositsRoute = DashboardDepositsRouteImport.update({
   id: '/deposits',
   path: '/deposits',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardCopilotRoute = DashboardCopilotRouteImport.update({
+  id: '/copilot',
+  path: '/copilot',
   getParentRoute: () => DashboardRoute,
 } as any)
 const DashboardContactsRoute = DashboardContactsRouteImport.update({
@@ -319,6 +337,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/automations': typeof DashboardAutomationsRoute
   '/dashboard/bookings': typeof DashboardBookingsRoute
   '/dashboard/contacts': typeof DashboardContactsRoute
+  '/dashboard/copilot': typeof DashboardCopilotRoute
   '/dashboard/deposits': typeof DashboardDepositsRoute
   '/dashboard/enquiries': typeof DashboardEnquiriesRoute
   '/dashboard/floorplan': typeof DashboardFloorplanRoute
@@ -328,6 +347,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/menu': typeof DashboardMenuRoute
   '/dashboard/orders': typeof DashboardOrdersRoute
   '/dashboard/payments': typeof DashboardPaymentsRoute
+  '/dashboard/qr': typeof DashboardQrRoute
   '/dashboard/reports': typeof DashboardReportsRoute
   '/dashboard/retail': typeof DashboardRetailRoute
   '/dashboard/reviews': typeof DashboardReviewsRoute
@@ -337,6 +357,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/tables': typeof DashboardTablesRoute
   '/dashboard/telegram': typeof DashboardTelegramRoute
   '/dashboard/whatsapp': typeof DashboardWhatsappRoute
+  '/q/$code': typeof QCodeRoute
   '/retail/$storeId': typeof RetailStoreIdRoute
   '/table/$tableId': typeof TableTableIdRoute
   '/admin/': typeof AdminIndexRoute
@@ -366,6 +387,7 @@ export interface FileRoutesByTo {
   '/dashboard/automations': typeof DashboardAutomationsRoute
   '/dashboard/bookings': typeof DashboardBookingsRoute
   '/dashboard/contacts': typeof DashboardContactsRoute
+  '/dashboard/copilot': typeof DashboardCopilotRoute
   '/dashboard/deposits': typeof DashboardDepositsRoute
   '/dashboard/enquiries': typeof DashboardEnquiriesRoute
   '/dashboard/floorplan': typeof DashboardFloorplanRoute
@@ -375,6 +397,7 @@ export interface FileRoutesByTo {
   '/dashboard/menu': typeof DashboardMenuRoute
   '/dashboard/orders': typeof DashboardOrdersRoute
   '/dashboard/payments': typeof DashboardPaymentsRoute
+  '/dashboard/qr': typeof DashboardQrRoute
   '/dashboard/reports': typeof DashboardReportsRoute
   '/dashboard/retail': typeof DashboardRetailRoute
   '/dashboard/reviews': typeof DashboardReviewsRoute
@@ -384,6 +407,7 @@ export interface FileRoutesByTo {
   '/dashboard/tables': typeof DashboardTablesRoute
   '/dashboard/telegram': typeof DashboardTelegramRoute
   '/dashboard/whatsapp': typeof DashboardWhatsappRoute
+  '/q/$code': typeof QCodeRoute
   '/retail/$storeId': typeof RetailStoreIdRoute
   '/table/$tableId': typeof TableTableIdRoute
   '/admin': typeof AdminIndexRoute
@@ -416,6 +440,7 @@ export interface FileRoutesById {
   '/dashboard/automations': typeof DashboardAutomationsRoute
   '/dashboard/bookings': typeof DashboardBookingsRoute
   '/dashboard/contacts': typeof DashboardContactsRoute
+  '/dashboard/copilot': typeof DashboardCopilotRoute
   '/dashboard/deposits': typeof DashboardDepositsRoute
   '/dashboard/enquiries': typeof DashboardEnquiriesRoute
   '/dashboard/floorplan': typeof DashboardFloorplanRoute
@@ -425,6 +450,7 @@ export interface FileRoutesById {
   '/dashboard/menu': typeof DashboardMenuRoute
   '/dashboard/orders': typeof DashboardOrdersRoute
   '/dashboard/payments': typeof DashboardPaymentsRoute
+  '/dashboard/qr': typeof DashboardQrRoute
   '/dashboard/reports': typeof DashboardReportsRoute
   '/dashboard/retail': typeof DashboardRetailRoute
   '/dashboard/reviews': typeof DashboardReviewsRoute
@@ -434,6 +460,7 @@ export interface FileRoutesById {
   '/dashboard/tables': typeof DashboardTablesRoute
   '/dashboard/telegram': typeof DashboardTelegramRoute
   '/dashboard/whatsapp': typeof DashboardWhatsappRoute
+  '/q/$code': typeof QCodeRoute
   '/retail/$storeId': typeof RetailStoreIdRoute
   '/table/$tableId': typeof TableTableIdRoute
   '/admin/': typeof AdminIndexRoute
@@ -467,6 +494,7 @@ export interface FileRouteTypes {
     | '/dashboard/automations'
     | '/dashboard/bookings'
     | '/dashboard/contacts'
+    | '/dashboard/copilot'
     | '/dashboard/deposits'
     | '/dashboard/enquiries'
     | '/dashboard/floorplan'
@@ -476,6 +504,7 @@ export interface FileRouteTypes {
     | '/dashboard/menu'
     | '/dashboard/orders'
     | '/dashboard/payments'
+    | '/dashboard/qr'
     | '/dashboard/reports'
     | '/dashboard/retail'
     | '/dashboard/reviews'
@@ -485,6 +514,7 @@ export interface FileRouteTypes {
     | '/dashboard/tables'
     | '/dashboard/telegram'
     | '/dashboard/whatsapp'
+    | '/q/$code'
     | '/retail/$storeId'
     | '/table/$tableId'
     | '/admin/'
@@ -514,6 +544,7 @@ export interface FileRouteTypes {
     | '/dashboard/automations'
     | '/dashboard/bookings'
     | '/dashboard/contacts'
+    | '/dashboard/copilot'
     | '/dashboard/deposits'
     | '/dashboard/enquiries'
     | '/dashboard/floorplan'
@@ -523,6 +554,7 @@ export interface FileRouteTypes {
     | '/dashboard/menu'
     | '/dashboard/orders'
     | '/dashboard/payments'
+    | '/dashboard/qr'
     | '/dashboard/reports'
     | '/dashboard/retail'
     | '/dashboard/reviews'
@@ -532,6 +564,7 @@ export interface FileRouteTypes {
     | '/dashboard/tables'
     | '/dashboard/telegram'
     | '/dashboard/whatsapp'
+    | '/q/$code'
     | '/retail/$storeId'
     | '/table/$tableId'
     | '/admin'
@@ -563,6 +596,7 @@ export interface FileRouteTypes {
     | '/dashboard/automations'
     | '/dashboard/bookings'
     | '/dashboard/contacts'
+    | '/dashboard/copilot'
     | '/dashboard/deposits'
     | '/dashboard/enquiries'
     | '/dashboard/floorplan'
@@ -572,6 +606,7 @@ export interface FileRouteTypes {
     | '/dashboard/menu'
     | '/dashboard/orders'
     | '/dashboard/payments'
+    | '/dashboard/qr'
     | '/dashboard/reports'
     | '/dashboard/retail'
     | '/dashboard/reviews'
@@ -581,6 +616,7 @@ export interface FileRouteTypes {
     | '/dashboard/tables'
     | '/dashboard/telegram'
     | '/dashboard/whatsapp'
+    | '/q/$code'
     | '/retail/$storeId'
     | '/table/$tableId'
     | '/admin/'
@@ -606,6 +642,7 @@ export interface RootRouteChildren {
   StaffLoginRoute: typeof StaffLoginRoute
   TableRoute: typeof TableRouteWithChildren
   BookBusinessIdRoute: typeof BookBusinessIdRoute
+  QCodeRoute: typeof QCodeRoute
   RetailStoreIdRoute: typeof RetailStoreIdRoute
 }
 
@@ -758,6 +795,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RetailStoreIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/q/$code': {
+      id: '/q/$code'
+      path: '/q/$code'
+      fullPath: '/q/$code'
+      preLoaderRoute: typeof QCodeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dashboard/whatsapp': {
       id: '/dashboard/whatsapp'
       path: '/whatsapp'
@@ -821,6 +865,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardReportsRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/qr': {
+      id: '/dashboard/qr'
+      path: '/qr'
+      fullPath: '/dashboard/qr'
+      preLoaderRoute: typeof DashboardQrRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/payments': {
       id: '/dashboard/payments'
       path: '/payments'
@@ -882,6 +933,13 @@ declare module '@tanstack/react-router' {
       path: '/deposits'
       fullPath: '/dashboard/deposits'
       preLoaderRoute: typeof DashboardDepositsRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/copilot': {
+      id: '/dashboard/copilot'
+      path: '/copilot'
+      fullPath: '/dashboard/copilot'
+      preLoaderRoute: typeof DashboardCopilotRouteImport
       parentRoute: typeof DashboardRoute
     }
     '/dashboard/contacts': {
@@ -964,6 +1022,7 @@ interface DashboardRouteChildren {
   DashboardAutomationsRoute: typeof DashboardAutomationsRoute
   DashboardBookingsRoute: typeof DashboardBookingsRoute
   DashboardContactsRoute: typeof DashboardContactsRoute
+  DashboardCopilotRoute: typeof DashboardCopilotRoute
   DashboardDepositsRoute: typeof DashboardDepositsRoute
   DashboardEnquiriesRoute: typeof DashboardEnquiriesRoute
   DashboardFloorplanRoute: typeof DashboardFloorplanRoute
@@ -973,6 +1032,7 @@ interface DashboardRouteChildren {
   DashboardMenuRoute: typeof DashboardMenuRoute
   DashboardOrdersRoute: typeof DashboardOrdersRoute
   DashboardPaymentsRoute: typeof DashboardPaymentsRoute
+  DashboardQrRoute: typeof DashboardQrRoute
   DashboardReportsRoute: typeof DashboardReportsRoute
   DashboardRetailRoute: typeof DashboardRetailRoute
   DashboardReviewsRoute: typeof DashboardReviewsRoute
@@ -990,6 +1050,7 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardAutomationsRoute: DashboardAutomationsRoute,
   DashboardBookingsRoute: DashboardBookingsRoute,
   DashboardContactsRoute: DashboardContactsRoute,
+  DashboardCopilotRoute: DashboardCopilotRoute,
   DashboardDepositsRoute: DashboardDepositsRoute,
   DashboardEnquiriesRoute: DashboardEnquiriesRoute,
   DashboardFloorplanRoute: DashboardFloorplanRoute,
@@ -999,6 +1060,7 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardMenuRoute: DashboardMenuRoute,
   DashboardOrdersRoute: DashboardOrdersRoute,
   DashboardPaymentsRoute: DashboardPaymentsRoute,
+  DashboardQrRoute: DashboardQrRoute,
   DashboardReportsRoute: DashboardReportsRoute,
   DashboardRetailRoute: DashboardRetailRoute,
   DashboardReviewsRoute: DashboardReviewsRoute,
@@ -1044,6 +1106,7 @@ const rootRouteChildren: RootRouteChildren = {
   StaffLoginRoute: StaffLoginRoute,
   TableRoute: TableRouteWithChildren,
   BookBusinessIdRoute: BookBusinessIdRoute,
+  QCodeRoute: QCodeRoute,
   RetailStoreIdRoute: RetailStoreIdRoute,
 }
 export const routeTree = rootRouteImport

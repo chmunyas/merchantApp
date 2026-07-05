@@ -46,6 +46,13 @@ by GitHub Copilot's Agent Skills support.
 | Tips (attribution / pooling / payout) | `skills/tips` | `tips-engineer` |
 | Orders & kitchen | `skills/orders-kitchen` | `orders-kitchen-engineer` |
 
+### Agentic commerce & unified interface
+| Capability | Skill | Subagent |
+| --- | --- | --- |
+| Unified QR (one code = order + pay + enroll + receipt) | `skills/unified-qr` | `unified-qr-engineer` |
+| Merchant copilot (runtime AI employee) | `skills/merchant-copilot` | `merchant-copilot-engineer` |
+| Agentic checkout / AI-Collect (external agents buy) | `skills/agentic-checkout` | `agentic-checkout-engineer` |
+
 ## Using them
 
 **Claude Code** — skills and subagents in `.claude/` are auto-discovered.

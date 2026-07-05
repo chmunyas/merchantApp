@@ -19,6 +19,10 @@ PESASWAP_URL = "https://api.sandbox.pesaswap.io"
 # Kept "0" for the live pilot; flip to "1" here and redeploy to harden.
 AUTH_REQUIRE_LOGIN = "0"
 
+# Public origin for shareable links (pay links, QR, booking). Without this,
+# links fall back to http://localhost:8080 and break for real customers/agents.
+PUBLIC_BASE_URL = "https://pesaswap-merchant-app.pesaswap.workers.dev"
+
 # --- Cloudflare edge capabilities ---
 
 # Workers AI: the natural-language ops agent + embeddings for pgvector memory.

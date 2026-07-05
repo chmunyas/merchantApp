@@ -41,6 +41,9 @@ type PaymentData = {
   logoUrl?: string | null;
   poweredBy?: string | null;
   staffId?: string | null;
+  venue?: string | null;
+  orderId?: string | null;
+  phone?: string | null;
 };
 
 function PayPage() {
@@ -68,8 +71,9 @@ function PayPage() {
     const tapgo = params.get("tapgo");
     if (tapgo) {
       try {
-        const data = JSON.parse(atob(tapgo)) as PaymentData;
+        const data = decodeTapgoPayload(tapgo);
         setPaymentData(data);
+        if (data.phone) setCustomerPhone(data.phone);
         setState("scanned");
         startTimeRef.current = Date.now();
       } catch {
@@ -152,6 +156,14 @@ function PayPage() {
     if (paymentData.staffId) {
       (metadata as Record<string, unknown>).staff_id = paymentData.staffId;
     }
+    if (paymentData.venue) {
+      (metadata as Record<string, unknown>).venue = paymentData.venue;
+      (metadata as Record<string, unknown>).merchant_id = paymentData.venue;
+    }
+    if (paymentData.orderId) {
+      (metadata as Record<string, unknown>).order_id = paymentData.orderId;
+    }
+    (metadata as Record<string, unknown>).till = paymentData.till;
 
     const result = await executePayment({
       amount: paymentData.amount,
@@ -259,6 +271,25 @@ function PayPage() {
       </div>
     </div>
   );
+}
+
+function localMpesaDigits(value?: string | null): string {
+  const digits = String(value ?? "").replace(/[^0-9]/g, "");
+  if (digits.startsWith("254")) return digits.slice(3, 12);
+  if (digits.startsWith("0")) return digits.slice(1, 10);
+  return digits.slice(0, 9);
+}
+
+function decodeTapgoPayload(value: string): PaymentData {
+  const raw = atob(value);
+  try {
+    const encoded = Array.from(raw, (char) =>
+      `%${char.charCodeAt(0).toString(16).padStart(2, "0")}`,
+    ).join("");
+    return JSON.parse(decodeURIComponent(encoded)) as PaymentData;
+  } catch {
+    return JSON.parse(raw) as PaymentData;
+  }
 }
 
 function InvoiceLoadingState() {
@@ -431,7 +462,7 @@ function IdleState({ onScan }: { onScan: () => void }) {
 }
 
 function ScannedState({ data, onConfirm, onCancel }: { data: PaymentData; onConfirm: (phone: string) => void; onCancel: () => void }) {
-  const [phone, setPhone] = useState("");
+  const [phone, setPhone] = useState(() => localMpesaDigits(data.phone));
 
   return (
     <div className="space-y-5">

@@ -45,6 +45,15 @@ export const Route = createFileRoute("/dashboard/menu")({
 
 type TabKey = "items" | "menus" | "zones" | "schedules";
 
+type ApiMenuItem = {
+  id: string;
+  name: string;
+  category: string;
+  price: number | string;
+  dietary?: string[] | null;
+  available?: boolean;
+};
+
 const TAB_OPTIONS: Array<{ key: TabKey; label: string }> = [
   { key: "items", label: "Items" },
   { key: "menus", label: "Menus" },
@@ -178,10 +187,40 @@ function sortItems(items: CatalogueItem[], categoryOrder: string[]) {
   });
 }
 
+function apiMenuItemToCatalogueItem(item: ApiMenuItem): CatalogueItem {
+  return {
+    id: item.id,
+    name: item.name,
+    price: Number(item.price) || 0,
+    category: item.category,
+    dietary: item.dietary ?? [],
+    destination:
+      item.category === "Drinks" || item.category === "Cocktails"
+        ? "bar"
+        : "kitchen",
+    image: "",
+    available: item.available ?? true,
+    description: "",
+    modifiers: [],
+    linkedProductIds: [],
+  };
+}
+
+function menuItemApiPayload(item: CatalogueItem) {
+  return {
+    name: item.name,
+    category: item.category,
+    price: Math.max(0, Math.floor(Number(item.price) || 0)),
+    dietary: item.dietary ?? [],
+    available: item.available ?? true,
+  };
+}
+
 function DashboardMenuPage() {
   const [hydrated, setHydrated] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("items");
   const [catalogue, setCatalogue] = useState<CatalogueItem[]>([]);
+  const [apiMenuEnabled, setApiMenuEnabled] = useState(false);
   const [syncingMenu, setSyncingMenu] = useState(false);
 
   async function syncMenuToAgent() {
@@ -189,17 +228,21 @@ function DashboardMenuPage() {
     try {
       const venue = getCurrentVenueId();
       const items = catalogue.map((item) => ({
+        id: item.id,
         name: item.name,
         category: item.category,
         price: item.price,
         dietary: item.dietary ?? [],
         available: item.available ?? true,
       }));
-      const res = await authFetch(`/api/menu/sync?venue=${venue}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ venue, items }),
-      });
+      const res = await authFetch(
+        `/api/menu/sync?venue=${encodeURIComponent(venue)}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ venue, items }),
+        },
+      );
       if (!res.ok) throw new Error("failed");
       const data = (await res.json()) as { count?: number };
       toast.success(
@@ -226,19 +269,40 @@ function DashboardMenuPage() {
   const [previewTableNumber, setPreviewTableNumber] = useState(12);
 
   useEffect(() => {
+    let cancelled = false;
     const snapshot = ensureMerchantDemoData();
-    setCatalogue(snapshot.catalogue);
-    setMenus(snapshot.menus);
-    setZones(snapshot.zones);
-    setMenuSchedules(snapshot.menuSchedules);
-    setCategoryOrder(snapshot.categoryOrder);
-    setHydrated(true);
+    if (!cancelled) {
+      setCatalogue(snapshot.catalogue);
+      setMenus(snapshot.menus);
+      setZones(snapshot.zones);
+      setMenuSchedules(snapshot.menuSchedules);
+      setCategoryOrder(snapshot.categoryOrder);
+      setHydrated(true);
+    }
+    const venue = getCurrentVenueId();
+    authFetch(`/api/menu?venue=${encodeURIComponent(venue)}`)
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const data = (await res.json()) as { items?: ApiMenuItem[] };
+        return data.items ?? [];
+      })
+      .then((items) => {
+        if (cancelled || items == null) return;
+        setCatalogue(items.map(apiMenuItemToCatalogueItem));
+        setApiMenuEnabled(true);
+      })
+      .catch(() => {
+        if (!cancelled) setApiMenuEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || apiMenuEnabled) return;
     saveMerchantCatalogue(catalogue);
-  }, [catalogue, hydrated]);
+  }, [apiMenuEnabled, catalogue, hydrated]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -380,7 +444,7 @@ function DashboardMenuPage() {
     setDraggedCategory(null);
   }
 
-  function handleSaveItem() {
+  async function handleSaveItem() {
     if (!itemDraft) return;
     const cleanedItem: CatalogueItem = {
       ...itemDraft,
@@ -408,7 +472,37 @@ function DashboardMenuPage() {
 
     if (!cleanedItem.name || !cleanedItem.category) return;
 
+    const previous = catalogue;
+    const existing = catalogue.some((item) => item.id === cleanedItem.id);
     setCatalogue((current) => upsertById(current, cleanedItem));
+    if (apiMenuEnabled) {
+      try {
+        const res = await authFetch(
+          existing ? `/api/menu/item/${cleanedItem.id}` : "/api/menu/item",
+          {
+            method: existing ? "PATCH" : "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(menuItemApiPayload(cleanedItem)),
+          },
+        );
+        if (!res.ok) throw new Error("menu item save failed");
+        const data = (await res.json()) as { item?: ApiMenuItem };
+        if (!existing && data.item) {
+          const createdItem = apiMenuItemToCatalogueItem(data.item);
+          setCatalogue((current) =>
+            current.map((item) =>
+              item.id === cleanedItem.id
+                ? { ...cleanedItem, id: createdItem.id }
+                : item,
+            ),
+          );
+        }
+      } catch {
+        setCatalogue(upsertById(previous, cleanedItem));
+        setApiMenuEnabled(false);
+        toast.error("Could not save item online. Saved locally instead.");
+      }
+    }
     setCategoryOrder((current) =>
       getOrderedMerchantCategories(
         [...allCategories, cleanedItem.category],
@@ -419,7 +513,8 @@ function DashboardMenuPage() {
     setLinkedProductSearch("");
   }
 
-  function handleDeleteItem(itemId: string) {
+  async function handleDeleteItem(itemId: string) {
+    const previous = catalogue;
     setCatalogue((current) =>
       current
         .filter((item) => item.id !== itemId)
@@ -430,6 +525,29 @@ function DashboardMenuPage() {
             [],
         })),
     );
+    if (apiMenuEnabled) {
+      try {
+        const res = await authFetch(`/api/menu/item/${itemId}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) throw new Error("menu item delete failed");
+      } catch {
+        setCatalogue(
+          previous
+            .filter((item) => item.id !== itemId)
+            .map((item) => ({
+              ...item,
+              linkedProductIds:
+                item.linkedProductIds?.filter(
+                  (linkedId) => linkedId !== itemId,
+                ) ?? [],
+            })),
+        );
+        setApiMenuEnabled(false);
+        toast.error("Could not delete item online. Removed locally instead.");
+      }
+    }
+    if (itemDraft?.id === itemId) setItemDraft(null);
   }
 
   function handleSaveMenu() {

@@ -1,6 +1,8 @@
 import { getAdapter } from "@/lib/channels";
 import type { ChannelId } from "@/lib/channels/types";
+import { envVar } from "@/lib/env";
 import { processInbound } from "@/lib/inbound";
+import { verifyHubSignature, verifyToken } from "@/lib/webhook-verify";
 import { requireAuth } from "@/api/auth";
 
 const corsHeaders = {
@@ -17,13 +19,11 @@ function json(data: unknown, status = 200): Response {
 }
 
 // Read JSON or form-encoded (Africa's Talking SMS callbacks) into a plain object.
-async function readBody(request: Request): Promise<unknown> {
-  const contentType = request.headers.get("content-type") ?? "";
+function readBody(rawBody: string, contentType: string): unknown {
   if (contentType.includes("application/x-www-form-urlencoded")) {
-    const form = await request.formData();
-    return Object.fromEntries(form.entries());
+    return Object.fromEntries(new URLSearchParams(rawBody).entries());
   }
-  return request.json();
+  return JSON.parse(rawBody);
 }
 
 // Build a collision-free handle + identity id for a simulated inbound message.
@@ -110,8 +110,44 @@ export async function handleChannelRoute(
   }
 
   if (request.method === "POST") {
+    if (channel === "telegram") {
+      const secret = envVar(env, "TELEGRAM_WEBHOOK_SECRET");
+      if (
+        secret &&
+        !verifyToken(
+          request.headers.get("X-Telegram-Bot-Api-Secret-Token"),
+          secret,
+        )
+      ) {
+        return json({ error: "unauthorized" }, 401);
+      }
+    }
+
+    if (channel === "sms") {
+      const secret = envVar(env, "BRIDGE_SECRET");
+      if (secret && !verifyToken(request.headers.get("x-webhook-secret"), secret)) {
+        return json({ error: "unauthorized" }, 401);
+      }
+    }
+
+    const rawBody = await request.text();
+
+    if (channel === "instagram") {
+      const secret = envVar(env, "INSTAGRAM_APP_SECRET");
+      if (
+        secret &&
+        !(await verifyHubSignature(
+          rawBody,
+          request.headers.get("X-Hub-Signature-256"),
+          secret,
+        ))
+      ) {
+        return json({ error: "unauthorized" }, 401);
+      }
+    }
+
     try {
-      const body = await readBody(request);
+      const body = readBody(rawBody, request.headers.get("content-type") ?? "");
       for (const message of adapter.parseInbound?.(body) ?? []) {
         await processInbound(message, "main", env);
       }

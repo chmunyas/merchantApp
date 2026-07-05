@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { authFetch } from "@/lib/auth";
 import {
   DEFAULT_TABLE_CAPACITY,
   ensureMerchantDemoData,
@@ -110,6 +111,49 @@ const STATUS_STYLES: Record<string, string> = {
   closed: "bg-slate-200 text-slate-700",
 };
 
+type ApiDiningTable = {
+  id: string;
+  label: string;
+  seats: number;
+  section?: string | null;
+  active?: boolean;
+  created_at?: string;
+};
+
+function apiTableToMerchantTable(
+  table: ApiDiningTable,
+  index: number,
+): MerchantTable {
+  const label = table.label.trim();
+  const tableNumberMatch = label.match(/(?:table\s*)?(\d+)/i);
+  const tableNumber = tableNumberMatch
+    ? Number(tableNumberMatch[1])
+    : index + 1;
+  const numericLabel = /^\d+$/.test(label) || /^table\s*\d+$/i.test(label);
+  return {
+    id: table.id,
+    tableNumber,
+    capacity: table.seats,
+    name: numericLabel ? "" : label,
+    bookable: table.active !== false,
+    server: table.section ?? "",
+    items: [],
+    status: "open",
+    openedAt: table.created_at ?? new Date().toISOString(),
+    paidAmount: 0,
+    payments: [],
+  };
+}
+
+function tableApiPayload(table: MerchantTable) {
+  return {
+    label: table.name?.trim() || String(table.tableNumber),
+    seats: tableSeats(table),
+    section: table.server?.trim() || null,
+    active: isTableBookable(table),
+  };
+}
+
 function createEmptyArea(): Area {
   return {
     id: createId("area"),
@@ -122,6 +166,7 @@ function createEmptyArea(): Area {
 
 function DashboardTablesPage() {
   const [hydrated, setHydrated] = useState(false);
+  const [apiTablesEnabled, setApiTablesEnabled] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("tables");
   const [tables, setTables] = useState<MerchantTable[]>([]);
   const [combinations, setCombinations] = useState<TableCombination[]>([]);
@@ -133,18 +178,36 @@ function DashboardTablesPage() {
   const [areaDraft, setAreaDraft] = useState<Area | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     const snapshot = ensureMerchantDemoData();
-    setTables(snapshot.tables);
+    if (!cancelled) setTables(snapshot.tables);
     setCombinations(snapshot.tableCombinations);
     setZones(snapshot.zones);
     setAreas(snapshot.areas);
     setHydrated(true);
+    authFetch("/api/tables")
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const data = (await res.json()) as { tables?: ApiDiningTable[] };
+        return data.tables ?? [];
+      })
+      .then((apiTables) => {
+        if (cancelled || apiTables == null) return;
+        setTables(apiTables.map(apiTableToMerchantTable));
+        setApiTablesEnabled(true);
+      })
+      .catch(() => {
+        if (!cancelled) setApiTablesEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || apiTablesEnabled) return;
     saveMerchantTables(tables);
-  }, [hydrated, tables]);
+  }, [apiTablesEnabled, hydrated, tables]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -176,7 +239,7 @@ function DashboardTablesPage() {
     [combinations, previewCovers],
   );
 
-  function handleSaveTable() {
+  async function handleSaveTable() {
     if (!tableDraft) return;
     const tableNumber = Number(tableDraft.tableNumber);
     const capacity = Number(tableDraft.capacity ?? DEFAULT_TABLE_CAPACITY);
@@ -196,14 +259,49 @@ function DashboardTablesPage() {
       toast.error(`Table ${tableNumber} already exists.`);
       return;
     }
-    setTables((current) =>
-      upsertById(current, { ...tableDraft, tableNumber, capacity }),
-    );
+    const nextTable = { ...tableDraft, tableNumber, capacity };
+    if (apiTablesEnabled) {
+      const previous = tables;
+      const existing = tables.some((table) => table.id === tableDraft.id);
+      setTables((current) => upsertById(current, nextTable));
+      try {
+        const res = await authFetch(
+          existing ? `/api/tables/${tableDraft.id}` : "/api/tables",
+          {
+            method: existing ? "PATCH" : "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(tableApiPayload(nextTable)),
+          },
+        );
+        if (!res.ok) throw new Error("table save failed");
+        if (!existing) {
+          const data = (await res.json()) as { table?: ApiDiningTable };
+          const createdTable = data.table;
+          if (createdTable) {
+            setTables((current) =>
+              current.map((table) =>
+                table.id === tableDraft.id
+                  ? apiTableToMerchantTable(createdTable, current.length)
+                  : table,
+              ),
+            );
+          }
+        }
+      } catch {
+        setTables(previous);
+        toast.error("Could not save table online. Local tables are unchanged.");
+        return;
+      }
+    } else {
+      setTables((current) => upsertById(current, nextTable));
+    }
     toast.success(`Table ${tableNumber} saved.`);
     setTableDraft(null);
   }
 
-  function handleDeleteTable(table: MerchantTable) {
+  async function handleDeleteTable(table: MerchantTable) {
+    const previousTables = tables;
+    const previousCombinations = combinations;
     setTables((current) => removeById(current, table.id));
     setCombinations((current) =>
       current.map((combo) => ({
@@ -214,6 +312,19 @@ function DashboardTablesPage() {
       })),
     );
     if (tableDraft?.id === table.id) setTableDraft(null);
+    if (apiTablesEnabled) {
+      try {
+        const res = await authFetch(`/api/tables/${table.id}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) throw new Error("table delete failed");
+      } catch {
+        setTables(previousTables);
+        setCombinations(previousCombinations);
+        toast.error("Could not delete table online.");
+        return;
+      }
+    }
     toast.success(`Table ${table.tableNumber} removed.`);
   }
 

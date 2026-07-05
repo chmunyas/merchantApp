@@ -8,6 +8,7 @@ import {
   Armchair,
   BarChart3,
   BookOpen,
+  Bot,
   BriefcaseBusiness,
   Building2,
   CalendarDays,
@@ -20,6 +21,7 @@ import {
   Menu,
   MessagesSquare,
   NotebookPen,
+  QrCode,
   Receipt,
   Search,
   Send,
@@ -62,6 +64,7 @@ const navGroups = [
     label: "Insights",
     items: [
       { to: "/dashboard", label: "Overview", icon: LayoutDashboard },
+      { to: "/dashboard/copilot", label: "Copilot", icon: Bot },
       { to: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
     ],
   },
@@ -105,6 +108,7 @@ const navGroups = [
     label: "Setup",
     items: [
       { to: "/dashboard/menu", label: "Menu", icon: UtensilsCrossed },
+      { to: "/dashboard/qr", label: "QR codes", icon: QrCode },
       { to: "/dashboard/staff", label: "Staff", icon: Users },
       { to: "/dashboard/whatsapp", label: "WhatsApp", icon: Smartphone },
       { to: "/dashboard/telegram", label: "Telegram", icon: Send },

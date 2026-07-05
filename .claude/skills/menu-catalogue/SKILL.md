@@ -12,20 +12,27 @@ The agent answers menu/price questions from the same `menu_items` the dashboard
 edits.
 
 ## Key files
-- `src/api/menu.ts` — `GET /api/menu`, gated `POST /api/menu/sync` (replace-all).
+- `src/api/menu.ts` — `GET /api/menu`, per-item CRUD (`POST /api/menu/item`,
+  `PATCH`/`DELETE /api/menu/item/:id`), plus gated `POST /api/menu/sync`.
 - `src/lib/menu.ts` — `getMenu(sql, venue)`.
-- `src/routes/dashboard/menu.tsx` — the editor; pushes via `authFetch` to sync.
-- `db/01-schema.sql` — `menu_items` (name, category, price, dietary[], available).
+- `src/routes/dashboard/menu.tsx` — the editor; server-authoritative via `authFetch`.
+- `db/01-schema.sql` / `db/22-menu-item-id.sql` — `menu_items` (id, name, category,
+  price, dietary[], available).
 
 ## Endpoints
 - `GET /api/menu?venue=` — the agent + customer menu view.
-- `POST /api/menu/sync?venue=` — **gated**; replace-all for the venue.
+- `POST /api/menu/item` — **gated**; create one item (server-authoritative).
+- `PATCH /api/menu/item/:id` — **gated**; partial update, no whole-array clobber.
+- `DELETE /api/menu/item/:id` — **gated**; remove one item.
+- `POST /api/menu/sync?venue=` — **gated**; legacy replace-all (agent back-compat).
 
 ## Conventions
-- Sync is **replace-all** for the resolved venue (`resolveVenue`) — send the token.
+- Prefer per-item CRUD (the DB is the source of truth) over the replace-all sync.
+- Sync remains for the AI agent's menu import — it is **replace-all** for the
+  resolved venue (`resolveVenue`); send the token.
 - The agent reads menu via the lib (`getMenu`), so protecting the HTTP route
   doesn't break the agent.
-- Prices are numeric; dietary is a string array.
+- Prices are numeric minor units (KES); dietary is a string array.
 
 ## Guidelines
 - Filter out items without a name/price on sync.

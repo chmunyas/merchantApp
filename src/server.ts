@@ -14,6 +14,10 @@ import { handleStaffRoute } from "./api/staff";
 import { handleTipsRoute } from "./api/tips";
 import { handleOrdersRoute } from "./api/orders";
 import { handleReportsRoute } from "./api/reports";
+import { handleTablesRoute } from "./api/tables";
+import { handleQrRoute } from "./api/qr";
+import { handleCopilotRoute } from "./api/copilot";
+import { handleAgentCommerceRoute } from "./api/agentcommerce";
 import { handleWhatsappRoute } from "./api/whatsapp";
 import { handleTelegramRoute } from "./api/telegram";
 import { handleChannelRoute } from "./api/channels";
@@ -184,6 +188,14 @@ export default {
           const reportsResponse = await handleReportsRoute(request, env);
           if (reportsResponse) return reportsResponse;
 
+          // Server-authoritative dining tables (off the merchant_state blob)
+          const tablesResponse = await handleTablesRoute(request, env);
+          if (tablesResponse) return tablesResponse;
+
+          // Unified QR: scan -> order -> pay -> loyalty (public resolve + authed mgmt)
+          const qrResponse = await handleQrRoute(request, env);
+          if (qrResponse) return qrResponse;
+
           // WhatsApp AI agent (Cloud API webhook + simulator)
           const whatsappResponse = await handleWhatsappRoute(request, env);
           if (whatsappResponse) return whatsappResponse;
@@ -230,6 +242,17 @@ export default {
           if (recurringResponse) return recurringResponse;
           const a2aResponse = await handleA2aRoute(request, env);
           if (a2aResponse) return a2aResponse;
+
+          // Agentic commerce: AI-Collect catalog + checkout for external agents
+          const agentCommerceResponse = await handleAgentCommerceRoute(
+            request,
+            env,
+          );
+          if (agentCommerceResponse) return agentCommerceResponse;
+
+          // Merchant copilot (runtime AI employee) — authed
+          const copilotResponse = await handleCopilotRoute(request, env);
+          if (copilotResponse) return copilotResponse;
 
           // Menu (natural-language menu & prices)
           const menuResponse = await handleMenuRoute(request, env);

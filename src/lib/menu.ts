@@ -3,6 +3,7 @@ import { getSql } from "@/lib/db";
 type Sql = NonNullable<ReturnType<typeof getSql>>;
 
 export type MenuItem = {
+  id: string;
   name: string;
   category: string;
   price: number;
@@ -20,12 +21,19 @@ const CATEGORY_ORDER = [
   "Desserts",
 ];
 
-export async function getMenu(sql: Sql, venue: string): Promise<MenuItem[]> {
+export async function getMenu(
+  sql: Sql,
+  venue: string,
+  includeUnavailable = false,
+): Promise<MenuItem[]> {
   const rows = await sql`
-    SELECT name, category, price, currency, dietary, available
-    FROM menu_items WHERE venue_id = ${venue} AND available = true
+    SELECT id, name, category, price, currency, dietary, available
+    FROM menu_items
+    WHERE venue_id = ${venue}
+      AND (${includeUnavailable} OR available = true)
     ORDER BY category, price`;
   return rows.map((r) => ({
+    id: r.id,
     name: r.name,
     category: r.category,
     price: Number(r.price),
@@ -74,7 +82,7 @@ export async function findMenuItem(
   );
   if (words.length === 0) return null;
   const [row] = await sql`
-    SELECT name, category, price, currency, dietary, available
+    SELECT id, name, category, price, currency, dietary, available
     FROM menu_items
     WHERE venue_id = ${venue}
       AND EXISTS (SELECT 1 FROM unnest(${words}::text[]) w
@@ -83,6 +91,7 @@ export async function findMenuItem(
     LIMIT 1`;
   if (!row) return null;
   return {
+    id: row.id,
     name: row.name,
     category: row.category,
     price: Number(row.price),

@@ -7,6 +7,7 @@ import { getWhatsappConfig } from "@/lib/channels/whatsapp-config";
 import { getSql } from "@/lib/db";
 import { envVar } from "@/lib/env";
 import { processInbound } from "@/lib/inbound";
+import { verifyHubSignature, verifyToken } from "@/lib/webhook-verify";
 import { requireAuth, resolveVenue } from "@/api/auth";
 
 const corsHeaders = {
@@ -32,6 +33,13 @@ export async function handleWhatsappRoute(
 
   // Inbound message forwarded by the Baileys bridge service.
   if (path === "/api/whatsapp/bridge/inbound" && request.method === "POST") {
+    const bridgeSecret = envVar(env, "BRIDGE_SECRET");
+    if (
+      bridgeSecret &&
+      !verifyToken(request.headers.get("x-webhook-secret"), bridgeSecret)
+    ) {
+      return json({ error: "unauthorized" }, 401);
+    }
     const body = (await request.json()) as {
       venue?: string;
       from?: string;
@@ -157,8 +165,20 @@ export async function handleWhatsappRoute(
 
   // Inbound messages from the WhatsApp Cloud API.
   if (path === "/api/whatsapp/webhook" && request.method === "POST") {
+    const rawBody = await request.text();
+    const appSecret = envVar(env, "WHATSAPP_APP_SECRET");
+    if (
+      appSecret &&
+      !(await verifyHubSignature(
+        rawBody,
+        request.headers.get("X-Hub-Signature-256"),
+        appSecret,
+      ))
+    ) {
+      return json({ error: "unauthorized" }, 401);
+    }
     try {
-      const body = await request.json();
+      const body = JSON.parse(rawBody);
       for (const message of parseWhatsappInbound(body)) {
         // Venue mapping (single-venue default). Extend by mapping the Meta
         // phone_number_id -> venue when running multiple numbers.

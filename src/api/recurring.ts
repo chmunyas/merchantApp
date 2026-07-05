@@ -6,6 +6,8 @@ import {
   requireAuth,
   resolveVenue,
 } from "@/api/auth";
+import { envVar } from "@/lib/env";
+import { verifyToken } from "@/lib/webhook-verify";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -29,6 +31,14 @@ export async function handleRecurringRoute(
 
   // Run reminders + generate due recurring invoices (called by the bridge sweep).
   if (path === "/api/invoicing/run" && request.method === "POST") {
+    const cronSecret = envVar(env, "CRON_SECRET");
+    if (cronSecret) {
+      if (!verifyToken(request.headers.get("x-cron-secret"), cronSecret)) {
+        return json({ error: "unauthorized" }, 401);
+      }
+    } else if (!(await requireAuth(request, env))) {
+      return json({ error: "unauthorized" }, 401);
+    }
     const venue = await resolveVenue(request, env, url);
     const reminders = await runReminders(env, venue);
     const recurring = await runRecurring(env, venue);
