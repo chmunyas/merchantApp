@@ -1,5 +1,6 @@
 import { requireAuth } from "@/api/auth";
 import { runAgent } from "@/lib/agent";
+import { runCopilotTools } from "@/lib/copilot-tools";
 import { getSql } from "@/lib/db";
 import { venueFromPayload } from "@/lib/tenancy";
 
@@ -67,30 +68,7 @@ function withContext(message: string, context: GroundingContext): string {
   ].join("\n");
 }
 
-// Common owner questions ("how were sales today?", "how busy are we?") deserve a
-// direct, accurate answer from live data rather than a model round-trip that may
-// miss the numbers. Returns a grounded reply for metric questions, else null.
-function directOpsAnswer(
-  message: string,
-  context: GroundingContext,
-): string | null {
-  const m = message.toLowerCase();
-  const asksMetrics =
-    /(sales|today|revenue|takings|gross|turnover|earn|made|how much|how are we|how'?s? (business|it going)|performance|busy|orders?)/.test(
-      m,
-    );
-  if (!asksMetrics) return null;
-  const gross = `KES ${(context.today.gross / 100).toLocaleString("en-KE", { minimumFractionDigits: 2 })}`;
-  const tx = context.today.tx;
-  const open = context.openOrders;
-  const parts = [
-    tx === 0
-      ? "No paid sales recorded yet today."
-      : `Today so far: ${gross} across ${tx} paid transaction${tx === 1 ? "" : "s"}.`,
-    `${open} open order${open === 1 ? "" : "s"} in the kitchen.`,
-  ];
-  return parts.join(" ");
-}
+// Common owner questions are handled by the ops tool registry (LLM-agnostic).
 
 export async function handleCopilotRoute(
   request: Request,
@@ -110,6 +88,7 @@ export async function handleCopilotRoute(
     }
 
     const venue = venueFromPayload(payload, url);
+    const role = String((payload as { role?: string }).role ?? "staff");
     const body = (await request.json().catch(() => ({}))) as {
       message?: string;
       text?: string;
@@ -131,10 +110,19 @@ export async function handleCopilotRoute(
       /* Grounding is best-effort; the agent can still act. */
     }
 
-    // Answer live-metric questions directly from data (accurate, no round-trip).
-    const direct = directOpsAnswer(message, context);
-    if (direct) {
-      return json({ reply: direct, data: { context } });
+    // Runtime ops tools (reprice, restock/86, add item, bill, draft campaign,
+    // sales report) — executes actions. Deterministic-first, LLM-agnostic router.
+    const toolResult = await runCopilotTools(message, { venue, env, role });
+    if (toolResult) {
+      return json({
+        reply: toolResult.reply,
+        data: {
+          context,
+          tool: toolResult.tool,
+          mutated: toolResult.mutated ?? false,
+          result: toolResult.data ?? null,
+        },
+      });
     }
 
     const agentMessage = shouldPreserveOriginalMessage(message)
