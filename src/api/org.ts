@@ -119,5 +119,83 @@ export async function handleOrgRoute(
     return json({ merchants });
   }
 
+  // Reseller admin: my own org (for the branding editor).
+  if (url.pathname === "/api/org/me" && request.method === "GET") {
+    const payload = await requireAuth(request, env);
+    if (!payload) return json({ error: "unauthorized" }, 401);
+    const orgId = typeof payload.org === "string" ? payload.org : null;
+    if (!orgId) return json({ error: "not a reseller account" }, 403);
+    const [org] = await sql`
+      SELECT id, name, slug, branding FROM organizations WHERE id = ${orgId} LIMIT 1`;
+    return json({ org: org ?? null });
+  }
+
+  // Reseller admin: onboard a merchant (venue + owner login) under my org.
+  if (url.pathname === "/api/org/merchants" && request.method === "POST") {
+    const payload = await requireAuth(request, env);
+    if (!payload) return json({ error: "unauthorized" }, 401);
+    const orgId = typeof payload.org === "string" ? payload.org : null;
+    if (!orgId) return json({ error: "not a reseller account" }, 403);
+    const body = (await request.json().catch(() => ({}))) as {
+      businessName?: string;
+      email?: string;
+      password?: string;
+      phone?: string;
+    };
+    const businessName = String(body.businessName ?? "").trim();
+    const email = String(body.email ?? "").trim().toLowerCase();
+    const password = String(body.password ?? "");
+    if (!businessName || !email.includes("@") || password.length < 8) {
+      return json(
+        { error: "businessName, a valid email and password (8+) are required" },
+        400,
+      );
+    }
+    const [existing] = await sql`
+      SELECT id FROM app_users WHERE lower(email) = ${email} LIMIT 1`;
+    if (existing) return json({ error: "email already exists" }, 409);
+    const venueId = `v_${crypto.randomUUID().slice(0, 8)}`;
+    const code =
+      businessName.replace(/[^A-Za-z]/g, "").slice(0, 3).toUpperCase() || "VEN";
+    await sql`
+      INSERT INTO venues (id, name, code, active, org_id)
+      VALUES (${venueId}, ${businessName}, ${code}, true, ${orgId})`;
+    const hash = await hashPassword(password);
+    await sql`
+      INSERT INTO app_users (email, password_hash, name, phone, venue_id, role, plan, org_id)
+      VALUES (${email}, ${hash}, ${businessName}, ${body.phone?.trim() || null},
+              ${venueId}, 'merchant', 'free', ${orgId})`;
+    return json({ merchant: { venue: venueId, name: businessName, email } }, 201);
+  }
+
+  // Reseller admin: update my org branding (logo / colour / powered-by).
+  if (url.pathname === "/api/org" && request.method === "PUT") {
+    const payload = await requireAuth(request, env);
+    if (!payload) return json({ error: "unauthorized" }, 401);
+    const orgId = typeof payload.org === "string" ? payload.org : null;
+    if (!orgId) return json({ error: "not a reseller account" }, 403);
+    const body = (await request.json().catch(() => ({}))) as {
+      logoUrl?: string;
+      primaryColor?: string;
+      poweredBy?: string;
+    };
+    if (body.logoUrl && body.logoUrl.length > 512 * 1024) {
+      return json({ error: "logo too large (max 512KB)" }, 413);
+    }
+    const [org] = await sql`
+      SELECT branding FROM organizations WHERE id = ${orgId} LIMIT 1`;
+    if (!org) return json({ error: "not found" }, 404);
+    const branding = {
+      ...((org.branding ?? {}) as Record<string, unknown>),
+      ...(body.logoUrl !== undefined ? { logoUrl: body.logoUrl } : {}),
+      ...(body.primaryColor !== undefined
+        ? { primaryColor: body.primaryColor }
+        : {}),
+      ...(body.poweredBy !== undefined ? { poweredBy: body.poweredBy } : {}),
+    };
+    await sql`UPDATE organizations SET branding = ${sql.json(branding)} WHERE id = ${orgId}`;
+    return json({ ok: true });
+  }
+
   return null;
 }

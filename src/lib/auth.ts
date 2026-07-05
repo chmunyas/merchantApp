@@ -6,7 +6,12 @@ import {
   loadMerchantSnapshot,
 } from "@/lib/merchant-dashboard";
 
-export type UserRole = "admin" | "merchant" | "staff" | "customer";
+export type UserRole =
+  | "admin"
+  | "merchant"
+  | "staff"
+  | "customer"
+  | "reseller_admin";
 
 export type AuthUser = {
   id: string;
@@ -218,6 +223,8 @@ export function getDefaultRouteForRole(role: UserRole) {
       return "/merchant";
     case "merchant":
       return "/dashboard";
+    case "reseller_admin":
+      return "/reseller";
     default:
       return "/";
   }

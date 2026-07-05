@@ -13,6 +13,7 @@ import { Route as TableRouteImport } from './routes/table'
 import { Route as StaffLoginRouteImport } from './routes/staff-login'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as ResetPinRouteImport } from './routes/reset-pin'
+import { Route as ResellerRouteImport } from './routes/reseller'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as PaymentsRouteImport } from './routes/payments'
 import { Route as PayRouteImport } from './routes/pay'
@@ -72,6 +73,11 @@ const SignInRoute = SignInRouteImport.update({
 const ResetPinRoute = ResetPinRouteImport.update({
   id: '/reset-pin',
   path: '/reset-pin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResellerRoute = ResellerRouteImport.update({
+  id: '/reseller',
+  path: '/reseller',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ReportsRoute = ReportsRouteImport.update({
@@ -287,6 +293,7 @@ export interface FileRoutesByFullPath {
   '/pay': typeof PayRoute
   '/payments': typeof PaymentsRoute
   '/reports': typeof ReportsRoute
+  '/reseller': typeof ResellerRoute
   '/reset-pin': typeof ResetPinRoute
   '/sign-in': typeof SignInRoute
   '/staff-login': typeof StaffLoginRoute
@@ -331,6 +338,7 @@ export interface FileRoutesByTo {
   '/pay': typeof PayRoute
   '/payments': typeof PaymentsRoute
   '/reports': typeof ReportsRoute
+  '/reseller': typeof ResellerRoute
   '/reset-pin': typeof ResetPinRoute
   '/sign-in': typeof SignInRoute
   '/staff-login': typeof StaffLoginRoute
@@ -378,6 +386,7 @@ export interface FileRoutesById {
   '/pay': typeof PayRoute
   '/payments': typeof PaymentsRoute
   '/reports': typeof ReportsRoute
+  '/reseller': typeof ResellerRoute
   '/reset-pin': typeof ResetPinRoute
   '/sign-in': typeof SignInRoute
   '/staff-login': typeof StaffLoginRoute
@@ -426,6 +435,7 @@ export interface FileRouteTypes {
     | '/pay'
     | '/payments'
     | '/reports'
+    | '/reseller'
     | '/reset-pin'
     | '/sign-in'
     | '/staff-login'
@@ -470,6 +480,7 @@ export interface FileRouteTypes {
     | '/pay'
     | '/payments'
     | '/reports'
+    | '/reseller'
     | '/reset-pin'
     | '/sign-in'
     | '/staff-login'
@@ -516,6 +527,7 @@ export interface FileRouteTypes {
     | '/pay'
     | '/payments'
     | '/reports'
+    | '/reseller'
     | '/reset-pin'
     | '/sign-in'
     | '/staff-login'
@@ -563,6 +575,7 @@ export interface RootRouteChildren {
   PayRoute: typeof PayRoute
   PaymentsRoute: typeof PaymentsRoute
   ReportsRoute: typeof ReportsRoute
+  ResellerRoute: typeof ResellerRoute
   ResetPinRoute: typeof ResetPinRoute
   SignInRoute: typeof SignInRoute
   StaffLoginRoute: typeof StaffLoginRoute
@@ -599,6 +612,13 @@ declare module '@tanstack/react-router' {
       path: '/reset-pin'
       fullPath: '/reset-pin'
       preLoaderRoute: typeof ResetPinRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reseller': {
+      id: '/reseller'
+      path: '/reseller'
+      fullPath: '/reseller'
+      preLoaderRoute: typeof ResellerRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reports': {
@@ -976,6 +996,7 @@ const rootRouteChildren: RootRouteChildren = {
   PayRoute: PayRoute,
   PaymentsRoute: PaymentsRoute,
   ReportsRoute: ReportsRoute,
+  ResellerRoute: ResellerRoute,
   ResetPinRoute: ResetPinRoute,
   SignInRoute: SignInRoute,
   StaffLoginRoute: StaffLoginRoute,
