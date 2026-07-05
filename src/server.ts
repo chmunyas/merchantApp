@@ -8,6 +8,7 @@ import { withRequestSql } from "./lib/db";
 import { enforceRateLimit } from "./lib/rate-limit";
 import { handleBackendRoute } from "./api/backend";
 import { handleStateRoute } from "./api/state";
+import { handleBrandingRoute } from "./api/branding";
 import { handleWhatsappRoute } from "./api/whatsapp";
 import { handleTelegramRoute } from "./api/telegram";
 import { handleChannelRoute } from "./api/channels";
@@ -153,6 +154,10 @@ export default {
           // Shared merchant state (localStorage <-> Postgres sync)
           const stateResponse = await handleStateRoute(request, env);
           if (stateResponse) return stateResponse;
+
+          // Per-tenant branding (merchant logo/colors + reseller co-brand)
+          const brandingResponse = await handleBrandingRoute(request, env);
+          if (brandingResponse) return brandingResponse;
 
           // WhatsApp AI agent (Cloud API webhook + simulator)
           const whatsappResponse = await handleWhatsappRoute(request, env);

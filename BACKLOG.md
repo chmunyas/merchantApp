@@ -5,14 +5,19 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
 `SECURITY.md` for the security posture and `.claude/` for the domain skills/agents.
 
 ## Security & production readiness
-- **P1** Rotate the default admin password (`pesaswap-admin`) and `JWT_SECRET`;
-  set `AUTH_REQUIRE_LOGIN=1` in production (disables the anonymous session
-  bootstrap). Optionally `AUTH_DISABLE_SIGNUP=1`.
-- **P1** Full **read isolation**: require auth on venue-scoped GETs so an
-  unauthenticated caller can't read another tenant via `?venue=X`. (Writes are
-  already JWT-pinned via `resolveVenue`.)
-- **P1** Real **Cloudflare deploy** (`wrangler deploy` + Hyperdrive binding);
-  `:8787` today is local workerd emulation.
+- ✅ **DONE** Live **Cloudflare deploy** — Worker at
+  `pesaswap-merchant-app.pesaswap.workers.dev` via Hyperdrive → Neon Postgres;
+  strong `ADMIN_PASSWORD` + `JWT_SECRET` set; `AUTH_REQUIRE_LOGIN=1` on.
+- ✅ **DONE (partial)** Sensitive read isolation — `requireAuth` on
+  `/api/contacts`, `/api/invoices(+stats)`, `/api/whatsapp/conversations|messages`;
+  non-admin tokens pinned to their venue.
+- **P1** Finish **read gating** — `requireAuth` on the remaining venue GETs
+  (`/api/state`, `/api/dlq`, `/api/analytics/agent`, `/api/kb`, `/api/recurring`)
+  and move `/api/state` + invoice-activity client calls to `authFetch`.
+- **P1** **Provider webhook signatures** — verify `X-Hub-Signature-256` (WhatsApp)
+  + Telegram/Instagram/SMS; require a shared secret on
+  `/api/whatsapp/bridge/inbound` and `/api/invoicing/run` (Alert 7).
+- **P2** Tighten **CORS** from `*` to the app origin once on a fixed domain.
 - **P2** Rate limiting: per-account (not just per-IP) limits, WAF/bot rules, and a
   CAPTCHA on signup.
 - **P2** **APM / error tracking** (e.g. Sentry) + uptime + alerting (only basic

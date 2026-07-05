@@ -6,7 +6,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useAuth } from "@/lib/auth";
+import { authFetch, useAuth } from "@/lib/auth";
 import {
   createTableQrValue,
   ensureMerchantDemoData,
@@ -144,10 +144,41 @@ function DashboardSettingsPage() {
     active: true,
   });
   const qrRefs = useRef<Record<number, HTMLCanvasElement | null>>({});
+  const logoInputRef = useRef<HTMLInputElement | null>(null);
+  const [savingBrand, setSavingBrand] = useState(false);
 
   useEffect(() => {
     generateDemoData();
     setSnapshot(loadMerchantSnapshot());
+    // Load server-persisted branding (logo / colour / name) for this merchant.
+    authFetch("/api/branding")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        const b = data?.branding;
+        if (!b) return;
+        setSnapshot((prev) =>
+          prev
+            ? {
+                ...prev,
+                settings: {
+                  ...prev.settings,
+                  businessProfile: {
+                    ...prev.settings.businessProfile,
+                    name: b.businessName ?? prev.settings.businessProfile.name,
+                    logoUrl: b.logoUrl ?? prev.settings.businessProfile.logoUrl,
+                  },
+                  branding: {
+                    ...prev.settings.branding,
+                    logoUrl: b.logoUrl ?? prev.settings.branding.logoUrl,
+                    primaryColor:
+                      b.primaryColor ?? prev.settings.branding.primaryColor,
+                  },
+                },
+              }
+            : prev,
+        );
+      })
+      .catch(() => {});
   }, []);
 
   const tables = useMemo(() => snapshot?.tables ?? [], [snapshot]);
@@ -161,6 +192,46 @@ function DashboardSettingsPage() {
     const nextSettings = updater(snapshot.settings);
     saveMerchantSettings(nextSettings);
     setSnapshot({ ...snapshot, settings: nextSettings });
+  }
+
+  function handleLogoUpload(file: File | undefined) {
+    if (!file) return;
+    if (file.size > 512 * 1024) {
+      toast.error("Logo must be under 512KB");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result);
+      updateSettings((settings) => ({
+        ...settings,
+        businessProfile: { ...settings.businessProfile, logoUrl: dataUrl },
+        branding: { ...settings.branding, logoUrl: dataUrl },
+      }));
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function saveBranding() {
+    if (!snapshot) return;
+    setSavingBrand(true);
+    try {
+      const res = await authFetch("/api/branding", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          businessName: snapshot.settings.businessProfile.name,
+          logoUrl: snapshot.settings.branding.logoUrl || undefined,
+          primaryColor: snapshot.settings.branding.primaryColor || undefined,
+        }),
+      });
+      if (res.ok) toast.success("Branding saved");
+      else toast.error("Could not save branding");
+    } catch {
+      toast.error("Could not save branding");
+    } finally {
+      setSavingBrand(false);
+    }
   }
 
   function downloadQr(tableNumber: number) {
@@ -268,8 +339,51 @@ function DashboardSettingsPage() {
               placeholder="Phone"
             />
           </div>
-          <div className="mt-4 rounded-2xl border border-dashed border-border bg-slate-50 p-5 text-sm text-muted-foreground">
-            Logo upload placeholder
+          <div className="mt-4 space-y-3">
+            <label className="block text-sm font-medium">Business logo</label>
+            <div className="flex items-center gap-4">
+              <div className="flex size-16 items-center justify-center overflow-hidden rounded-xl border border-border bg-slate-50">
+                {snapshot.settings.businessProfile.logoUrl ? (
+                  <img
+                    src={snapshot.settings.businessProfile.logoUrl}
+                    alt="Business logo"
+                    className="size-full object-contain"
+                  />
+                ) : (
+                  <span className="text-xs text-muted-foreground">No logo</span>
+                )}
+              </div>
+              <input
+                ref={logoInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                className="hidden"
+                onChange={(e) => handleLogoUpload(e.target.files?.[0])}
+              />
+              <Button
+                variant="outline"
+                onClick={() => logoInputRef.current?.click()}
+              >
+                Upload logo
+              </Button>
+              {snapshot.settings.businessProfile.logoUrl ? (
+                <Button
+                  variant="ghost"
+                  onClick={() =>
+                    updateSettings((s) => ({
+                      ...s,
+                      businessProfile: { ...s.businessProfile, logoUrl: "" },
+                      branding: { ...s.branding, logoUrl: "" },
+                    }))
+                  }
+                >
+                  Remove
+                </Button>
+              ) : null}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              PNG, JPG, SVG or WebP · up to 512KB
+            </p>
           </div>
         </div>
 
@@ -291,9 +405,32 @@ function DashboardSettingsPage() {
               }
               className="h-12 w-24 rounded-xl border border-border"
             />
-            <div className="rounded-2xl border border-dashed border-border p-5 text-sm text-muted-foreground">
-              Logo upload placeholder
+            <div className="rounded-2xl border border-border p-4">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Preview
+              </p>
+              <div
+                className="mt-2 flex items-center gap-3 rounded-xl p-3"
+                style={{
+                  backgroundColor:
+                    snapshot.settings.branding.primaryColor || "#2563eb",
+                }}
+              >
+                {snapshot.settings.branding.logoUrl ? (
+                  <img
+                    src={snapshot.settings.branding.logoUrl}
+                    alt="Logo"
+                    className="size-8 rounded bg-white object-contain p-0.5"
+                  />
+                ) : null}
+                <span className="font-semibold text-white">
+                  {snapshot.settings.businessProfile.name || "Your business"}
+                </span>
+              </div>
             </div>
+            <Button onClick={saveBranding} disabled={savingBrand}>
+              {savingBrand ? "Saving…" : "Save branding"}
+            </Button>
           </div>
         </div>
       </div>
