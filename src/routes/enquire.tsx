@@ -3,22 +3,17 @@ import { CheckCircle2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import type { Enquiry } from "@/components/merchant/features/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   ensureMerchantDemoData,
-  saveMerchantEnquiries,
+  getCurrentVenueId,
 } from "@/lib/merchant-dashboard";
 
 export const Route = createFileRoute("/enquire")({
   component: EnquirePage,
 });
-
-function createId(prefix: string) {
-  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
-}
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -35,28 +30,40 @@ function EnquirePage() {
   const [covers, setCovers] = useState(2);
   const [notes, setNotes] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!customerName.trim()) {
       toast.error("Please enter your name.");
       return;
     }
-    const enquiry: Enquiry = {
-      id: createId("enq"),
-      customerName: customerName.trim(),
-      phone: phone.trim(),
-      date,
-      time,
-      covers,
-      notes: notes.trim() || undefined,
-      status: "new",
-      source: "web",
-      createdAt: new Date().toISOString(),
-    };
-    const current = ensureMerchantDemoData().enquiries;
-    saveMerchantEnquiries([enquiry, ...current]);
-    setSubmitted(true);
-    toast.success("Request sent!");
+    setSubmitting(true);
+    try {
+      const res = await fetch(
+        `/api/enquiries?venue=${encodeURIComponent(getCurrentVenueId())}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            customerName: customerName.trim(),
+            phone: phone.trim(),
+            covers,
+            date,
+            time,
+            notes: notes.trim() || undefined,
+          }),
+        },
+      );
+      if (!res.ok) throw new Error("failed");
+      setSubmitted(true);
+      toast.success("Request sent!");
+    } catch {
+      toast.error(
+        "Couldn't send your request. Check your connection and try again.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   if (submitted) {
@@ -130,8 +137,13 @@ function EnquirePage() {
             placeholder="Occasion, seating preference..."
           />
         </Field>
-        <Button type="button" className="w-full" onClick={handleSubmit}>
-          Request booking
+        <Button
+          type="button"
+          className="w-full"
+          onClick={handleSubmit}
+          disabled={submitting}
+        >
+          {submitting ? "Sending…" : "Request booking"}
         </Button>
       </div>
     </div>

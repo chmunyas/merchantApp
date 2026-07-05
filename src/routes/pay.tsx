@@ -48,7 +48,10 @@ function PayPage() {
   const [customerPhone, setCustomerPhone] = useState("");
   const [paymentId, setPaymentId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
+  const [linkLoading, setLinkLoading] = useState(false);
+  const [linkError, setLinkError] = useState(false);
   const startTimeRef = useRef<number>(0);
+  const pendingInvoiceRef = useRef<string | null>(null);
 
   // Preload HyperLoader on mount for faster checkout
   useEffect(() => {
@@ -70,12 +73,48 @@ function PayPage() {
         // Invalid QR data
       }
     }
+    // Short invoice pay link (/pay?i=INV-XXX) — load the amount by number.
+    const invoiceNo = params.get("i");
+    if (invoiceNo) {
+      void loadInvoice(invoiceNo);
+    }
+
     // Check for return from payment redirect
     const status = params.get("status");
     if (status === "complete") {
       setState("success");
     }
   }, []);
+
+  // Resolve a short pay link to its amount + merchant. Surfaces a loading state
+  // while fetching and a clear error (with retry) instead of failing silently.
+  async function loadInvoice(number: string) {
+    pendingInvoiceRef.current = number;
+    setLinkError(false);
+    setLinkLoading(true);
+    try {
+      const res = await fetch(
+        `/api/invoices/payinfo?number=${encodeURIComponent(number)}`,
+      );
+      if (!res.ok) throw new Error("not found");
+      const data = (await res.json()) as PaymentData & { status?: string };
+      setPaymentData({
+        till: data.till,
+        amount: data.amount,
+        merchant: data.merchant,
+      });
+      if (data.status === "paid") {
+        setState("success");
+      } else {
+        setState("scanned");
+        startTimeRef.current = Date.now();
+      }
+    } catch {
+      setLinkError(true);
+    } finally {
+      setLinkLoading(false);
+    }
+  }
 
   function confirmPayment(phone: string) {
     setCustomerPhone(phone);
@@ -164,7 +203,24 @@ function PayPage() {
           </div>
         </div>
 
-        {state === "idle" && <IdleState onScan={simulateScan} />}
+        {linkLoading && <InvoiceLoadingState />}
+        {linkError && (
+          <InvoiceErrorState
+            number={pendingInvoiceRef.current}
+            onRetry={() => {
+              if (pendingInvoiceRef.current) {
+                void loadInvoice(pendingInvoiceRef.current);
+              }
+            }}
+            onCancel={() => {
+              setLinkError(false);
+              reset();
+            }}
+          />
+        )}
+        {state === "idle" && !linkLoading && !linkError && (
+          <IdleState onScan={simulateScan} />
+        )}
         {state === "scanned" && paymentData && (
           <ScannedState data={paymentData} onConfirm={confirmPayment} onCancel={reset} />
         )}
@@ -190,6 +246,58 @@ function PayPage() {
             onDone={reset}
           />
         )}
+      </div>
+    </div>
+  );
+}
+
+function InvoiceLoadingState() {
+  return (
+    <div className="rounded-3xl border border-border bg-card p-10 text-center">
+      <div className="mx-auto mb-4 size-10 animate-spin rounded-full border-2 border-muted border-t-foreground" />
+      <p className="text-sm font-semibold">Loading invoice…</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Fetching the amount and merchant details.
+      </p>
+    </div>
+  );
+}
+
+function InvoiceErrorState({
+  number,
+  onRetry,
+  onCancel,
+}: {
+  number: string | null;
+  onRetry: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="rounded-3xl border border-border bg-card p-10 text-center">
+      <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-red-500/10">
+        <AlertCircle className="size-6 text-red-500" />
+      </div>
+      <p className="text-sm font-semibold">We couldn&apos;t load this invoice</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        {number
+          ? `Invoice ${number} may have expired, been paid, or the link is incorrect.`
+          : "This payment link looks incorrect."}
+      </p>
+      <div className="mt-5 flex gap-2">
+        <button
+          type="button"
+          onClick={onRetry}
+          className="flex-1 rounded-xl bg-foreground py-2.5 text-xs font-semibold text-background"
+        >
+          Try again
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="flex-1 rounded-xl border border-border py-2.5 text-xs font-semibold"
+        >
+          Enter manually
+        </button>
       </div>
     </div>
   );
@@ -248,6 +356,7 @@ function IdleState({ onScan }: { onScan: () => void }) {
               value={manualTill}
               onChange={(e) => setManualTill(e.target.value.replace(/[^0-9]/g, "").slice(0, 7))}
               placeholder="e.g. 247365"
+              aria-label="Till or Paybill number"
               className="w-full bg-transparent text-lg font-mono font-bold outline-none mt-0.5"
             />
           </div>
@@ -258,6 +367,7 @@ function IdleState({ onScan }: { onScan: () => void }) {
               value={manualAmount}
               onChange={(e) => setManualAmount(e.target.value.replace(/[^0-9.]/g, ""))}
               placeholder="0"
+              aria-label="Amount in Kenyan shillings"
               className="w-full bg-transparent text-2xl font-mono font-bold outline-none mt-0.5"
             />
           </div>
@@ -344,6 +454,7 @@ function ScannedState({ data, onConfirm, onCancel }: { data: PaymentData; onConf
             value={phone}
             onChange={(e) => setPhone(e.target.value.replace(/[^0-9]/g, "").slice(0, 9))}
             placeholder="7XX XXX XXX"
+            aria-label="Your M-Pesa phone number"
             className="flex-1 rounded-xl border border-border bg-background px-4 py-3 text-base font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500"
           />
         </div>

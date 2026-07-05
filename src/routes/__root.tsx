@@ -13,7 +13,10 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { AuthProvider } from "@/components/auth/AuthProvider";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ChatWidget } from "@/components/omni/ChatWidget";
+import { InstallBanner } from "@/components/InstallBanner";
 import { useEffect } from "react";
+import { toast } from "sonner";
 
 function NotFoundComponent() {
   return (
@@ -28,7 +31,7 @@ function NotFoundComponent() {
           to="/"
           className="mt-6 inline-flex items-center justify-center rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background"
         >
-          Back to dashboard
+          Back to home
         </Link>
       </div>
     </div>
@@ -61,7 +64,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     head: () => ({
       meta: [
         { charSet: "utf-8" },
-        { name: "viewport", content: "width=device-width, initial-scale=1" },
+        {
+          name: "viewport",
+          content: "width=device-width, initial-scale=1, viewport-fit=cover",
+        },
         { name: "application-name", content: "PesaSwap" },
         { name: "apple-mobile-web-app-title", content: "PesaSwap" },
         { name: "theme-color", content: "#0f172a" },
@@ -137,18 +143,61 @@ function RootComponent() {
   const pathname = router.state.location.pathname;
 
   useEffect(() => {
-    if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+      return;
     }
+    const promptUpdate = (worker: ServiceWorker) => {
+      toast("Update available", {
+        description: "A new version of PesaSwap is ready.",
+        action: {
+          label: "Refresh",
+          onClick: () => worker.postMessage({ type: "SKIP_WAITING" }),
+        },
+        duration: Infinity,
+      });
+    };
+    navigator.serviceWorker
+      .register("/sw.js")
+      .then((registration) => {
+        if (registration.waiting) promptUpdate(registration.waiting);
+        registration.addEventListener("updatefound", () => {
+          const installing = registration.installing;
+          if (!installing) return;
+          installing.addEventListener("statechange", () => {
+            if (
+              installing.state === "installed" &&
+              navigator.serviceWorker.controller
+            ) {
+              promptUpdate(installing);
+            }
+          });
+        });
+      })
+      .catch(() => {});
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (reloaded) return;
+      reloaded = true;
+      window.location.reload();
+    });
   }, []);
   const isStandaloneLayout =
     pathname.startsWith("/dashboard") ||
     pathname.startsWith("/pay") ||
     pathname.startsWith("/table") ||
     pathname.startsWith("/enquire") ||
+    pathname.startsWith("/get-started") ||
     pathname.startsWith("/admin") ||
     pathname.startsWith("/sign-in") ||
     pathname.startsWith("/staff-login");
+
+  // Customer touchpoints get the in-app chat widget (seamless omnichannel).
+  const isCustomerFacing =
+    pathname.startsWith("/pay") ||
+    pathname.startsWith("/table") ||
+    pathname.startsWith("/book") ||
+    pathname.startsWith("/enquire") ||
+    pathname.startsWith("/merchant");
 
   if (isStandaloneLayout) {
     return (
@@ -158,6 +207,8 @@ function RootComponent() {
             <div className="min-h-screen bg-background text-foreground">
               <Outlet />
               <Toaster position="top-right" richColors />
+              {isCustomerFacing && <ChatWidget />}
+              <InstallBanner />
             </div>
           </ErrorBoundary>
         </AuthProvider>
@@ -175,6 +226,8 @@ function RootComponent() {
               <Outlet />
             </main>
             <Toaster position="top-right" richColors />
+            {isCustomerFacing && <ChatWidget />}
+            <InstallBanner />
           </div>
         </ErrorBoundary>
       </AuthProvider>

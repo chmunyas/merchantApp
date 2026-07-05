@@ -12,5 +12,11 @@ export default defineConfig({
   tanstackStart: {
     server: { entry: "server" },
   },
+  vite: {
+    server: {
+      // Allow the public Cloudflare quick-tunnel host so pay links work on phones.
+      allowedHosts: [".trycloudflare.com"],
+    },
+  },
 });
 

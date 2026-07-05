@@ -22,6 +22,7 @@ import {
   loadMerchantSnapshot,
   type MerchantSnapshot,
 } from "@/lib/merchant-dashboard";
+import { AgentAnalyticsCard } from "@/components/omni/AgentAnalyticsCard";
 
 export const Route = createFileRoute("/dashboard/analytics")({
   component: DashboardAnalyticsPage,
@@ -247,8 +248,7 @@ function DashboardAnalyticsPage() {
         <div>
           <h3 className="text-2xl font-semibold">Operational analytics</h3>
           <p className="text-sm text-muted-foreground">
-            Revenue patterns, customer segments, and service efficiency.
-          </p>
+            Revenue patterns, customer segments, and service efficiency.          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <select
@@ -283,6 +283,8 @@ function DashboardAnalyticsPage() {
           </select>
         </div>
       </div>
+
+      <AgentAnalyticsCard />
 
       <div className="grid gap-6 xl:grid-cols-[1.65fr_1fr]">
         <div className="rounded-2xl border border-border bg-card p-6">

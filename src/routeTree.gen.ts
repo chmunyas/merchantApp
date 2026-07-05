@@ -17,6 +17,7 @@ import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as PaymentsRouteImport } from './routes/payments'
 import { Route as PayRouteImport } from './routes/pay'
 import { Route as MerchantRouteImport } from './routes/merchant'
+import { Route as GetStartedRouteImport } from './routes/get-started'
 import { Route as EnquireRouteImport } from './routes/enquire'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as ConverterRouteImport } from './routes/converter'
@@ -27,6 +28,8 @@ import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
 import { Route as TableTableIdRouteImport } from './routes/table.$tableId'
 import { Route as RetailStoreIdRouteImport } from './routes/retail.$storeId'
+import { Route as DashboardWhatsappRouteImport } from './routes/dashboard/whatsapp'
+import { Route as DashboardTelegramRouteImport } from './routes/dashboard/telegram'
 import { Route as DashboardTablesRouteImport } from './routes/dashboard/tables'
 import { Route as DashboardStaffRouteImport } from './routes/dashboard/staff'
 import { Route as DashboardSettingsRouteImport } from './routes/dashboard/settings'
@@ -36,6 +39,9 @@ import { Route as DashboardRetailRouteImport } from './routes/dashboard/retail'
 import { Route as DashboardPaymentsRouteImport } from './routes/dashboard/payments'
 import { Route as DashboardOrdersRouteImport } from './routes/dashboard/orders'
 import { Route as DashboardMenuRouteImport } from './routes/dashboard/menu'
+import { Route as DashboardKnowledgeRouteImport } from './routes/dashboard/knowledge'
+import { Route as DashboardInvoicesRouteImport } from './routes/dashboard/invoices'
+import { Route as DashboardInboxRouteImport } from './routes/dashboard/inbox'
 import { Route as DashboardFloorplanRouteImport } from './routes/dashboard/floorplan'
 import { Route as DashboardEnquiriesRouteImport } from './routes/dashboard/enquiries'
 import { Route as DashboardDepositsRouteImport } from './routes/dashboard/deposits'
@@ -88,6 +94,11 @@ const MerchantRoute = MerchantRouteImport.update({
   path: '/merchant',
   getParentRoute: () => rootRouteImport,
 } as any)
+const GetStartedRoute = GetStartedRouteImport.update({
+  id: '/get-started',
+  path: '/get-started',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const EnquireRoute = EnquireRouteImport.update({
   id: '/enquire',
   path: '/enquire',
@@ -138,6 +149,16 @@ const RetailStoreIdRoute = RetailStoreIdRouteImport.update({
   path: '/retail/$storeId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DashboardWhatsappRoute = DashboardWhatsappRouteImport.update({
+  id: '/whatsapp',
+  path: '/whatsapp',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardTelegramRoute = DashboardTelegramRouteImport.update({
+  id: '/telegram',
+  path: '/telegram',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardTablesRoute = DashboardTablesRouteImport.update({
   id: '/tables',
   path: '/tables',
@@ -181,6 +202,21 @@ const DashboardOrdersRoute = DashboardOrdersRouteImport.update({
 const DashboardMenuRoute = DashboardMenuRouteImport.update({
   id: '/menu',
   path: '/menu',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardKnowledgeRoute = DashboardKnowledgeRouteImport.update({
+  id: '/knowledge',
+  path: '/knowledge',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardInvoicesRoute = DashboardInvoicesRouteImport.update({
+  id: '/invoices',
+  path: '/invoices',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardInboxRoute = DashboardInboxRouteImport.update({
+  id: '/inbox',
+  path: '/inbox',
   getParentRoute: () => DashboardRoute,
 } as any)
 const DashboardFloorplanRoute = DashboardFloorplanRouteImport.update({
@@ -246,6 +282,7 @@ export interface FileRoutesByFullPath {
   '/converter': typeof ConverterRoute
   '/dashboard': typeof DashboardRouteWithChildren
   '/enquire': typeof EnquireRoute
+  '/get-started': typeof GetStartedRoute
   '/merchant': typeof MerchantRoute
   '/pay': typeof PayRoute
   '/payments': typeof PaymentsRoute
@@ -265,6 +302,9 @@ export interface FileRoutesByFullPath {
   '/dashboard/deposits': typeof DashboardDepositsRoute
   '/dashboard/enquiries': typeof DashboardEnquiriesRoute
   '/dashboard/floorplan': typeof DashboardFloorplanRoute
+  '/dashboard/inbox': typeof DashboardInboxRoute
+  '/dashboard/invoices': typeof DashboardInvoicesRoute
+  '/dashboard/knowledge': typeof DashboardKnowledgeRoute
   '/dashboard/menu': typeof DashboardMenuRoute
   '/dashboard/orders': typeof DashboardOrdersRoute
   '/dashboard/payments': typeof DashboardPaymentsRoute
@@ -274,6 +314,8 @@ export interface FileRoutesByFullPath {
   '/dashboard/settings': typeof DashboardSettingsRoute
   '/dashboard/staff': typeof DashboardStaffRoute
   '/dashboard/tables': typeof DashboardTablesRoute
+  '/dashboard/telegram': typeof DashboardTelegramRoute
+  '/dashboard/whatsapp': typeof DashboardWhatsappRoute
   '/retail/$storeId': typeof RetailStoreIdRoute
   '/table/$tableId': typeof TableTableIdRoute
   '/admin/': typeof AdminIndexRoute
@@ -284,6 +326,7 @@ export interface FileRoutesByTo {
   '/beneficiaries': typeof BeneficiariesRoute
   '/converter': typeof ConverterRoute
   '/enquire': typeof EnquireRoute
+  '/get-started': typeof GetStartedRoute
   '/merchant': typeof MerchantRoute
   '/pay': typeof PayRoute
   '/payments': typeof PaymentsRoute
@@ -303,6 +346,9 @@ export interface FileRoutesByTo {
   '/dashboard/deposits': typeof DashboardDepositsRoute
   '/dashboard/enquiries': typeof DashboardEnquiriesRoute
   '/dashboard/floorplan': typeof DashboardFloorplanRoute
+  '/dashboard/inbox': typeof DashboardInboxRoute
+  '/dashboard/invoices': typeof DashboardInvoicesRoute
+  '/dashboard/knowledge': typeof DashboardKnowledgeRoute
   '/dashboard/menu': typeof DashboardMenuRoute
   '/dashboard/orders': typeof DashboardOrdersRoute
   '/dashboard/payments': typeof DashboardPaymentsRoute
@@ -312,6 +358,8 @@ export interface FileRoutesByTo {
   '/dashboard/settings': typeof DashboardSettingsRoute
   '/dashboard/staff': typeof DashboardStaffRoute
   '/dashboard/tables': typeof DashboardTablesRoute
+  '/dashboard/telegram': typeof DashboardTelegramRoute
+  '/dashboard/whatsapp': typeof DashboardWhatsappRoute
   '/retail/$storeId': typeof RetailStoreIdRoute
   '/table/$tableId': typeof TableTableIdRoute
   '/admin': typeof AdminIndexRoute
@@ -325,6 +373,7 @@ export interface FileRoutesById {
   '/converter': typeof ConverterRoute
   '/dashboard': typeof DashboardRouteWithChildren
   '/enquire': typeof EnquireRoute
+  '/get-started': typeof GetStartedRoute
   '/merchant': typeof MerchantRoute
   '/pay': typeof PayRoute
   '/payments': typeof PaymentsRoute
@@ -344,6 +393,9 @@ export interface FileRoutesById {
   '/dashboard/deposits': typeof DashboardDepositsRoute
   '/dashboard/enquiries': typeof DashboardEnquiriesRoute
   '/dashboard/floorplan': typeof DashboardFloorplanRoute
+  '/dashboard/inbox': typeof DashboardInboxRoute
+  '/dashboard/invoices': typeof DashboardInvoicesRoute
+  '/dashboard/knowledge': typeof DashboardKnowledgeRoute
   '/dashboard/menu': typeof DashboardMenuRoute
   '/dashboard/orders': typeof DashboardOrdersRoute
   '/dashboard/payments': typeof DashboardPaymentsRoute
@@ -353,6 +405,8 @@ export interface FileRoutesById {
   '/dashboard/settings': typeof DashboardSettingsRoute
   '/dashboard/staff': typeof DashboardStaffRoute
   '/dashboard/tables': typeof DashboardTablesRoute
+  '/dashboard/telegram': typeof DashboardTelegramRoute
+  '/dashboard/whatsapp': typeof DashboardWhatsappRoute
   '/retail/$storeId': typeof RetailStoreIdRoute
   '/table/$tableId': typeof TableTableIdRoute
   '/admin/': typeof AdminIndexRoute
@@ -367,6 +421,7 @@ export interface FileRouteTypes {
     | '/converter'
     | '/dashboard'
     | '/enquire'
+    | '/get-started'
     | '/merchant'
     | '/pay'
     | '/payments'
@@ -386,6 +441,9 @@ export interface FileRouteTypes {
     | '/dashboard/deposits'
     | '/dashboard/enquiries'
     | '/dashboard/floorplan'
+    | '/dashboard/inbox'
+    | '/dashboard/invoices'
+    | '/dashboard/knowledge'
     | '/dashboard/menu'
     | '/dashboard/orders'
     | '/dashboard/payments'
@@ -395,6 +453,8 @@ export interface FileRouteTypes {
     | '/dashboard/settings'
     | '/dashboard/staff'
     | '/dashboard/tables'
+    | '/dashboard/telegram'
+    | '/dashboard/whatsapp'
     | '/retail/$storeId'
     | '/table/$tableId'
     | '/admin/'
@@ -405,6 +465,7 @@ export interface FileRouteTypes {
     | '/beneficiaries'
     | '/converter'
     | '/enquire'
+    | '/get-started'
     | '/merchant'
     | '/pay'
     | '/payments'
@@ -424,6 +485,9 @@ export interface FileRouteTypes {
     | '/dashboard/deposits'
     | '/dashboard/enquiries'
     | '/dashboard/floorplan'
+    | '/dashboard/inbox'
+    | '/dashboard/invoices'
+    | '/dashboard/knowledge'
     | '/dashboard/menu'
     | '/dashboard/orders'
     | '/dashboard/payments'
@@ -433,6 +497,8 @@ export interface FileRouteTypes {
     | '/dashboard/settings'
     | '/dashboard/staff'
     | '/dashboard/tables'
+    | '/dashboard/telegram'
+    | '/dashboard/whatsapp'
     | '/retail/$storeId'
     | '/table/$tableId'
     | '/admin'
@@ -445,6 +511,7 @@ export interface FileRouteTypes {
     | '/converter'
     | '/dashboard'
     | '/enquire'
+    | '/get-started'
     | '/merchant'
     | '/pay'
     | '/payments'
@@ -464,6 +531,9 @@ export interface FileRouteTypes {
     | '/dashboard/deposits'
     | '/dashboard/enquiries'
     | '/dashboard/floorplan'
+    | '/dashboard/inbox'
+    | '/dashboard/invoices'
+    | '/dashboard/knowledge'
     | '/dashboard/menu'
     | '/dashboard/orders'
     | '/dashboard/payments'
@@ -473,6 +543,8 @@ export interface FileRouteTypes {
     | '/dashboard/settings'
     | '/dashboard/staff'
     | '/dashboard/tables'
+    | '/dashboard/telegram'
+    | '/dashboard/whatsapp'
     | '/retail/$storeId'
     | '/table/$tableId'
     | '/admin/'
@@ -486,6 +558,7 @@ export interface RootRouteChildren {
   ConverterRoute: typeof ConverterRoute
   DashboardRoute: typeof DashboardRouteWithChildren
   EnquireRoute: typeof EnquireRoute
+  GetStartedRoute: typeof GetStartedRoute
   MerchantRoute: typeof MerchantRoute
   PayRoute: typeof PayRoute
   PaymentsRoute: typeof PaymentsRoute
@@ -554,6 +627,13 @@ declare module '@tanstack/react-router' {
       path: '/merchant'
       fullPath: '/merchant'
       preLoaderRoute: typeof MerchantRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/get-started': {
+      id: '/get-started'
+      path: '/get-started'
+      fullPath: '/get-started'
+      preLoaderRoute: typeof GetStartedRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/enquire': {
@@ -626,6 +706,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RetailStoreIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dashboard/whatsapp': {
+      id: '/dashboard/whatsapp'
+      path: '/whatsapp'
+      fullPath: '/dashboard/whatsapp'
+      preLoaderRoute: typeof DashboardWhatsappRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/telegram': {
+      id: '/dashboard/telegram'
+      path: '/telegram'
+      fullPath: '/dashboard/telegram'
+      preLoaderRoute: typeof DashboardTelegramRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/tables': {
       id: '/dashboard/tables'
       path: '/tables'
@@ -687,6 +781,27 @@ declare module '@tanstack/react-router' {
       path: '/menu'
       fullPath: '/dashboard/menu'
       preLoaderRoute: typeof DashboardMenuRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/knowledge': {
+      id: '/dashboard/knowledge'
+      path: '/knowledge'
+      fullPath: '/dashboard/knowledge'
+      preLoaderRoute: typeof DashboardKnowledgeRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/invoices': {
+      id: '/dashboard/invoices'
+      path: '/invoices'
+      fullPath: '/dashboard/invoices'
+      preLoaderRoute: typeof DashboardInvoicesRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/inbox': {
+      id: '/dashboard/inbox'
+      path: '/inbox'
+      fullPath: '/dashboard/inbox'
+      preLoaderRoute: typeof DashboardInboxRouteImport
       parentRoute: typeof DashboardRoute
     }
     '/dashboard/floorplan': {
@@ -793,6 +908,9 @@ interface DashboardRouteChildren {
   DashboardDepositsRoute: typeof DashboardDepositsRoute
   DashboardEnquiriesRoute: typeof DashboardEnquiriesRoute
   DashboardFloorplanRoute: typeof DashboardFloorplanRoute
+  DashboardInboxRoute: typeof DashboardInboxRoute
+  DashboardInvoicesRoute: typeof DashboardInvoicesRoute
+  DashboardKnowledgeRoute: typeof DashboardKnowledgeRoute
   DashboardMenuRoute: typeof DashboardMenuRoute
   DashboardOrdersRoute: typeof DashboardOrdersRoute
   DashboardPaymentsRoute: typeof DashboardPaymentsRoute
@@ -802,6 +920,8 @@ interface DashboardRouteChildren {
   DashboardSettingsRoute: typeof DashboardSettingsRoute
   DashboardStaffRoute: typeof DashboardStaffRoute
   DashboardTablesRoute: typeof DashboardTablesRoute
+  DashboardTelegramRoute: typeof DashboardTelegramRoute
+  DashboardWhatsappRoute: typeof DashboardWhatsappRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
 }
 
@@ -813,6 +933,9 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardDepositsRoute: DashboardDepositsRoute,
   DashboardEnquiriesRoute: DashboardEnquiriesRoute,
   DashboardFloorplanRoute: DashboardFloorplanRoute,
+  DashboardInboxRoute: DashboardInboxRoute,
+  DashboardInvoicesRoute: DashboardInvoicesRoute,
+  DashboardKnowledgeRoute: DashboardKnowledgeRoute,
   DashboardMenuRoute: DashboardMenuRoute,
   DashboardOrdersRoute: DashboardOrdersRoute,
   DashboardPaymentsRoute: DashboardPaymentsRoute,
@@ -822,6 +945,8 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardSettingsRoute: DashboardSettingsRoute,
   DashboardStaffRoute: DashboardStaffRoute,
   DashboardTablesRoute: DashboardTablesRoute,
+  DashboardTelegramRoute: DashboardTelegramRoute,
+  DashboardWhatsappRoute: DashboardWhatsappRoute,
   DashboardIndexRoute: DashboardIndexRoute,
 }
 
@@ -846,6 +971,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConverterRoute: ConverterRoute,
   DashboardRoute: DashboardRouteWithChildren,
   EnquireRoute: EnquireRoute,
+  GetStartedRoute: GetStartedRoute,
   MerchantRoute: MerchantRoute,
   PayRoute: PayRoute,
   PaymentsRoute: PaymentsRoute,

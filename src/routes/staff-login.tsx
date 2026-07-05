@@ -167,6 +167,7 @@ function StaffLoginPage() {
                     key="del"
                     onClick={removeDigit}
                     disabled={isLocked || pin.length === 0}
+                    aria-label="Delete last digit"
                     className="flex h-[72px] w-[72px] items-center justify-center rounded-2xl text-slate-400 transition hover:bg-slate-800 active:bg-slate-700 disabled:opacity-30"
                   >
                     <Delete className="h-6 w-6" />

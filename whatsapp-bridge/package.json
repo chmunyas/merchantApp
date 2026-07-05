@@ -1,0 +1,17 @@
+{
+  "name": "pesaswap-whatsapp-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Baileys WhatsApp bridge — link a business line by QR and forward messages into the PesaSwap agent pipeline. Session persisted in PostgreSQL.",
+  "main": "index.mjs",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.9",
+    "pg": "^8.13.1",
+    "pino": "^9.5.0",
+    "qrcode": "^1.5.4"
+  }
+}

@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   ensureMerchantDemoData,
+  getCurrentVenueId,
   getNewEnquiries,
   saveMerchantEnquiries,
   saveMerchantReservations,
@@ -78,6 +79,56 @@ function DashboardEnquiriesPage() {
     setTables(snapshot.tables);
     setCombinations(snapshot.tableCombinations);
     setHydrated(true);
+
+    // Pull customer-submitted enquiries (POST /api/enquiries) and merge any new
+    // ones so web requests from the PWA appear here. Local status changes win.
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/enquiries?venue=${encodeURIComponent(getCurrentVenueId())}`,
+        );
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          enquiries?: Array<{
+            id: string;
+            customer_name: string;
+            phone: string | null;
+            covers: number;
+            date: string;
+            time: string;
+            notes: string | null;
+            status: string;
+            source: string;
+            created_at: string;
+          }>;
+        };
+        const rows = data.enquiries ?? [];
+        if (!rows.length) return;
+        setEnquiries((prev) => {
+          const seen = new Set(prev.map((entry) => entry.id));
+          const imported = rows
+            .filter((row) => !seen.has(row.id))
+            .map(
+              (row) =>
+                ({
+                  id: row.id,
+                  customerName: row.customer_name,
+                  phone: row.phone ?? "",
+                  date: new Date(row.date).toISOString().slice(0, 10),
+                  time: row.time,
+                  covers: row.covers,
+                  notes: row.notes ?? undefined,
+                  status: row.status,
+                  source: row.source,
+                  createdAt: new Date(row.created_at).toISOString(),
+                }) as Enquiry,
+            );
+          return imported.length ? [...imported, ...prev] : prev;
+        });
+      } catch {
+        /* offline — local enquiries still shown */
+      }
+    })();
   }, []);
 
   useEffect(() => {

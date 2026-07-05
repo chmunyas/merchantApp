@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Cloud, CloudOff, Send, Sparkles, Users } from "lucide-react";
+import { Cloud, CloudOff, History, MessageSquare, Send, Sparkles, Users, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { getCurrentVenueId } from "@/lib/merchant-dashboard";
+import { authFetch } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/dashboard/contacts")({
@@ -47,6 +48,22 @@ const TIER_STYLES: Record<string, string> = {
   Bronze: "bg-orange-100 text-orange-700",
 };
 
+type TimelineMsg = {
+  direction: "inbound" | "outbound";
+  body: string;
+  channel: string;
+  ai?: boolean;
+  created_at: string;
+};
+
+const CHANNEL_LABEL: Record<string, string> = {
+  whatsapp: "WhatsApp",
+  web: "Web chat",
+  telegram: "Telegram",
+  instagram: "Instagram",
+  sms: "SMS",
+};
+
 function DashboardContactsPage() {
   const venue = useMemo(() => getCurrentVenueId(), []);
   const [health, setHealth] = useState<Health | null>(null);
@@ -61,9 +78,14 @@ function DashboardContactsPage() {
   const [aiReply, setAiReply] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
 
+  const [timelineFor, setTimelineFor] = useState<Contact | null>(null);
+  const [timeline, setTimeline] = useState<TimelineMsg[]>([]);
+  const [timelineChannels, setTimelineChannels] = useState<string[]>([]);
+  const [timelineBusy, setTimelineBusy] = useState(false);
+
   async function loadContacts() {
     try {
-      const res = await fetch(`/api/contacts?venue=${venue}`);
+      const res = await authFetch(`/api/contacts?venue=${venue}`);
       const data = (await res.json()) as { contacts?: Contact[] };
       setContacts(data.contacts ?? []);
     } catch {
@@ -116,7 +138,7 @@ function DashboardContactsPage() {
     setAiBusy(true);
     setAiReply(null);
     try {
-      const res = await fetch(`/api/ai/command?venue=${venue}`, {
+      const res = await authFetch(`/api/ai/command?venue=${venue}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ text: prompt }),
@@ -127,6 +149,32 @@ function DashboardContactsPage() {
       setAiReply("Cloud backend offline.");
     } finally {
       setAiBusy(false);
+    }
+  }
+
+  async function openTimeline(contact: Contact) {
+    if (!contact.phone) {
+      toast.error("This contact has no phone to match conversations.");
+      return;
+    }
+    setTimelineFor(contact);
+    setTimelineBusy(true);
+    setTimeline([]);
+    setTimelineChannels([]);
+    try {
+      const res = await fetch(
+        `/api/timeline?venue=${venue}&phone=${encodeURIComponent(contact.phone)}`,
+      );
+      const data = (await res.json()) as {
+        messages?: TimelineMsg[];
+        channels?: string[];
+      };
+      setTimeline(data.messages ?? []);
+      setTimelineChannels(data.channels ?? []);
+    } catch {
+      setTimeline([]);
+    } finally {
+      setTimelineBusy(false);
     }
   }
 
@@ -272,20 +320,105 @@ function DashboardContactsPage() {
                       </div>
                     ) : null}
                   </div>
-                  <Badge
-                    className={cn(
-                      "hover:opacity-100",
-                      TIER_STYLES[contact.tier] ?? "bg-slate-100 text-slate-600",
-                    )}
-                  >
-                    {contact.tier}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge
+                      className={cn(
+                        "hover:opacity-100",
+                        TIER_STYLES[contact.tier] ?? "bg-slate-100 text-slate-600",
+                      )}
+                    >
+                      {contact.tier}
+                    </Badge>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1"
+                      onClick={() => openTimeline(contact)}
+                    >
+                      <History className="h-3.5 w-3.5" /> History
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             ))
           )}
         </div>
       </div>
+
+      {timelineFor && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setTimelineFor(null)}
+        >
+          <div
+            className="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">
+                  {timelineFor.name}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Cross-channel history
+                  {timelineChannels.length > 0
+                    ? ` · ${timelineChannels.map((c) => CHANNEL_LABEL[c] ?? c).join(", ")}`
+                    : ""}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTimelineFor(null)}
+                className="rounded-full p-1 hover:bg-slate-100"
+                aria-label="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 space-y-2 overflow-y-auto bg-slate-50 p-4">
+              {timelineBusy ? (
+                <p className="py-6 text-center text-sm text-slate-400">
+                  Loading…
+                </p>
+              ) : timeline.length === 0 ? (
+                <p className="py-6 text-center text-sm text-slate-400">
+                  No conversations yet for this contact.
+                </p>
+              ) : (
+                timeline
+                  .slice()
+                  .reverse()
+                  .map((message, index) => (
+                    <div
+                      key={index}
+                      className={
+                        message.direction === "inbound"
+                          ? "flex justify-start"
+                          : "flex justify-end"
+                      }
+                    >
+                      <div
+                        className={cn(
+                          "max-w-[80%] rounded-2xl px-3 py-2 text-sm",
+                          message.direction === "inbound"
+                            ? "bg-white text-slate-800 shadow-sm"
+                            : "bg-emerald-600 text-white",
+                        )}
+                      >
+                        <div className="mb-0.5 flex items-center gap-1 text-[10px] opacity-70">
+                          <MessageSquare className="h-2.5 w-2.5" />
+                          {CHANNEL_LABEL[message.channel] ?? message.channel}
+                        </div>
+                        {message.body}
+                      </div>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

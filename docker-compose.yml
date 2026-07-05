@@ -14,12 +14,30 @@ services:
     environment:
       # Poll for file changes so hot-reload works across the Docker bind mount.
       - CHOKIDAR_USEPOLLING=true
+      # Optional Baileys bridge (QR-login for a WhatsApp Business App number).
+      - WHATSAPP_BRIDGE_URL=http://whatsapp-bridge:8090
       # Cloud backend (Postgres). In production this is a Hyperdrive binding.
       - DATABASE_URL=postgres://pesaswap:pesaswap@postgres:5432/pesaswap
     volumes:
       # Live-reload: mount the source, but keep the image's installed node_modules.
       - .:/app
       - /app/node_modules
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  whatsapp-bridge:
+    build: ./whatsapp-bridge
+    image: pesaswap-whatsapp-bridge:local
+    container_name: pesaswap-whatsapp-bridge
+    environment:
+      - DATABASE_URL=postgres://pesaswap:pesaswap@postgres:5432/pesaswap
+      - APP_INBOUND_URL=http://merchant-app:8080/api/whatsapp/bridge/inbound
+      - APP_BASE_URL=http://merchant-app:8080
+      - BRIDGE_PORT=8090
+      - BRIDGE_VENUE=main
+    ports:
+      - "8090:8090"
     depends_on:
       - postgres
     restart: unless-stopped

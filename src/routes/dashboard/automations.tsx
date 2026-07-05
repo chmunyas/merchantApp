@@ -40,6 +40,7 @@ import {
   saveMerchantMessageLog,
   saveMerchantWorkflows,
 } from "@/lib/merchant-dashboard";
+import { authFetch } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/dashboard/automations")({
@@ -226,7 +227,7 @@ function DashboardAutomationsPage() {
     setCampaignDraft(null);
   }
 
-  function handleSendCampaign(campaign: Campaign) {
+  async function handleSendCampaign(campaign: Campaign) {
     const recipients = getCampaignRecipients(campaign.segment, customers);
     if (recipients.length === 0) {
       toast.error("No contacts in this segment.");
@@ -253,8 +254,38 @@ function DashboardAutomationsPage() {
           : entry,
       ),
     );
-    toast.success(`Sent to ${recipients.length} contact(s).`);
     setActiveTab("activity");
+    // Live dispatch across the channel (best-effort). The localStorage log above
+    // is the demo fallback when the cloud backend is offline.
+    try {
+      const res = await authFetch(`/api/broadcast?venue=${venue}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          venue,
+          segment: campaign.segment,
+          channel: campaign.channel,
+          message: campaign.message,
+        }),
+      });
+      if (res.ok) {
+        const stats = (await res.json()) as {
+          total?: number;
+          sent?: number;
+          simulated?: number;
+        };
+        toast.success(
+          `Broadcast to ${stats.total ?? recipients.length} contact(s)` +
+            (stats.sent
+              ? ` · ${stats.sent} delivered`
+              : " · simulated (no live channel creds)"),
+        );
+      } else {
+        toast.success(`Sent to ${recipients.length} contact(s).`);
+      }
+    } catch {
+      toast.success(`Sent to ${recipients.length} contact(s).`);
+    }
   }
 
   return (

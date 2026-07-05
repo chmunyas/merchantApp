@@ -1,4 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Bot } from "lucide-react";
+import { toast } from "sonner";
 import { useEffect, useMemo, useState } from "react";
 import { CustomerMenuList } from "@/components/merchant/features/customer-menu-list";
 import type {
@@ -23,6 +25,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   ensureMerchantDemoData,
   getActiveMenuSchedules,
+  getCurrentVenueId,
   getCurrentActiveMenuIds,
   getMenuCategoriesByIds,
   getOrderedMerchantCategories,
@@ -33,6 +36,7 @@ import {
   saveMerchantMenus,
   saveMerchantZones,
 } from "@/lib/merchant-dashboard";
+import { authFetch } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/dashboard/menu")({
@@ -178,6 +182,35 @@ function DashboardMenuPage() {
   const [hydrated, setHydrated] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("items");
   const [catalogue, setCatalogue] = useState<CatalogueItem[]>([]);
+  const [syncingMenu, setSyncingMenu] = useState(false);
+
+  async function syncMenuToAgent() {
+    setSyncingMenu(true);
+    try {
+      const venue = getCurrentVenueId();
+      const items = catalogue.map((item) => ({
+        name: item.name,
+        category: item.category,
+        price: item.price,
+        dietary: item.dietary ?? [],
+        available: item.available ?? true,
+      }));
+      const res = await authFetch(`/api/menu/sync?venue=${venue}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ venue, items }),
+      });
+      if (!res.ok) throw new Error("failed");
+      const data = (await res.json()) as { count?: number };
+      toast.success(
+        `Synced ${data.count ?? items.length} items to the AI agent.`,
+      );
+    } catch {
+      toast.error("Could not sync to the agent (cloud backend offline).");
+    } finally {
+      setSyncingMenu(false);
+    }
+  }
   const [menus, setMenus] = useState<Menu[]>([]);
   const [zones, setZones] = useState<Zone[]>([]);
   const [menuSchedules, setMenuSchedules] = useState<MenuSchedule[]>([]);
@@ -502,6 +535,15 @@ function DashboardMenuPage() {
             </div>
           </div>
           <div className="flex flex-wrap gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={syncMenuToAgent}
+              disabled={syncingMenu}
+            >
+              <Bot className="mr-1 h-3.5 w-3.5" />
+              {syncingMenu ? "Syncing…" : "Sync to AI agent"}
+            </Button>
             <Button
               type="button"
               variant="outline"

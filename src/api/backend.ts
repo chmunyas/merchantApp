@@ -1,4 +1,6 @@
 import { getAi, getSql, hasDatabase } from "@/lib/db";
+import { aiChat, activeProvider } from "@/lib/ai-providers";
+import { requireAuth, resolveVenue } from "@/api/auth";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -82,15 +84,18 @@ async function runAiCommand(
       return { reply: `You have ${row.n} contacts.`, data: row };
     }
 
-    const ai = getAi(env);
-    if (ai) {
-      const result = (await ai.run("@cf/meta/llama-3.1-8b-instruct", {
-        messages: [
-          { role: "system", content: "You are a concise restaurant back-office assistant." },
-          { role: "user", content: text },
-        ],
-      })) as { response?: string };
-      return { reply: result?.response ?? "…", via: "workers-ai" };
+    const reply = await aiChat(
+      [
+        {
+          role: "system",
+          content: "You are a concise restaurant back-office assistant.",
+        },
+        { role: "user", content: text },
+      ],
+      env,
+    );
+    if (reply) {
+      return { reply, via: activeProvider(env) };
     }
 
     return {
@@ -108,7 +113,7 @@ export async function handleBackendRoute(
 ): Promise<Response | null> {
   const url = new URL(request.url);
   const path = url.pathname;
-  const venue = url.searchParams.get("venue") ?? "main";
+  const venue = await resolveVenue(request, env, url);
 
   if (path === "/api/health" && request.method === "GET") {
     const sql = getSql(env);
@@ -155,8 +160,53 @@ export async function handleBackendRoute(
   }
 
   if (path === "/api/ai/command" && request.method === "POST") {
+    if (!(await requireAuth(request, env))) {
+      return json({ error: "unauthorized" }, 401);
+    }
     const body = (await request.json()) as { text?: string };
     return json(await runAiCommand(String(body.text ?? ""), venue, env));
+  }
+
+  // Public: customer booking enquiries land here (Postgres-backed, venue-scoped)
+  // so the back office and AI agent see the same requests.
+  if (path === "/api/enquiries") {
+    const sql = getSql(env);
+    if (!sql) return json({ error: "database not configured" }, 503);
+    try {
+      if (request.method === "GET") {
+        const enquiries = await sql`
+          SELECT id, customer_name, phone, covers, date, time, notes,
+                 status, source, created_at
+          FROM enquiries WHERE venue_id = ${venue}
+          ORDER BY created_at DESC LIMIT 200`;
+        return json({ enquiries });
+      }
+      if (request.method === "POST") {
+        const body = (await request.json()) as {
+          venue?: string;
+          customerName?: string;
+          phone?: string;
+          covers?: number;
+          date?: string;
+          time?: string;
+          notes?: string;
+        };
+        if (!body.customerName?.trim()) {
+          return json({ error: "name is required" }, 400);
+        }
+        const [row] = await sql`
+          INSERT INTO enquiries
+            (venue_id, customer_name, phone, covers, date, time, notes, source)
+          VALUES (${body.venue ?? venue}, ${body.customerName.trim()},
+                  ${body.phone?.trim() || null}, ${Number(body.covers ?? 2)},
+                  ${body.date || new Date().toISOString().slice(0, 10)},
+                  ${body.time || "19:00"}, ${body.notes?.trim() || null}, 'web')
+          RETURNING id, created_at`;
+        return json({ id: row.id, created_at: row.created_at }, 201);
+      }
+    } catch (error) {
+      return json({ error: errorMessage(error) }, 500);
+    }
   }
 
   if (path === "/api/memory") {

@@ -62,3 +62,67 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  e2e:
+    name: E2E (PWA → back office)
+    needs: quality
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: pesaswap
+          POSTGRES_PASSWORD: pesaswap
+          POSTGRES_DB: pesaswap
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pesaswap"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://pesaswap:pesaswap@localhost:5432/pesaswap
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Apply database migrations
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+          for f in db/*.sql; do
+            echo "Applying $f"
+            PGPASSWORD=pesaswap psql -h localhost -U pesaswap -d pesaswap -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Start the app
+        run: |
+          npm run dev > dev-server.log 2>&1 &
+          npx --yes wait-on http://localhost:8080/api/health --timeout 120000
+
+      - name: E2E — HTTP flows (PWA → back office)
+        run: npm run test:e2e
+
+      - name: E2E — browser UI
+        run: npm run test:e2e:browser
+
+      - name: Upload E2E artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: |
+            dev-server.log
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore

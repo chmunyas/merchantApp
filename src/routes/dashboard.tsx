@@ -7,6 +7,7 @@ import {
 import {
   Armchair,
   BarChart3,
+  BookOpen,
   BriefcaseBusiness,
   Building2,
   CalendarDays,
@@ -17,9 +18,13 @@ import {
   LayoutDashboard,
   LayoutGrid,
   Menu,
+  MessagesSquare,
+  Receipt,
   Search,
+  Send,
   Settings,
   ShoppingBag,
+  Smartphone,
   Star,
   Users,
   UtensilsCrossed,
@@ -34,12 +39,13 @@ import { UserProfileMenu } from "@/components/auth/UserProfileMenu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { useAuth } from "@/lib/auth";
+import { useAuth, ensureSessionToken } from "@/lib/auth";
 import {
   ensureMerchantDemoData,
   getCurrentVenue,
   getPendingEnquiryCount,
   getVenues,
+  hydrateMerchantState,
   setCurrentVenueId,
   type Venue,
 } from "@/lib/merchant-dashboard";
@@ -77,6 +83,7 @@ const navGroups = [
     label: "Sales",
     items: [
       { to: "/dashboard/payments", label: "Payments", icon: CreditCard },
+      { to: "/dashboard/invoices", label: "Invoices", icon: Receipt },
       { to: "/dashboard/retail", label: "Retail", icon: ShoppingBag },
       { to: "/dashboard/services", label: "Services", icon: BriefcaseBusiness },
     ],
@@ -84,7 +91,9 @@ const navGroups = [
   {
     label: "Engage",
     items: [
+      { to: "/dashboard/inbox", label: "Inbox", icon: MessagesSquare },
       { to: "/dashboard/contacts", label: "Contacts", icon: Contact },
+      { to: "/dashboard/knowledge", label: "Knowledge", icon: BookOpen },
       { to: "/dashboard/automations", label: "Automations", icon: Zap },
       { to: "/dashboard/reviews", label: "Reviews", icon: Star },
     ],
@@ -94,6 +103,8 @@ const navGroups = [
     items: [
       { to: "/dashboard/menu", label: "Menu", icon: UtensilsCrossed },
       { to: "/dashboard/staff", label: "Staff", icon: Users },
+      { to: "/dashboard/whatsapp", label: "WhatsApp", icon: Smartphone },
+      { to: "/dashboard/telegram", label: "Telegram", icon: Send },
       { to: "/dashboard/settings", label: "Settings", icon: Settings },
     ],
   },
@@ -364,7 +375,32 @@ function DashboardShell() {
 function DashboardLayout() {
   return (
     <ProtectedRoute roles={["merchant", "admin"]}>
-      <DashboardShell />
+      <StateHydrator>
+        <DashboardShell />
+      </StateHydrator>
     </ProtectedRoute>
   );
+}
+
+// Pull shared state from Postgres into localStorage before the dashboard renders
+// so the back office and PWA work off the same data. Brief gate on first load.
+function StateHydrator({ children }: { children: React.ReactNode }) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let active = true;
+    Promise.all([ensureSessionToken(), hydrateMerchantState()]).finally(() => {
+      if (active) setReady(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+  if (!ready) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
+        Syncing your workspace…
+      </div>
+    );
+  }
+  return <>{children}</>;
 }

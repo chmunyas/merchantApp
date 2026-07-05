@@ -1,22 +1,35 @@
 // PesaSwap Merchant service worker.
-// Offline-first shell: precache the offline page + icons, network-first for
-// navigations (fresh SSR when online, cached/offline fallback when not), and
-// cache-first for immutable static assets.
-const CACHE = "pesaswap-v1";
+// Offline-first shell: precache the offline page + icons + key route shells,
+// network-first for navigations (fresh SSR when online, cached/offline fallback
+// when not), and cache-first for immutable static assets.
+const CACHE = "pesaswap-v2";
 const PRECACHE = [
   "/offline.html",
   "/manifest.webmanifest",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
 ];
+// Best-effort route shells so these open even fully offline.
+const PRECACHE_ROUTES = ["/", "/pay", "/table", "/enquire", "/get-started"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches
-      .open(CACHE)
-      .then((cache) => cache.addAll(PRECACHE))
-      .then(() => self.skipWaiting()),
+    caches.open(CACHE).then(async (cache) => {
+      await cache.addAll(PRECACHE);
+      await Promise.all(
+        PRECACHE_ROUTES.map((route) => cache.add(route).catch(() => {})),
+      );
+      // Note: no skipWaiting() here — a new version waits so the app can prompt
+      // the user to refresh (see the SKIP_WAITING message handler below).
+    }),
   );
+});
+
+// Let the page activate a waiting update on demand ("Update available" prompt).
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener("activate", (event) => {
@@ -76,5 +89,64 @@ self.addEventListener("fetch", (event) => {
         return response;
       });
     }),
+  );
+});
+
+// --- Web Push: payloadless "tickle" -> fetch the text -> show notification ---
+self.addEventListener("push", (event) => {
+  event.waitUntil(
+    (async () => {
+      let venue = "main";
+      try {
+        const cache = await caches.open("pesaswap-push");
+        const stored = await cache.match("/push-venue");
+        if (stored) venue = (await stored.text()) || "main";
+      } catch {
+        /* default venue */
+      }
+      let title = "PesaSwap";
+      let body = "You have a new notification";
+      try {
+        const res = await fetch(
+          `/api/push/latest?venue=${encodeURIComponent(venue)}`,
+        );
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.title) {
+            title = data.title;
+            body = data.body || body;
+          }
+        }
+      } catch {
+        /* fall back to generic text */
+      }
+      await self.registration.showNotification(title, {
+        body,
+        icon: "/icons/icon-192.png",
+        badge: "/icons/icon-192.png",
+        data: { url: "/dashboard/inbox" },
+      });
+    })(),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(
+    (async () => {
+      const target =
+        (event.notification.data && event.notification.data.url) ||
+        "/dashboard/inbox";
+      const all = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
+      for (const client of all) {
+        if (client.url.includes(target) && "focus" in client) {
+          return client.focus();
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(target);
+    })(),
   );
 });

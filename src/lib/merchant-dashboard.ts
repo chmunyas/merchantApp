@@ -1948,12 +1948,81 @@ export function readStorage<T>(key: string, fallback: T): T {
   }
 }
 
+let suppressStateSync = false;
+
 export function writeStorage<T>(key: string, value: T) {
   if (!canUseStorage()) return;
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
   } catch {
     console.warn("[merchant-dashboard] Storage quota exceeded for key:", key);
+  }
+  // Mirror merchant/retail/services data to Postgres so the PWA and back office
+  // share one source of truth (venue selection + schema markers stay local).
+  if (
+    !suppressStateSync &&
+    key.startsWith("fxengine.") &&
+    !key.endsWith("schemaVersion") &&
+    !key.endsWith("currentVenue")
+  ) {
+    pushMerchantState(key, value);
+  }
+}
+
+// Fire-and-forget push of one localStorage key to the shared Postgres store.
+function pushMerchantState(key: string, value: unknown): void {
+  if (typeof fetch === "undefined") return;
+  const venue = getCurrentVenueId();
+  fetch(`/api/state?venue=${encodeURIComponent(venue)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ key, value }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
+// Seed Postgres from whatever is already in localStorage (first run only).
+function seedMerchantState(): void {
+  if (!canUseStorage()) return;
+  for (let i = 0; i < window.localStorage.length; i += 1) {
+    const key = window.localStorage.key(i);
+    if (
+      !key ||
+      !key.startsWith("fxengine.") ||
+      key.endsWith("schemaVersion") ||
+      key.endsWith("currentVenue")
+    ) {
+      continue;
+    }
+    try {
+      pushMerchantState(key, JSON.parse(window.localStorage.getItem(key) ?? "null"));
+    } catch {
+      /* skip malformed entry */
+    }
+  }
+}
+
+// Pull the shared state from Postgres into localStorage before the dashboard
+// renders, so both surfaces work off the same data. Best-effort + non-blocking.
+export async function hydrateMerchantState(): Promise<void> {
+  if (!canUseStorage() || typeof fetch === "undefined") return;
+  try {
+    const venue = getCurrentVenueId();
+    const res = await fetch(`/api/state?venue=${encodeURIComponent(venue)}`);
+    if (!res.ok) return;
+    const data = (await res.json()) as { state?: Record<string, unknown> };
+    const state = data.state ?? {};
+    const keys = Object.keys(state);
+    if (keys.length === 0) {
+      seedMerchantState();
+      return;
+    }
+    suppressStateSync = true;
+    for (const key of keys) writeStorage(key, state[key]);
+    suppressStateSync = false;
+    window.dispatchEvent(new Event("pesaswap:state-hydrated"));
+  } catch {
+    /* offline — fall back to local data */
   }
 }
 

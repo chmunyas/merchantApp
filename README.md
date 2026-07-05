@@ -1,5 +1,13 @@
 # PesaSwap Merchant App
 
+[![CI](https://github.com/chmunyas/merchantApp/actions/workflows/ci.yml/badge.svg)](https://github.com/chmunyas/merchantApp/actions/workflows/ci.yml)
+
+> **Branch protection (recommended):** in GitHub → Settings → Branches → add a
+> rule for `main` requiring the **CI / quality** and **CI / E2E (PWA → back
+> office)** status checks to pass before merging, so no PR merges with failing
+> typecheck, lint, tests, or E2E flows.
+
+
 A full-stack mobile-first payment platform built with React 19 + TanStack Start + Vite 7, deployed on Cloudflare Workers. Integrates [PesaSwap SDK](https://docs.pesaswap.io) for M-Pesa, card, Apple Pay, and Google Pay payments.
 
 ## ✨ Features
@@ -201,6 +209,202 @@ npx wrangler deploy
 | POST | `/api/webhooks/pesaswap` | Receive payment events |
 | GET | `/api/notifications` | Poll notifications (fallback) |
 | WS | `/api/realtime` | WebSocket for real-time events |
+| GET | `/api/health` | Cloud backend + Postgres health |
+| GET/POST | `/api/contacts` | CRM contacts (PostgreSQL) |
+| POST | `/api/ai/command` | Natural-language ops query |
+| GET/POST | `/api/whatsapp/webhook` | WhatsApp Cloud API verify + receive |
+| POST | `/api/whatsapp/simulate` | Drive the agent locally (no Meta account) |
+| GET | `/api/whatsapp/conversations` | List inbox threads |
+| GET | `/api/whatsapp/messages` | Messages in a thread |
+| POST | `/api/whatsapp/reply` | Staff takes over from the AI |
+| POST | `/api/chat` | In-app web-chat message (channel = web) |
+| GET | `/api/chat/messages` | Web-chat thread for a session |
+| GET | `/api/push/vapid` | Public VAPID key for the PWA |
+| POST | `/api/push/subscribe` | Register a Web Push device |
+| GET | `/api/push/latest` | Latest notification (service worker) |
+| POST | `/api/channels/simulate` | Drive any channel's pipeline (test) |
+| GET/POST | `/api/telegram/webhook` | Telegram Bot API webhook |
+| GET/POST | `/api/instagram/webhook` | Instagram (Meta Graph) webhook |
+| POST | `/api/sms/inbound` | Inbound SMS (Africa's Talking) |
+| POST | `/api/broadcast` | Segmented bulk send across a channel |
+| GET | `/api/broadcast/history` | Broadcast delivery stats |
+| GET | `/api/timeline` | Cross-channel history for a person |
+| GET/POST | `/api/dlq` `/api/dlq/retry` | Failed deliveries + retry |
+| GET/POST/DELETE | `/api/kb` `/api/kb/search` | Knowledge base (RAG) |
+| GET | `/api/analytics/agent` | Agent & channel performance |
+| GET/POST | `/api/sequences` `/api/sequences/run` | Drip sequences |
+| GET | `/api/ai/provider` · POST `/api/ai/transcribe` | AI provider status / Whisper |
+| GET/POST | `/api/invoices` | Omnichannel invoicing + pay link |
+| POST | `/api/a2a` · GET `/.well-known/agent-card.json` | Agent-to-agent (A2A) |
+
+---
+
+## 🌐 Omnichannel core
+
+Every channel flows through **one pipeline** (`src/lib/inbound.ts`) behind a
+uniform `ChannelAdapter` (`src/lib/channels/`, Omni's plugin pattern) — so the
+Inbox, identity graph, and AI agent never special-case a provider. Adding a
+channel is one adapter file + one line in the registry.
+
+- **Channels today:** WhatsApp (Cloud API + Baileys QR bridge), in-app **web
+  chat**, **Telegram** (Bot API — connect at Dashboard → Telegram, long-polling
+  via the bridge locally or a webhook in production), **Instagram** (Meta Graph)
+  and **SMS** (Africa's Talking) — all the same agent, dedupe, escalation and
+  persistence. Each is one adapter file in `src/lib/channels/`; add another with
+  zero pipeline changes.
+- **Web chat widget:** a floating chat on every customer touchpoint (`/pay`,
+  `/table`, `/book`, `/enquire`, `/merchant`) — anonymous session, zero cost,
+  same booking agent.
+- **Identity graph:** `persons` + `platform_identities` collapse the same human
+  across channels (auto-linked by phone) — the **Contacts → History** modal shows
+  one unified WhatsApp + SMS + web + Telegram timeline per customer.
+- **Broadcasts:** segmented (all / gold+ / lapsed), per-recipient personalized
+  (`{{name}}`, `{{venue}}`), dispatched across a channel from **Automations →
+  Campaigns**, with delivery stats — a capability Omni defers.
+- **Inbound dedupe + event log:** `events` table makes webhook delivery
+  idempotent (retries never double-post) and replay-able.
+- **Reliability:** failed sends land in a **dead-letter queue**
+  (`events.status = 'failed'`) with a one-tap retry (`/api/dlq/retry`).
+- **Web Push:** VAPID keys are generated once and persisted in Postgres
+  (`app_settings`); staff tap **Enable alerts** in the Inbox. Override with
+  `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_JWK` in production.
+- **Optional API key:** set `OMNI_API_KEY` to gate machine/admin endpoints
+  (off by default — the app is unaffected).
+
+Channel credentials (all optional — each channel simulates without them):
+`TELEGRAM_BOT_TOKEN`, `INSTAGRAM_TOKEN` / `INSTAGRAM_VERIFY_TOKEN`,
+`AT_API_KEY` / `AT_USERNAME` / `AT_SENDER_ID`.
+
+Migrations: `db/04-omnichannel.sql`, `db/05-intelligence.sql`, `db/06-invoices.sql`
+(all additive, idempotent).
+
+---
+
+## 🧠 Intelligence & CRM (P2)
+
+- **Multi-provider AI** (`src/lib/ai-providers.ts`): the agent's free-form
+  replies and `/api/ai/command` run through OpenAI-compatible, Anthropic, **local
+  Ollama** (open-source models), or Cloudflare Workers AI — with an automatic
+  fallback chain and circuit breaker. Configure with `AI_PROVIDER` +
+  `OPENAI_API_KEY`/`OPENAI_BASE_URL`, `ANTHROPIC_API_KEY`, or `OLLAMA_BASE_URL`.
+- **Knowledge Base + RAG** (**Dashboard → Knowledge**): the agent answers FAQs
+  from the merchant's own articles across every channel — pgvector cosine search
+  in production, full-text/word-match locally. Seeded with hours, parking, wifi,
+  dietary, cancellation and private-events answers.
+- **Voice notes**: `/api/ai/transcribe` (Whisper via Workers AI or OpenAI/Groq).
+- **Sequences** (drip follow-ups): `sequences` + `sequence_enrollments`; enrol a
+  recipient and `POST /api/sequences/run` sends due steps across the channel.
+- **Agent analytics** (**Dashboard → Analytics**): conversations by channel, AI
+  vs human automation rate, escalation rate, tool usage, broadcasts.
+- **Invoices ↔ omnichannel** (**Dashboard → Invoices**): a full accounting-grade
+  billing suite — **line items + VAT/tax**, **due dates**, a Tap & Go **pay link**
+  + **QR code**, delivery over any channel, **partial payments**, **status**
+  (draft/sent/partial/overdue/paid/void), a per-invoice **activity/audit trail**,
+  **automatic payment reminders**, and **recurring invoices** (subscriptions /
+  retainers). Reminders and recurring billing run themselves 24/7 via the bridge
+  sweep (`/api/invoicing/run`); receivables stats show outstanding/overdue/
+  collected. The agent also creates invoices by chat — "invoice +2547… 2500".
+- **A2A**: `POST /api/a2a` + `/.well-known/agent-card.json` let external agents
+  drive the CRM in natural language.
+
+Migrations: `db/04`–`db/08` (all additive, idempotent).
+
+---
+
+## 💬 WhatsApp AI Agent
+
+A 24/7 WhatsApp assistant that books tables and gives staff full CRM control by
+text. **Connect your business line two ways** (Dashboard → **WhatsApp**):
+
+- **Link by QR (quick start)** — the optional `whatsapp-bridge/` service (Baileys)
+  shows a QR; scan it from your phone (WhatsApp → *Linked Devices*) and the bot
+  runs as your existing number. Session is persisted in PostgreSQL with
+  keepalive + auto-reconnect + a stale watchdog. Start it with
+  `docker compose up -d whatsapp-bridge`. ⚠️ Unofficial (WhatsApp ToS / ban risk).
+- **Official Cloud API (production)** — enter token / phone-number-id / verify
+  token in the dashboard wizard (saved to `app_settings`); stateless, compliant,
+  no ban risk. Send order is **bridge → Cloud API → simulated**, so nothing
+  breaks when neither is configured.
+
+- **Customers** can book (`"book 6 tonight at 7"` → availability-checked enquiry).
+- **Allowlisted staff/admin** numbers unlock CRM tools (`"covers today"`,
+  `"new enquiries"`, `"top spenders"`).
+- **Tool-loop + circuit breaker + escalate-to-human** with a Workers AI fallback.
+- Manage it all from **Dashboard → Engage → Inbox**, including a built-in
+  simulator that drives the exact same pipeline.
+
+**What customers can do in natural language** (any channel):
+- **Enquire / book** — "book 4 tonight at 8" → availability-checked reservation
+- **See the menu & prices** — "show me the menu", "how much is nyama choma?"
+- **Ask for a bill / pay** — "can I pay 3200?" → a Tap & Go pay link
+- **FAQs** — parking, wifi, dietary, cancellation, private events (from the KB)
+- **Reach a human** — "speak to a manager" → escalated in the Inbox
+
+**Staff/allowlisted** can also run the CRM by text — "covers today", "top
+spenders", "invoice +2547… 2500 for dinner". Drip **sequences** send themselves
+24/7 (the bridge auto-runs due steps), and the assistant shows a **typing…**
+indicator while it works.
+
+Set `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, and `WHATSAPP_VERIFY_TOKEN` to send
+real messages; without them the agent runs in simulate mode. Manage the staff
+allowlist in the `wa_allowlist` table (`db/03-whatsapp.sql`).
+
+**Connecting your line (Dashboard → WhatsApp):** the Cloud API card has a
+**Test connection** button (verifies your token/phone-id against Meta) and an
+**Active transport** selector — `auto` (bridge → Cloud API), `bridge` only, or
+`cloud` only for production. Saved config lives in `app_settings`; note that in
+production Hyperdrive caches reads, so a transport switch can take up to ~60s to
+reflect in the UI (the write itself is immediate).
+
+**Keeping the agent's menu current:** the **Menu** page has a *Sync to AI agent*
+button that pushes your live catalogue to `menu_items` so the assistant quotes
+real items and prices.
+
+```bash
+# Try it without any WhatsApp credentials:
+curl -X POST http://localhost:8080/api/whatsapp/simulate \
+  -H "content-type: application/json" \
+  -d '{"from":"+254712345678","name":"Guest","text":"book 4 tonight at 8"}'
+```
+
+---
+
+## 🚀 Go-live (pilot)
+
+The stack is pilot-ready for a small set of customers:
+
+- **Public URL** — pay links, the pay page and webhooks need a public HTTPS
+  origin. For a quick pilot, run a tunnel (`cloudflared tunnel --url
+  http://localhost:8080`) and set it once:
+  `app_settings.public_base_url = { "url": "https://…" }` (the dashboard/agent
+  build short links `…/pay?i=INV-XXX` from it). For production, `wrangler deploy`
+  and set `PUBLIC_BASE_URL`. Dev/Vite needs the tunnel host in
+  `vite.config.ts → vite.server.allowedHosts`.
+- **Channels** — WhatsApp (QR bridge or Cloud API) and **Telegram** (Bot API,
+  long-polling via the bridge) both live; web chat is built into the PWA. All
+  route through one agent + one Postgres store, so the **PWA and back office share
+  the same data** and changes sync (e.g. a web-chat message appears in the
+  Inbox; an invoice is payable from the customer's phone).
+- **Auth** — a secure **JWT** layer (`src/lib/jwt.ts`, HS256) with **PBKDF2**
+  password hashing and `/api/auth/login` · `/api/auth/me` · `/api/auth/google` ·
+  `requireAuth` guard. **Google sign-in** is built in (set `GOOGLE_CLIENT_ID`
+  to activate the button; verified server-side via Google's tokeninfo, optional
+  `GOOGLE_ALLOWED_EMAILS`). **Every staff mutation is JWT-enforced** — invoices,
+  recurring, broadcasts, sequences, knowledge base, menu sync, inbox replies,
+  channel/WhatsApp/Telegram config & simulators, DLQ retry and AI commands all
+  require a token; the dashboard sends it via `authFetch`. Public/customer routes
+  (`/pay`, web chat, payment create) and service routes (channel webhooks, the
+  bridge `bridge/inbound`, and the `invoicing/run` · `sequences/run` sweeps) stay
+  open by design. The SPA obtains a token on load via `/api/auth/session`
+  (a scoped, non-admin session for the pilot); set **`AUTH_REQUIRE_LOGIN=1`** to
+  disable it and force real email/Google logins for every operator in production.
+  Admin credential + JWT secret live in `app_settings.auth` (override with
+  `JWT_SECRET` / `ADMIN_EMAIL` / `ADMIN_PASSWORD`; default `admin@pesaswap.io` /
+  `pesaswap-admin` — **change before real use**).
+- **Shared state sync** — merchant/retail/services localStorage is mirrored to
+  Postgres (`merchant_state`, via `/api/state`): `writeStorage` pushes on every
+  save and the dashboard **hydrates from Postgres on load**, so the PWA and back
+  office work off the same data and changes sync across devices.
 
 ---
 

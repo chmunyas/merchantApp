@@ -70,6 +70,146 @@ function writeUser(key: string, user: AuthUser | null) {
   window.dispatchEvent(new Event("pesaswap:auth-changed"));
 }
 
+// --- Real JWT session (server-verified) -------------------------------------
+const JWT_KEY = "pesaswap.auth.jwt";
+
+export function getToken(): string | null {
+  return canUseStorage() ? localStorage.getItem(JWT_KEY) : null;
+}
+
+function setToken(token: string | null): void {
+  if (!canUseStorage()) return;
+  if (token) localStorage.setItem(JWT_KEY, token);
+  else localStorage.removeItem(JWT_KEY);
+}
+
+// Log in with email + password against the server (PBKDF2-verified), storing a
+// real JWT. Returns the user or null on failure.
+export async function jwtLogin(
+  email: string,
+  password: string,
+): Promise<AuthUser | null> {
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      token: string;
+      user: { email: string; name?: string; role?: string };
+    };
+    setToken(data.token);
+    const user: AuthUser = {
+      id: data.user.email,
+      name: data.user.name ?? "Admin",
+      email: data.user.email,
+      role: (data.user.role as UserRole) ?? "admin",
+    };
+    writeUser(DEMO_AUTH_KEY, user);
+    return user;
+  } catch {
+    return null;
+  }
+}
+
+// Exchange a Google ID token for our JWT (Google sign-in).
+export async function googleLogin(idToken: string): Promise<AuthUser | null> {
+  try {
+    const res = await fetch("/api/auth/google", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ idToken }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      token: string;
+      user: { email: string; name?: string; role?: string; picture?: string };
+    };
+    setToken(data.token);
+    const user: AuthUser = {
+      id: data.user.email,
+      name: data.user.name ?? data.user.email,
+      email: data.user.email,
+      role: (data.user.role as UserRole) ?? "merchant",
+      avatar: data.user.picture,
+    };
+    writeUser(DEMO_AUTH_KEY, user);
+    return user;
+  } catch {
+    return null;
+  }
+}
+
+// Self-serve signup: creates a merchant account + venue and stores a real JWT.
+export async function signup(input: {
+  businessName: string;
+  email: string;
+  password: string;
+  phone?: string;
+}): Promise<{ user: AuthUser; venue?: string } | { error: string }> {
+  try {
+    const res = await fetch("/api/auth/signup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    const data = (await res.json()) as {
+      token?: string;
+      user?: { email: string; name?: string; role?: string; venue?: string };
+      error?: string;
+    };
+    if (!res.ok || !data.token || !data.user) {
+      return { error: data.error ?? "Could not create your account." };
+    }
+    setToken(data.token);
+    const user: AuthUser = {
+      id: data.user.email,
+      name: data.user.name ?? data.user.email,
+      email: data.user.email,
+      role: (data.user.role as UserRole) ?? "merchant",
+    };
+    writeUser(DEMO_AUTH_KEY, user);
+    return { user, venue: data.user.venue };
+  } catch {
+    return { error: "Network error. Please try again." };
+  }
+}
+
+// fetch() that attaches the JWT — use for protected admin/config calls.
+export function authFetch(
+  input: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const token = getToken();
+  const headers = new Headers(init.headers);
+  if (token) headers.set("authorization", `Bearer ${token}`);
+  return fetch(input, { ...init, headers });
+}
+
+// Bootstrap a dashboard session token. The SPA still uses demo-role logins that
+// carry no password, so protected endpoints would 401 without this. Skips when a
+// real token already exists (admin email / Google login) and no-ops silently in
+// production where the server has AUTH_REQUIRE_LOGIN set (returns 403).
+export async function ensureSessionToken(
+  role: UserRole = "merchant",
+): Promise<void> {
+  if (getToken()) return;
+  try {
+    const res = await fetch("/api/auth/session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: role === "staff" ? "staff" : "merchant" }),
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as { token?: string };
+    if (data.token) setToken(data.token);
+  } catch {
+    /* offline — the open endpoints still work */
+  }
+}
+
 export function getDefaultRouteForRole(role: UserRole) {
   switch (role) {
     case "admin":
@@ -162,6 +302,7 @@ export function demoLogin(
 export function demoLogout(): void {
   writeUser(DEMO_AUTH_KEY, null);
   clearStaffSession();
+  setToken(null);
 }
 
 export function getDemoStaffByPin(pin: string): AuthUser | null {

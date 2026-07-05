@@ -8,7 +8,7 @@ import {
   UserCheck,
   Users,
 } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,9 @@ import { Input } from "@/components/ui/input";
 import {
   demoLogin,
   getDefaultRouteForRole,
+  googleLogin,
   isDemoMode,
+  jwtLogin,
   useAuth,
 } from "@/lib/auth";
 
@@ -25,6 +27,74 @@ export const Route = createFileRoute("/sign-in")({
 });
 
 type View = "picker" | "login" | "forgot" | "reset-sent";
+
+// Google Identity Services sign-in. Renders the official button when a
+// GOOGLE_CLIENT_ID is configured; otherwise shows a disabled hint.
+function GoogleSignInButton() {
+  const navigate = useNavigate();
+  const ref = useRef<HTMLDivElement>(null);
+  const [clientId, setClientId] = useState<string | null>(null);
+  const [checked, setChecked] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/auth/google/config")
+      .then((r) => r.json())
+      .then((d: { clientId?: string | null }) => {
+        setClientId(d.clientId ?? null);
+        setChecked(true);
+      })
+      .catch(() => setChecked(true));
+  }, []);
+
+  useEffect(() => {
+    if (!clientId || !ref.current) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    const init = () => {
+      const gid = w.google?.accounts?.id;
+      if (!gid || !ref.current) return;
+      gid.initialize({
+        client_id: clientId,
+        callback: async (resp: { credential?: string }) => {
+          if (!resp.credential) return;
+          const user = await googleLogin(resp.credential);
+          if (user) void navigate({ to: getDefaultRouteForRole(user.role) });
+          else toast.error("Google sign-in failed.");
+        },
+      });
+      gid.renderButton(ref.current, {
+        theme: "outline",
+        size: "large",
+        width: 320,
+        text: "signin_with",
+      });
+    };
+    if (w.google?.accounts?.id) {
+      init();
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+    script.onload = init;
+    document.body.appendChild(script);
+  }, [clientId, navigate]);
+
+  if (checked && !clientId) {
+    return (
+      <button
+        type="button"
+        disabled
+        className="h-11 w-full rounded-xl border border-slate-200 text-sm text-slate-400"
+        title="Set GOOGLE_CLIENT_ID to enable Google sign-in"
+      >
+        Sign in with Google (configure GOOGLE_CLIENT_ID)
+      </button>
+    );
+  }
+  return <div ref={ref} className="flex justify-center" />;
+}
 
 function SignInPage() {
   const navigate = useNavigate();
@@ -41,38 +111,38 @@ function SignInPage() {
     return null;
   }
 
-  function handleDemoLogin(role: "admin" | "merchant" | "staff") {
+  async function handleDemoLogin(role: "admin" | "merchant" | "staff") {
     if (role === "staff") {
       void navigate({ to: "/staff-login" });
       return;
+    }
+    if (role === "admin") {
+      const user = await jwtLogin("admin@pesaswap.io", "pesaswap-admin");
+      if (user) {
+        void navigate({ to: "/admin" });
+        return;
+      }
     }
     demoLogin(role);
     void navigate({ to: getDefaultRouteForRole(role) });
   }
 
-  function handleEmailLogin(e: FormEvent) {
+  async function handleEmailLogin(e: FormEvent) {
     e.preventDefault();
     setError("");
     setLoading(true);
-
-    // Demo mode: recognize demo credentials
-    setTimeout(() => {
-      if (email === "admin@pesaswap.io" && password === "admin123") {
-        demoLogin("admin", { email });
-        void navigate({ to: "/admin" });
-      } else if (email === "merchant@demo.com" && password === "merchant123") {
-        demoLogin("merchant", { email });
-        void navigate({ to: "/dashboard" });
-      } else if (isDemoMode()) {
-        // In demo mode, any email works as merchant
-        demoLogin("merchant", { email });
-        toast.success("Signed in (demo mode)");
-        void navigate({ to: "/dashboard" });
-      } else {
-        setError("Invalid email or password");
-      }
-      setLoading(false);
-    }, 800);
+    // Real server-verified login (PBKDF2 + JWT).
+    const user = await jwtLogin(email, password);
+    if (user) {
+      void navigate({ to: getDefaultRouteForRole(user.role) });
+    } else if (isDemoMode()) {
+      demoLogin("merchant", { email });
+      toast.success("Signed in (demo mode)");
+      void navigate({ to: "/dashboard" });
+    } else {
+      setError("Invalid email or password");
+    }
+    setLoading(false);
   }
 
   function handleForgotPassword(e: FormEvent) {
@@ -296,6 +366,15 @@ function SignInPage() {
               </Button>
             </form>
 
+            <div className="mt-4 flex items-center gap-3">
+              <div className="h-px flex-1 bg-slate-200" />
+              <span className="text-xs text-slate-400">or</span>
+              <div className="h-px flex-1 bg-slate-200" />
+            </div>
+            <div className="mt-4">
+              <GoogleSignInButton />
+            </div>
+
             <div className="mt-6 text-center space-y-2">
               <p className="text-xs text-slate-400">
                 Staff member?{" "}
@@ -314,9 +393,8 @@ function SignInPage() {
                   Demo credentials:
                 </p>
                 <div className="space-y-0.5 font-mono text-[11px]">
-                  <p>admin@pesaswap.io / admin123</p>
-                  <p>merchant@demo.com / merchant123</p>
-                  <p>Or any email → signs in as merchant</p>
+                  <p>admin@pesaswap.io / pesaswap-admin</p>
+                  <p>Or any email → signs in as merchant (demo)</p>
                 </div>
               </div>
             )}
@@ -419,8 +497,12 @@ function SignInPage() {
             Sign in with email
           </Button>
 
+          <div className="mt-3">
+            <GoogleSignInButton />
+          </div>
+
           {/* Footer */}
-          <div className="mt-6 text-center">
+          <div className="mt-6 space-y-3 text-center">
             <button
               onClick={() => {
                 setView("forgot");
@@ -429,6 +511,15 @@ function SignInPage() {
             >
               Forgot your password?
             </button>
+            <p className="text-xs text-slate-500">
+              New to PesaSwap?{" "}
+              <Link
+                to="/get-started"
+                className="font-semibold text-violet-600 hover:underline"
+              >
+                Get started
+              </Link>
+            </p>
           </div>
         </div>
 

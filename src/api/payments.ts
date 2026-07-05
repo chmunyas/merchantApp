@@ -6,6 +6,8 @@
 
 // --- Environment Config ---
 
+import { getSql } from "@/lib/db";
+
 type Env = {
   PESASWAP_API_KEY: string;
   PESASWAP_WEBHOOK_SECRET: string;
@@ -73,9 +75,44 @@ const merchantConnections = new Map<string, Set<WebSocket>>();
 // Idempotency key cache (prevents double charges)
 const idempotencyCache = new Map<string, { response: unknown; expires: number }>();
 
+// Persist a payment/refund to the Postgres ledger (best-effort — never blocks
+// the payment). Foundation for settlement + reconciliation, replacing the
+// ephemeral in-memory Map above.
+async function recordLedger(
+  env: unknown,
+  rec: {
+    id: string;
+    amount: number;
+    currency: string;
+    status: string;
+    kind?: string;
+    venue?: string | null;
+    reference?: string | null;
+    providerRef?: string | null;
+    metadata?: Record<string, unknown>;
+  },
+): Promise<void> {
+  const sql = getSql(env);
+  if (!sql) return;
+  try {
+    await sql`
+      INSERT INTO payments
+        (id, venue_id, kind, amount, currency, status, provider_ref, reference, metadata)
+      VALUES (${rec.id}, ${rec.venue ?? null}, ${rec.kind ?? "payment"}, ${rec.amount},
+              ${rec.currency}, ${rec.status}, ${rec.providerRef ?? null}, ${rec.reference ?? null},
+              ${sql.json(JSON.parse(JSON.stringify(rec.metadata ?? {})))})
+      ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, updated_at = now()`;
+  } catch {
+    /* best-effort ledger */
+  }
+}
+
 // --- Route Handler ---
 
-export async function handlePaymentRoute(request: Request): Promise<Response | null> {
+export async function handlePaymentRoute(
+  request: Request,
+  env: unknown,
+): Promise<Response | null> {
   ensureIdempotencyCleanup();
   const url = new URL(request.url);
   const path = url.pathname;
@@ -94,7 +131,7 @@ export async function handlePaymentRoute(request: Request): Promise<Response | n
 
   // --- Payment Routes ---
   if (path === "/api/payments/create" && request.method === "POST") {
-    return withCors(await handleCreatePayment(request), corsHeaders);
+    return withCors(await handleCreatePayment(request, env), corsHeaders);
   }
 
   if (path.match(/^\/api\/payments\/[^/]+\/status$/) && request.method === "GET") {
@@ -133,7 +170,10 @@ export async function handlePaymentRoute(request: Request): Promise<Response | n
 
 // --- Create Payment ---
 
-async function handleCreatePayment(request: Request): Promise<Response> {
+async function handleCreatePayment(
+  request: Request,
+  workerEnv: unknown,
+): Promise<Response> {
   const body = (await request.json()) as PaymentRequest;
   const idempotencyKey = request.headers.get("Idempotency-Key");
 
@@ -189,6 +229,18 @@ async function handleCreatePayment(request: Request): Promise<Response> {
       refunds: [],
     };
     payments.set(paymentRecord.id, paymentRecord);
+
+    // Persist to the durable ledger (survives restarts, shared across workers).
+    const meta = (body.metadata ?? {}) as Record<string, unknown>;
+    await recordLedger(workerEnv, {
+      id: paymentRecord.id,
+      amount: body.amount,
+      currency: body.currency || "KES",
+      status: paymentRecord.status,
+      venue: typeof meta.venue === "string" ? meta.venue : null,
+      reference: typeof meta.till === "string" ? meta.till : null,
+      metadata: meta,
+    });
 
     const responseBody = {
       payment_id: paymentRecord.id,

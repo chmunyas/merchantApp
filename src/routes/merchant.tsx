@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { TopHeader } from "@/components/TopHeader";
+import { InstallButton } from "@/components/InstallButton";
 import { PhoneFrame } from "@/components/merchant/PhoneFrame";
 import { MerchantApp } from "@/components/merchant/MerchantApp";
 import {
@@ -69,13 +70,11 @@ function MerchantPage() {
               ))}
             </div>
 
-            <div className="flex gap-2">
-              <button className="flex-1 bg-foreground text-background py-2.5 rounded-md text-xs font-semibold">
-                Download iOS
-              </button>
-              <button className="flex-1 border border-border py-2.5 rounded-md text-xs font-semibold">
-                Download Android
-              </button>
+            <div className="space-y-2">
+              <InstallButton />
+              <p className="text-center text-[10px] text-muted-foreground">
+                Installable on iOS, Android &amp; desktop · works offline
+              </p>
             </div>
           </div>
 

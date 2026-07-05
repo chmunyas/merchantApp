@@ -1265,6 +1265,8 @@ function TableCustomerPage() {
                       key={value}
                       onClick={() => setReviewRating(value)}
                       type="button"
+                      aria-label={`Rate ${value} star${value === 1 ? "" : "s"}`}
+                      aria-pressed={reviewRating >= value}
                     >
                       <Star
                         className={`h-10 w-10 transition ${
@@ -1413,6 +1415,7 @@ function TableCustomerPage() {
                 className="rounded-full border border-white/10 p-2 text-slate-300"
                 onClick={closeModifierSheet}
                 type="button"
+                aria-label="Close"
               >
                 <X className="h-4 w-4" />
               </button>

@@ -11,6 +11,10 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  loadMerchantSnapshot,
+  saveMerchantStaffMembers,
+} from "@/lib/merchant-dashboard";
 
 export const Route = createFileRoute("/reset-pin")({
   component: ResetPinPage,
@@ -27,16 +31,27 @@ function ResetPinPage() {
   const [confirmPin, setConfirmPin] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [staffId, setStaffId] = useState<string | null>(null);
 
   function handleIdentify(e: FormEvent) {
     e.preventDefault();
-    if (!phone.trim() || phone.length < 10) {
+    const digits = phone.replace(/\D/g, "");
+    if (digits.length < 9) {
       setError("Enter a valid phone number");
       return;
     }
+    // Match the number against a real staff account before sending a code.
+    const staff = loadMerchantSnapshot().staffMembers.find(
+      (member) => member.phone.replace(/\D/g, "").slice(-9) === digits.slice(-9),
+    );
+    if (!staff) {
+      setError("No staff account is linked to this number.");
+      return;
+    }
+    setStaffId(staff.id);
     setError("");
     setLoading(true);
-    // Simulate OTP send
+    // OTP delivery is simulated until an SMS/WhatsApp provider is configured.
     setTimeout(() => {
       setLoading(false);
       setStep("verify");
@@ -83,6 +98,13 @@ function ResetPinPage() {
     setLoading(true);
     setTimeout(() => {
       setLoading(false);
+      // Persist the new PIN to the real staff record (syncs to Postgres).
+      const members = loadMerchantSnapshot().staffMembers;
+      saveMerchantStaffMembers(
+        members.map((member) =>
+          member.id === staffId ? { ...member, pin: newPin } : member,
+        ),
+      );
       setStep("done");
       toast.success("PIN updated successfully!");
     }, 800);
