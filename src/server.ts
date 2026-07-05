@@ -13,6 +13,7 @@ import { handleOrgRoute } from "./api/org";
 import { handleStaffRoute } from "./api/staff";
 import { handleTipsRoute } from "./api/tips";
 import { handleOrdersRoute } from "./api/orders";
+import { handleReportsRoute } from "./api/reports";
 import { handleWhatsappRoute } from "./api/whatsapp";
 import { handleTelegramRoute } from "./api/telegram";
 import { handleChannelRoute } from "./api/channels";
@@ -178,6 +179,10 @@ export default {
           // Server-authoritative orders + kitchen tickets
           const ordersResponse = await handleOrdersRoute(request, env);
           if (ordersResponse) return ordersResponse;
+
+          // Merchant notebook (period sales report)
+          const reportsResponse = await handleReportsRoute(request, env);
+          if (reportsResponse) return reportsResponse;
 
           // WhatsApp AI agent (Cloud API webhook + simulator)
           const whatsappResponse = await handleWhatsappRoute(request, env);

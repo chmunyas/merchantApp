@@ -118,7 +118,7 @@ function DashboardContactsPage() {
       return;
     }
     try {
-      const res = await fetch(`/api/contacts?venue=${venue}`, {
+      const res = await authFetch(`/api/contacts?venue=${venue}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name, phone, email }),
@@ -162,7 +162,7 @@ function DashboardContactsPage() {
     setTimeline([]);
     setTimelineChannels([]);
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `/api/timeline?venue=${venue}&phone=${encodeURIComponent(contact.phone)}`,
       );
       const data = (await res.json()) as {

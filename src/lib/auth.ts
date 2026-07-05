@@ -366,9 +366,10 @@ export function useAuth(): AuthContextValue {
 }
 
 export function useDemoAuth(): AuthContextValue {
-  const [user, setUser] = useState<AuthUser | null>(
-    () => readUser(DEMO_AUTH_KEY) ?? readUser(STAFF_AUTH_KEY),
-  );
+  // Initialise to null on BOTH server and first client render to avoid a
+  // hydration mismatch (localStorage is unavailable during SSR). The effect
+  // below populates the real user immediately after mount.
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {

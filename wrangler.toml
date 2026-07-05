@@ -12,6 +12,13 @@ directory = "dist/client"
 # switch to https://api.pesaswap.io for production. NOT app.pesaswap.io (dashboard).
 PESASWAP_URL = "https://api.sandbox.pesaswap.io"
 
+# Auth posture (config-as-code so it is version-controlled, not a floating
+# secret). "0"/unset = open, scoped, NON-admin pilot session — demo login works
+# and the back office can call protected endpoints. Set to "1" to force a real
+# credentialed login (email+password / Google / staff PIN) for every operator.
+# Kept "0" for the live pilot; flip to "1" here and redeploy to harden.
+AUTH_REQUIRE_LOGIN = "0"
+
 # --- Cloudflare edge capabilities ---
 
 # Workers AI: the natural-language ops agent + embeddings for pgvector memory.
