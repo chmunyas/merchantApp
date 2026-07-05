@@ -45,6 +45,7 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_DEPLOY_ENABLED: ${{ secrets.CLOUDFLARE_DEPLOY_ENABLED }}
     steps:
       - uses: actions/checkout@v4
 
@@ -61,10 +62,15 @@ jobs:
           VITE_PESASWAP_PUBLISHABLE_KEY: ${{ secrets.VITE_PESASWAP_PUBLISHABLE_KEY }}
 
       - name: Deploy to Cloudflare Workers
-        # Only deploys when the Cloudflare secrets are configured; otherwise the
-        # step is skipped and the job stays green (deploys automatically once the
-        # CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID repo secrets are added).
-        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != '' }}
+        # Deploys only when the Cloudflare secrets are set AND deploys are
+        # explicitly enabled (CLOUDFLARE_DEPLOY_ENABLED == 'true'). This keeps CI
+        # green until a real deploy is actually viable, which additionally needs:
+        #   1. a token with Workers Scripts:Edit + Hyperdrive:Edit on the account,
+        #   2. a provisioned Hyperdrive id in wrangler.toml (currently a
+        #      placeholder) pointing at a PUBLICLY reachable Postgres — the app DB
+        #      is local, so an edge Worker cannot reach it as-is.
+        # Once those are in place, add the CLOUDFLARE_DEPLOY_ENABLED=true secret.
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != '' && env.CLOUDFLARE_DEPLOY_ENABLED == 'true' }}
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ env.CLOUDFLARE_API_TOKEN }}
@@ -91,9 +97,9 @@ jobs:
     env:
       DATABASE_URL: postgres://pesaswap:pesaswap@localhost:5432/pesaswap
       CI: "true"
-      # Use 127.0.0.1 (not localhost) so wait-on + the tests hit the IPv4 the
-      # dev server binds to — Node resolves "localhost" to IPv6 ::1 first, where
-      # the server isn't listening.
+      # Use 127.0.0.1 (not localhost) so the health poll + the tests hit the IPv4
+      # the dev server binds to — Node resolves "localhost" to IPv6 ::1 first,
+      # where the server isn't listening.
       E2E_BASE_URL: http://127.0.0.1:8080
     steps:
       - uses: actions/checkout@v4
@@ -119,11 +125,25 @@ jobs:
       - name: Start the app
         run: |
           npm run dev -- --host 0.0.0.0 --port 8080 > dev-server.log 2>&1 &
-          npx --yes wait-on http://127.0.0.1:8080/api/health --timeout 180000 --interval 1000 || {
-            echo "=== dev-server.log ==="; cat dev-server.log || true;
-            echo "=== curl /api/health ==="; curl -sv http://127.0.0.1:8080/api/health || true;
-            exit 1;
-          }
+          echo "Waiting for dev server at http://127.0.0.1:8080/api/health ..."
+          # Poll with curl instead of wait-on: the first request compiles the
+          # SSR route on demand, and curl reliably waits for a real 2xx where
+          # wait-on's probe semantics did not. Up to ~300s (100 x 3s).
+          ok=""
+          for i in $(seq 1 100); do
+            if curl -sf --max-time 30 http://127.0.0.1:8080/api/health > health.json 2>/dev/null; then
+              echo "Server healthy after ~$((i * 3))s: $(cat health.json)"
+              ok="1"
+              break
+            fi
+            sleep 3
+          done
+          if [ "$ok" != "1" ]; then
+            echo "=== dev server never became healthy ==="
+            echo "=== dev-server.log ==="; cat dev-server.log || true
+            echo "=== final curl (verbose) ==="; curl -sv --max-time 30 http://127.0.0.1:8080/api/health || true
+            exit 1
+          fi
 
       - name: E2E — HTTP flows (PWA → back office)
         run: npm run test:e2e
