@@ -15,11 +15,13 @@ by GitHub Copilot's Agent Skills support.
   for that domain. Frontmatter: `name`, `description` (when to delegate), `tools`,
   `model`, then a system prompt. Auto-discovered by Claude Code.
 
-## Core functions
+## Skills & subagents
 
+### Core functions (domains)
 | Function | Skill | Subagent |
 | --- | --- | --- |
 | Payments & checkout | `skills/payments` | `payments-engineer` |
+| PesaSwap integration (SDK/API) | `skills/pesaswap-integration` | `pesaswap-integration-engineer` |
 | Invoicing & accounting | `skills/invoicing` | `invoicing-engineer` |
 | Omnichannel AI agent | `skills/omnichannel-agent` | `omnichannel-engineer` |
 | CRM & loyalty | `skills/crm-loyalty` | `crm-engineer` |
@@ -29,6 +31,20 @@ by GitHub Copilot's Agent Skills support.
 | Knowledge base (RAG) | `skills/knowledge-base` | `knowledge-base-engineer` |
 | Analytics & reporting | `skills/analytics` | `analytics-engineer` |
 | Auth, tenancy & security | `skills/auth-tenancy` | `auth-tenancy-engineer` |
+
+### Roles (RBAC personas)
+| Role | Skill | Subagent |
+| --- | --- | --- |
+| Merchant / owner | `skills/merchant-owner` | `merchant-owner-engineer` |
+| Manager | `skills/manager` | `manager-engineer` |
+| Supervisor / shift lead | `skills/supervisor` | `supervisor-engineer` |
+| Staff / server | `skills/staff-operations` | `staff-operations-engineer` |
+
+### Staff-ops capabilities
+| Capability | Skill | Subagent |
+| --- | --- | --- |
+| Tips (attribution / pooling / payout) | `skills/tips` | `tips-engineer` |
+| Orders & kitchen | `skills/orders-kitchen` | `orders-kitchen-engineer` |
 
 ## Using them
 
