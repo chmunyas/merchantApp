@@ -2,6 +2,7 @@ import { runAgent, type AgentRole } from "@/lib/agent";
 import { getAdapter } from "@/lib/channels";
 import type { InboundMessage } from "@/lib/channels/types";
 import { getSql } from "@/lib/db";
+import { consentKeyword, isSuppressed, setSuppressed } from "@/lib/consent";
 import { notifyStaff } from "@/lib/push";
 
 export type InboundResult = {
@@ -108,6 +109,35 @@ export async function processInbound(
     INSERT INTO messages (conversation_id, direction, body, channel)
     VALUES (${conversation.id}, 'inbound', ${msg.text}, ${msg.channel})`;
 
+  // 4a. Consent / suppression (compliance). STOP opts this handle out of outbound
+  //     on this channel; START opts back in — both get a transactional reply.
+  const keyword = consentKeyword(msg.text);
+  if (keyword === "stop" || keyword === "start") {
+    await setSuppressed(sql, venue, msg.channel, msg.handle, keyword === "stop");
+    const confirm =
+      keyword === "stop"
+        ? "You've been unsubscribed and won't receive further messages. Reply START to opt back in."
+        : "You're opted back in. How can we help?";
+    await sql`
+      INSERT INTO messages (conversation_id, direction, body, ai, channel)
+      VALUES (${conversation.id}, 'outbound', ${confirm}, false, ${msg.channel})`;
+    let optDelivery = "pull";
+    try {
+      optDelivery = (await getAdapter(msg.channel).send(msg.handle, confirm, env))
+        .delivery;
+    } catch {
+      optDelivery = "failed";
+    }
+    await sql`UPDATE conversations SET last_message_at = now() WHERE id = ${conversation.id}`;
+    return {
+      conversationId: conversation.id,
+      role,
+      reply: confirm,
+      delivery: optDelivery,
+    };
+  }
+  const suppressed = await isSuppressed(sql, venue, msg.channel, msg.handle);
+
   // 5. Run the agent.
   const result = await runAgent(
     msg.text,
@@ -127,14 +157,18 @@ export async function processInbound(
   // 7. Deliver on the channel (push channels send now; pull channels are fetched
   //    by the client). Record the true delivery status — failures land in the
   //    DLQ (events.status = 'failed') with enough payload to retry.
-  let delivery = "pull";
+  // Suppressed (opted-out) contacts: log the agent reply for staff but never
+  // deliver unsolicited outbound.
+  let delivery = suppressed ? "suppressed" : "pull";
   let failed = false;
-  try {
-    const out = await getAdapter(msg.channel).send(msg.handle, result.reply, env);
-    delivery = out.delivery;
-  } catch {
-    delivery = "failed";
-    failed = true;
+  if (!suppressed) {
+    try {
+      const out = await getAdapter(msg.channel).send(msg.handle, result.reply, env);
+      delivery = out.delivery;
+    } catch {
+      delivery = "failed";
+      failed = true;
+    }
   }
   await sql`
     INSERT INTO events (venue_id, channel, direction, conversation_id, type, status, payload)
