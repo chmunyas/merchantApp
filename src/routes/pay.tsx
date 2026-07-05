@@ -40,6 +40,7 @@ type PaymentData = {
   merchant: string;
   logoUrl?: string | null;
   poweredBy?: string | null;
+  staffId?: string | null;
 };
 
 function PayPage() {
@@ -106,6 +107,7 @@ function PayPage() {
         merchant: data.merchant,
         logoUrl: data.logoUrl ?? null,
         poweredBy: data.poweredBy ?? null,
+        staffId: data.staffId ?? null,
       });
       if (data.status === "paid") {
         setState("success");
@@ -146,6 +148,10 @@ function PayPage() {
       flow: "tapgo",
       customer: { phone },
     });
+    // Attribute the payment + tip to the staff who created the invoice (tips).
+    if (paymentData.staffId) {
+      (metadata as Record<string, unknown>).staff_id = paymentData.staffId;
+    }
 
     const result = await executePayment({
       amount: paymentData.amount,

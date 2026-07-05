@@ -20,6 +20,7 @@ export type CreateInvoiceInput = {
   dueDate?: string | null; // YYYY-MM-DD
   notes?: string | null;
   recurringId?: string | null;
+  staffId?: string | null; // attributes the invoice's payment + tip to a staff member
 };
 
 export type InvoiceResult = {
@@ -127,13 +128,13 @@ export async function createInvoice(
     INSERT INTO invoices (venue_id, number, customer_name, phone, amount, currency,
                           description, status, channel, conversation_id, pay_link,
                           subtotal, tax_rate, tax_amount, due_date, line_items, notes,
-                          recurring_id)
+                          recurring_id, staff_id)
     VALUES (${input.venue}, ${number}, ${input.customerName ?? null}, ${input.phone ?? null},
             ${amount}, ${currency}, ${input.description ?? null},
             ${status}, ${channel ?? null}, ${conversationId}, ${link},
             ${subtotal}, ${taxRate}, ${taxAmount}, ${input.dueDate ?? null},
             ${sql.json(JSON.parse(JSON.stringify(items)))}, ${input.notes ?? null},
-            ${input.recurringId ?? null})
+            ${input.recurringId ?? null}, ${input.staffId ?? null})
     RETURNING id`;
 
   await logInvoiceEvent(

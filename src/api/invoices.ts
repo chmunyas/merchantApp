@@ -41,7 +41,7 @@ export async function handleInvoiceRoute(
     const number = url.searchParams.get("number");
     if (!number) return json({ error: "number required" }, 400);
     const [inv] = await sql`
-      SELECT i.number, i.amount, i.amount_paid, i.currency, i.status,
+      SELECT i.number, i.amount, i.amount_paid, i.currency, i.status, i.staff_id,
              v.name AS merchant, vb.logo_url, vb.primary_color,
              o.name AS org_name, o.branding AS org_branding
       FROM invoices i
@@ -63,6 +63,7 @@ export async function handleInvoiceRoute(
       poweredBy: inv.org_name
         ? ((org.poweredBy as string) ?? `Powered by ${inv.org_name}`)
         : null,
+      staffId: inv.staff_id ?? null,
     });
   }
 
@@ -81,7 +82,8 @@ export async function handleInvoiceRoute(
   }
 
   if (path === "/api/invoices" && request.method === "POST") {
-    if (!(await requireAuth(request, env))) {
+    const payload = await requireAuth(request, env);
+    if (!payload) {
       return json({ error: "unauthorized" }, 401);
     }
     const body = (await request.json()) as {
@@ -107,6 +109,7 @@ export async function handleInvoiceRoute(
       taxRate: body.taxRate,
       dueDate: body.dueDate ?? null,
       notes: body.notes ?? null,
+      staffId: typeof payload.staff_id === "string" ? payload.staff_id : null,
     });
     if ("error" in result) return json(result, 400);
     return json(result, 201);
