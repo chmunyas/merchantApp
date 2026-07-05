@@ -42,6 +42,9 @@ jobs:
     needs: quality
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -58,10 +61,14 @@ jobs:
           VITE_PESASWAP_PUBLISHABLE_KEY: ${{ secrets.VITE_PESASWAP_PUBLISHABLE_KEY }}
 
       - name: Deploy to Cloudflare Workers
+        # Only deploys when the Cloudflare secrets are configured; otherwise the
+        # step is skipped and the job stays green (deploys automatically once the
+        # CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID repo secrets are added).
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != '' }}
         uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          apiToken: ${{ env.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
 
   e2e:
     name: E2E (PWA → back office)
@@ -84,6 +91,10 @@ jobs:
     env:
       DATABASE_URL: postgres://pesaswap:pesaswap@localhost:5432/pesaswap
       CI: "true"
+      # Use 127.0.0.1 (not localhost) so wait-on + the tests hit the IPv4 the
+      # dev server binds to — Node resolves "localhost" to IPv6 ::1 first, where
+      # the server isn't listening.
+      E2E_BASE_URL: http://127.0.0.1:8080
     steps:
       - uses: actions/checkout@v4
 
@@ -107,8 +118,12 @@ jobs:
 
       - name: Start the app
         run: |
-          npm run dev > dev-server.log 2>&1 &
-          npx --yes wait-on http://localhost:8080/api/health --timeout 120000
+          npm run dev -- --host 0.0.0.0 --port 8080 > dev-server.log 2>&1 &
+          npx --yes wait-on http://127.0.0.1:8080/api/health --timeout 180000 --interval 1000 || {
+            echo "=== dev-server.log ==="; cat dev-server.log || true;
+            echo "=== curl /api/health ==="; curl -sv http://127.0.0.1:8080/api/health || true;
+            exit 1;
+          }
 
       - name: E2E — HTTP flows (PWA → back office)
         run: npm run test:e2e
