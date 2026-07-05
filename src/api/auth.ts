@@ -138,7 +138,7 @@ export async function handleAuthRoute(
     if (sql) {
       try {
         const [user] = await sql`
-          SELECT email, password_hash, name, venue_id, role, plan
+          SELECT email, password_hash, name, venue_id, role, plan, org_id
           FROM app_users WHERE lower(email) = ${email} LIMIT 1`;
         if (
           user &&
@@ -151,6 +151,7 @@ export async function handleAuthRoute(
               name: user.name ?? undefined,
               venue: user.venue_id ?? undefined,
               plan: (user.plan as string) ?? "free",
+              org: (user.org_id as string) ?? undefined,
             },
             cfg.secret,
           );
@@ -162,6 +163,7 @@ export async function handleAuthRoute(
               name: user.name,
               venue: user.venue_id,
               plan: (user.plan as string) ?? "free",
+              org: (user.org_id as string) ?? null,
             },
           });
         }

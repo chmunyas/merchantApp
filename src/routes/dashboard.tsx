@@ -50,6 +50,7 @@ import {
   type Venue,
 } from "@/lib/merchant-dashboard";
 import { cn } from "@/lib/utils";
+import { useBranding } from "@/lib/branding";
 
 export const Route = createFileRoute("/dashboard")({
   component: DashboardLayout,
@@ -164,6 +165,7 @@ function DashboardShell() {
   const router = useRouter();
   const pathname = router.state.location.pathname;
   const { user } = useAuth();
+  const branding = useBranding();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [range, setRange] = useState("Today");
   const [newEnquiries, setNewEnquiries] = useState(0);
@@ -202,15 +204,37 @@ function DashboardShell() {
 
   return (
     <div className="flex min-h-screen bg-slate-50 text-slate-950">
-      <aside className="hidden w-60 shrink-0 flex-col bg-slate-900 text-white lg:flex">
+      <aside
+        className="hidden w-60 shrink-0 flex-col bg-slate-900 text-white lg:flex"
+        style={
+          branding?.primaryColor
+            ? { borderTop: `3px solid ${branding.primaryColor}` }
+            : undefined
+        }
+      >
         <div className="border-b border-slate-800 px-6 py-6">
-          <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
-            PesaSwap
-          </p>
-          <h1 className="mt-2 text-xl font-semibold">Merchant Dashboard</h1>
+          {branding?.logoUrl ? (
+            <img
+              src={branding.logoUrl}
+              alt={branding.businessName}
+              className="mb-2 h-8 w-auto max-w-[140px] object-contain"
+            />
+          ) : (
+            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
+              PesaSwap
+            </p>
+          )}
+          <h1 className="mt-2 text-xl font-semibold">
+            {branding?.businessName ?? "Merchant Dashboard"}
+          </h1>
           <p className="mt-1 text-sm text-slate-400">
             {user?.name ?? "Merchant"}
           </p>
+          {branding?.reseller?.poweredBy ? (
+            <p className="mt-3 text-[10px] uppercase tracking-wider text-slate-500">
+              {branding.reseller.poweredBy}
+            </p>
+          ) : null}
         </div>
         <div className="overflow-y-auto">
           <NavSections pathname={pathname} newEnquiries={newEnquiries} />
@@ -224,10 +248,20 @@ function DashboardShell() {
         >
           <div className="flex items-center justify-between border-b border-slate-800 px-5 py-5">
             <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
-                PesaSwap
+              {branding?.logoUrl ? (
+                <img
+                  src={branding.logoUrl}
+                  alt={branding.businessName}
+                  className="mb-1 h-7 w-auto max-w-[120px] object-contain"
+                />
+              ) : (
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
+                  PesaSwap
+                </p>
+              )}
+              <p className="mt-1 text-lg font-semibold">
+                {branding?.businessName ?? "Merchant Dashboard"}
               </p>
-              <p className="mt-1 text-lg font-semibold">Merchant Dashboard</p>
             </div>
             <Button
               size="icon"

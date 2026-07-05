@@ -38,6 +38,8 @@ type PaymentData = {
   till: string;
   amount: number;
   merchant: string;
+  logoUrl?: string | null;
+  poweredBy?: string | null;
 };
 
 function PayPage() {
@@ -102,6 +104,8 @@ function PayPage() {
         till: data.till,
         amount: data.amount,
         merchant: data.merchant,
+        logoUrl: data.logoUrl ?? null,
+        poweredBy: data.poweredBy ?? null,
       });
       if (data.status === "paid") {
         setState("success");
@@ -431,8 +435,22 @@ function ScannedState({ data, onConfirm, onCancel }: { data: PaymentData; onConf
         </div>
         <div>
           <p className="text-[10px] font-mono uppercase tracking-widest opacity-60">Pay to</p>
-          <p className="text-lg font-bold mt-1">{data.merchant}</p>
+          <div className="mt-1 flex items-center gap-2">
+            {data.logoUrl ? (
+              <img
+                src={data.logoUrl}
+                alt={data.merchant}
+                className="h-7 w-7 rounded bg-white object-contain p-0.5"
+              />
+            ) : null}
+            <p className="text-lg font-bold">{data.merchant}</p>
+          </div>
           <p className="text-[11px] font-mono opacity-60">Till {data.till}</p>
+          {data.poweredBy ? (
+            <p className="text-[10px] uppercase tracking-wider opacity-50">
+              {data.poweredBy}
+            </p>
+          ) : null}
         </div>
         <div className="pt-2 border-t border-background/10">
           <p className="text-[10px] font-mono uppercase tracking-widest opacity-60">Amount</p>

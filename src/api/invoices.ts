@@ -41,17 +41,28 @@ export async function handleInvoiceRoute(
     const number = url.searchParams.get("number");
     if (!number) return json({ error: "number required" }, 400);
     const [inv] = await sql`
-      SELECT i.number, i.amount, i.amount_paid, i.currency, i.status, v.name AS merchant
-      FROM invoices i LEFT JOIN venues v ON v.id = i.venue_id
+      SELECT i.number, i.amount, i.amount_paid, i.currency, i.status,
+             v.name AS merchant, vb.logo_url, vb.primary_color,
+             o.name AS org_name, o.branding AS org_branding
+      FROM invoices i
+      LEFT JOIN venues v ON v.id = i.venue_id
+      LEFT JOIN venue_branding vb ON vb.venue_id = i.venue_id
+      LEFT JOIN organizations o ON o.id = v.org_id
       WHERE i.number = ${number} LIMIT 1`;
     if (!inv) return json({ error: "not found" }, 404);
     const balance = Number(inv.amount) - Number(inv.amount_paid);
+    const org = (inv.org_branding ?? {}) as Record<string, unknown>;
     return json({
       till: inv.number,
       amount: balance > 0 ? balance : Number(inv.amount),
       merchant: inv.merchant ?? "PesaSwap",
       currency: inv.currency,
       status: inv.status,
+      logoUrl: inv.logo_url ?? null,
+      primaryColor: inv.primary_color ?? null,
+      poweredBy: inv.org_name
+        ? ((org.poweredBy as string) ?? `Powered by ${inv.org_name}`)
+        : null,
     });
   }
 

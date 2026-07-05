@@ -1,5 +1,6 @@
 import { getSql } from "@/lib/db";
 import { requireAuth, requireRole } from "@/api/auth";
+import { hashPassword } from "@/lib/jwt";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -58,6 +59,8 @@ export async function handleOrgRoute(
       primaryColor?: string;
       poweredBy?: string;
       pesaswapPartnerId?: string;
+      adminEmail?: string;
+      adminPassword?: string;
     };
     const name = String(body.name ?? "").trim();
     const slug = String(body.slug ?? "")
@@ -80,7 +83,27 @@ export async function handleOrgRoute(
     } catch {
       return json({ error: "that slug is already taken" }, 409);
     }
-    return json({ org: { id, name, slug } }, 201);
+    // Optionally bootstrap the reseller's admin login: an org-scoped user with no
+    // venue whose token carries the org claim (see login) + reseller_admin role.
+    let adminCreated = false;
+    const adminEmail = String(body.adminEmail ?? "")
+      .trim()
+      .toLowerCase();
+    if (
+      adminEmail.includes("@") &&
+      String(body.adminPassword ?? "").length >= 8
+    ) {
+      try {
+        const hash = await hashPassword(String(body.adminPassword));
+        await sql`
+          INSERT INTO app_users (email, password_hash, name, role, org_id)
+          VALUES (${adminEmail}, ${hash}, ${`${name} Admin`}, 'reseller_admin', ${id})`;
+        adminCreated = true;
+      } catch {
+        /* email already exists — the org is still created */
+      }
+    }
+    return json({ org: { id, name, slug }, adminCreated }, 201);
   }
 
   if (url.pathname === "/api/org/merchants" && request.method === "GET") {
