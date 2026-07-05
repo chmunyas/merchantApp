@@ -11,9 +11,9 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
 - ✅ **DONE (partial)** Sensitive read isolation — `requireAuth` on
   `/api/contacts`, `/api/invoices(+stats)`, `/api/whatsapp/conversations|messages`;
   non-admin tokens pinned to their venue.
-- **P1** Finish **read gating** — `requireAuth` on the remaining venue GETs
-  (`/api/state`, `/api/dlq`, `/api/analytics/agent`, `/api/kb`, `/api/recurring`)
-  and move `/api/state` + invoice-activity client calls to `authFetch`.
+- ✅ **DONE** **Read gating** — `requireAuth` now on `/api/state`, `/api/dlq`,
+  `/api/analytics/agent`, `/api/kb`, `/api/recurring`; `/api/state` + invoice
+  activity client calls moved to `authFetch`. (No more unauthenticated tenant reads.)
 - **P1** **Provider webhook signatures** — verify `X-Hub-Signature-256` (WhatsApp)
   + Telegram/Instagram/SMS; require a shared secret on
   `/api/whatsapp/bridge/inbound` and `/api/invoicing/run` (Alert 7).
@@ -42,15 +42,12 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
 - **P2** Dispute / chargeback tooling.
 
 ## Data model (server-authoritative migration)
-- ✅ **DONE (staff)** `staff` table + `/api/staff` per-row CRUD + settings UI wired
-  (one-time localStorage→server migration). **Reference pattern** for the rest.
+- ✅ **DONE (staff, orders)** `staff` + `orders`/`order_items` are server-authoritative
+  (`/api/staff`, `/api/orders`); `tips` attribution/pooling live (`/api/tips`,
+  `payments.staff_id`+`tip_amount`, `tip_pools`, `tip_allocations`). **Reference pattern**.
 - ✅ **DONE (settings/branding)** `venue_branding` (logo/colour/name) via `/api/branding`.
-- **P1** Migrate the remaining localStorage-blob entities (**menus, tables, orders**)
-  from `merchant_state` to dedicated tables following the `staff` pattern: a
-  venue-scoped table + `/api/<entity>` per-row CRUD (`requireAuth` +
-  `venueFromPayload`) + client wiring with a one-time migration. Kills the
-  cross-device whole-array clobber risk. (`invoices/contacts/enquiries/menu_items/
-  kb/sequences/conversations/payments` are already server-authoritative.)
+- **P2** Migrate the remaining localStorage-blob entities (**menus, tables**) from
+  `merchant_state` to dedicated tables following the `staff`/`orders` pattern.
 - **P2** Serve the **venues list from Postgres** so a signed-up merchant sees their
   own venue in the picker (not the demo venues).
 
