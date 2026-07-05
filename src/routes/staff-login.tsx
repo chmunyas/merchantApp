@@ -3,7 +3,7 @@ import { ArrowLeft, Delete, Lock } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { getDemoStaffByPin, setStaffSession } from "@/lib/auth";
+import { staffLogin } from "@/lib/auth";
 
 export const Route = createFileRoute("/staff-login")({
   component: StaffLoginPage,
@@ -44,10 +44,9 @@ function StaffLoginPage() {
   }, [lockedUntil]);
 
   const verifyPin = useCallback(
-    (fullPin: string) => {
-      const staffUser = getDemoStaffByPin(fullPin);
+    async (fullPin: string) => {
+      const staffUser = await staffLogin(fullPin);
       if (staffUser) {
-        setStaffSession(staffUser);
         void navigate({ to: "/staff-console" });
       } else {
         const newAttempts = attempts + 1;
@@ -77,7 +76,7 @@ function StaffLoginPage() {
       setPin(newPin);
       setError("");
       if (newPin.length === 4) {
-        setTimeout(() => verifyPin(newPin), 200);
+        setTimeout(() => void verifyPin(newPin), 200);
       }
     },
     [pin, isLocked, verifyPin],

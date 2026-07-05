@@ -408,7 +408,7 @@ function DashboardShell() {
 
 function DashboardLayout() {
   return (
-    <ProtectedRoute roles={["merchant", "admin"]}>
+    <ProtectedRoute roles={["merchant", "admin", "manager", "supervisor", "staff"]}>
       <StateHydrator>
         <DashboardShell />
       </StateHydrator>

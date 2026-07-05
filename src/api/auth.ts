@@ -379,5 +379,41 @@ export async function handleAuthRoute(
     return json({ token, user: { email: null, role, name: "Operator" } });
   }
 
+  // Staff PIN login: verify a PIN against the staff table + mint a staff JWT
+  // (role=staff, venue + staff_id) so authFetch works for staff. Not gated by
+  // AUTH_REQUIRE_LOGIN — it IS a real credential check.
+  if (path === "/api/auth/staff-login" && request.method === "POST") {
+    const cfg = await getAuthConfig(env);
+    const sql = getSql(env);
+    if (!cfg || !sql) return json({ error: "auth unavailable" }, 503);
+    const body = (await request.json().catch(() => ({}))) as { pin?: string };
+    const pin = String(body.pin ?? "").trim();
+    if (!/^\d{4,8}$/.test(pin)) return json({ error: "invalid pin" }, 400);
+    const [staff] = await sql`
+      SELECT id, name, venue_id FROM staff
+      WHERE pin = ${pin} AND active = true LIMIT 1`;
+    if (!staff) return json({ error: "invalid pin" }, 401);
+    const token = await signJwt(
+      {
+        sub: `staff:${staff.id}`,
+        role: "staff",
+        name: (staff.name as string) ?? "Staff",
+        venue: (staff.venue_id as string) ?? undefined,
+        staff_id: staff.id,
+      },
+      cfg.secret,
+    );
+    return json({
+      token,
+      user: {
+        email: null,
+        role: "staff",
+        name: staff.name,
+        venue: staff.venue_id,
+        staffId: staff.id,
+      },
+    });
+  }
+
   return null;
 }

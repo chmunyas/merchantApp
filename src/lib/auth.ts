@@ -184,6 +184,35 @@ export async function signup(input: {
   }
 }
 
+// Staff PIN login: verify a PIN against the staff table and store a real staff
+// JWT (role=staff, venue + staff_id) so authFetch works for staff.
+export async function staffLogin(pin: string): Promise<AuthUser | null> {
+  try {
+    const res = await fetch("/api/auth/staff-login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pin }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      token: string;
+      user: { name?: string; venue?: string; staffId?: string };
+    };
+    setToken(data.token);
+    const user: AuthUser = {
+      id: data.user.staffId ?? "staff",
+      name: data.user.name ?? "Staff",
+      role: "staff",
+      staffId: data.user.staffId,
+      merchantId: data.user.venue,
+    };
+    writeUser(DEMO_AUTH_KEY, user);
+    return user;
+  } catch {
+    return null;
+  }
+}
+
 // fetch() that attaches the JWT — use for protected admin/config calls.
 export function authFetch(
   input: string,
