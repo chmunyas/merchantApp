@@ -322,7 +322,7 @@ const ROUTES: Route[] = [
     name: "top_customers",
     describe: "highest-spending customers",
     test: (m) =>
-      /\b(top|best|highest)\s+(customers?|spenders?|clients?)\b|\bvips?\b|most loyal/.test(
+      /\b(top|best|highest)\b[\s\w]{0,10}\b(customers?|spenders?|clients?)\b|\bvips?\b|most loyal/.test(
         m,
       ),
     run: toolTopCustomers,
