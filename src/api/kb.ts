@@ -24,11 +24,13 @@ export async function handleKbRoute(
   const path = url.pathname;
   if (!path.startsWith("/api/kb")) return null;
 
-  const sql = getSql(env);
-  if (!sql) return json({ error: "database not configured" }, 503);
-  const venue = await resolveVenue(request, env, url);
-
   if (path === "/api/kb" && request.method === "GET") {
+    if (!(await requireAuth(request, env))) {
+      return json({ error: "unauthorized" }, 401);
+    }
+    const sql = getSql(env);
+    if (!sql) return json({ error: "database not configured" }, 503);
+    const venue = await resolveVenue(request, env, url);
     const articles = await sql`
       SELECT id, title, body, tags, (embedding IS NOT NULL) AS embedded, created_at
       FROM kb_articles WHERE venue_id = ${venue} ORDER BY created_at DESC`;
@@ -39,6 +41,9 @@ export async function handleKbRoute(
     if (!(await requireAuth(request, env))) {
       return json({ error: "unauthorized" }, 401);
     }
+    const sql = getSql(env);
+    if (!sql) return json({ error: "database not configured" }, 503);
+    const venue = await resolveVenue(request, env, url);
     const body = (await request.json()) as {
       venue?: string;
       title?: string;
@@ -62,6 +67,7 @@ export async function handleKbRoute(
     if (!(await requireAuth(request, env))) {
       return json({ error: "unauthorized" }, 401);
     }
+    const venue = await resolveVenue(request, env, url);
     const body = (await request.json()) as { venue?: string; query?: string };
     const hits = await searchKb(venue, String(body.query ?? ""), env);
     return json({ hits });
@@ -71,6 +77,9 @@ export async function handleKbRoute(
     if (!(await requireAuth(request, env))) {
       return json({ error: "unauthorized" }, 401);
     }
+    const sql = getSql(env);
+    if (!sql) return json({ error: "database not configured" }, 503);
+    const venue = await resolveVenue(request, env, url);
     const id = path.slice("/api/kb/".length);
     await sql`DELETE FROM kb_articles WHERE id = ${id} AND venue_id = ${venue}`;
     return json({ ok: true });

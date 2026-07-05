@@ -45,6 +45,9 @@ export async function handleRecurringRoute(
   const venue = await resolveVenue(request, env, url);
 
   if (path === "/api/recurring" && request.method === "GET") {
+    if (!(await requireAuth(request, env))) {
+      return json({ error: "unauthorized" }, 401);
+    }
     const schedules = await sql`
       SELECT id, customer_name, phone, channel, amount, currency, description,
              cadence, due_days, next_run_at, active, auto_send, reminders,

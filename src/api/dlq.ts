@@ -25,11 +25,13 @@ export async function handleDlqRoute(
   const path = url.pathname;
   if (!path.startsWith("/api/dlq")) return null;
 
-  const sql = getSql(env);
-  if (!sql) return json({ error: "database not configured" }, 503);
-  const venue = await resolveVenue(request, env, url);
-
   if (path === "/api/dlq" && request.method === "GET") {
+    if (!(await requireAuth(request, env))) {
+      return json({ error: "unauthorized" }, 401);
+    }
+    const sql = getSql(env);
+    if (!sql) return json({ error: "database not configured" }, 503);
+    const venue = await resolveVenue(request, env, url);
     const failed = await sql`
       SELECT id, channel, conversation_id, payload, created_at
       FROM events
@@ -42,6 +44,9 @@ export async function handleDlqRoute(
     if (!(await requireAuth(request, env))) {
       return json({ error: "unauthorized" }, 401);
     }
+    const sql = getSql(env);
+    if (!sql) return json({ error: "database not configured" }, 503);
+    const venue = await resolveVenue(request, env, url);
     const failed = await sql`
       SELECT id, channel, payload FROM events
       WHERE venue_id = ${venue} AND status = 'failed'

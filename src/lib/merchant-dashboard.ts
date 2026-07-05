@@ -36,6 +36,7 @@ import type {
   WorkflowTrigger,
   Zone,
 } from "@/components/merchant/features/types";
+import { authFetch } from "@/lib/auth";
 
 export const MERCHANT_NAME = "Sade's Atelier";
 export const TILL_NUMBER = "247365";
@@ -1973,7 +1974,7 @@ export function writeStorage<T>(key: string, value: T) {
 function pushMerchantState(key: string, value: unknown): void {
   if (typeof fetch === "undefined") return;
   const venue = getCurrentVenueId();
-  fetch(`/api/state?venue=${encodeURIComponent(venue)}`, {
+  authFetch(`/api/state?venue=${encodeURIComponent(venue)}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ key, value }),
@@ -2008,7 +2009,7 @@ export async function hydrateMerchantState(): Promise<void> {
   if (!canUseStorage() || typeof fetch === "undefined") return;
   try {
     const venue = getCurrentVenueId();
-    const res = await fetch(`/api/state?venue=${encodeURIComponent(venue)}`);
+    const res = await authFetch(`/api/state?venue=${encodeURIComponent(venue)}`);
     if (!res.ok) return;
     const data = (await res.json()) as { state?: Record<string, unknown> };
     const state = data.state ?? {};

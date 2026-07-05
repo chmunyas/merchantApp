@@ -103,14 +103,24 @@ async function recordLedger(
 ): Promise<void> {
   const sql = getSql(env);
   if (!sql) return;
+  // Attribute the tip + serving staff (for the tips feature) from metadata.
+  const meta = (rec.metadata ?? {}) as Record<string, unknown>;
+  const tipAmount = Math.max(0, Math.round(Number(meta.tip_amount ?? 0)) || 0);
+  const staffId =
+    typeof meta.staff_id === "string" && /^[0-9a-f-]{36}$/i.test(meta.staff_id)
+      ? meta.staff_id
+      : null;
   try {
     await sql`
       INSERT INTO payments
-        (id, venue_id, kind, amount, currency, status, provider_ref, reference, metadata)
+        (id, venue_id, kind, amount, currency, status, provider_ref, reference, metadata, tip_amount, staff_id)
       VALUES (${rec.id}, ${rec.venue ?? null}, ${rec.kind ?? "payment"}, ${rec.amount},
               ${rec.currency}, ${rec.status}, ${rec.providerRef ?? null}, ${rec.reference ?? null},
-              ${sql.json(JSON.parse(JSON.stringify(rec.metadata ?? {})))})
-      ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, updated_at = now()`;
+              ${sql.json(JSON.parse(JSON.stringify(rec.metadata ?? {})))}, ${tipAmount}, ${staffId})
+      ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status,
+        tip_amount = EXCLUDED.tip_amount,
+        staff_id = COALESCE(EXCLUDED.staff_id, payments.staff_id),
+        updated_at = now()`;
   } catch {
     /* best-effort ledger */
   }

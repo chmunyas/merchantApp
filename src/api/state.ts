@@ -1,4 +1,6 @@
 import { getSql } from "@/lib/db";
+import { requireAuth } from "@/api/auth";
+import { venueFromPayload } from "@/lib/tenancy";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -23,11 +25,13 @@ export async function handleStateRoute(
   const path = url.pathname;
   if (path !== "/api/state") return null;
 
-  const sql = getSql(env);
-  if (!sql) return json({ state: {} });
-  const venue = url.searchParams.get("venue") ?? "main";
-
   if (request.method === "GET") {
+    if (!(await requireAuth(request, env))) {
+      return json({ error: "unauthorized" }, 401);
+    }
+    const sql = getSql(env);
+    if (!sql) return json({ state: {} });
+    const venue = venueFromPayload(await requireAuth(request, env), url);
     const rows = await sql`
       SELECT skey, value FROM merchant_state WHERE venue_id = ${venue}`;
     const state: Record<string, unknown> = {};
@@ -36,6 +40,12 @@ export async function handleStateRoute(
   }
 
   if (request.method === "POST") {
+    if (!(await requireAuth(request, env))) {
+      return json({ error: "unauthorized" }, 401);
+    }
+    const sql = getSql(env);
+    if (!sql) return json({ state: {} });
+    const venue = venueFromPayload(await requireAuth(request, env), url);
     const body = (await request.json()) as { key?: string; value?: unknown };
     if (!body.key) return json({ error: "key required" }, 400);
     await sql`

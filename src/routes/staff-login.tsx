@@ -48,7 +48,7 @@ function StaffLoginPage() {
       const staffUser = getDemoStaffByPin(fullPin);
       if (staffUser) {
         setStaffSession(staffUser);
-        void navigate({ to: "/dashboard" });
+        void navigate({ to: "/staff-console" });
       } else {
         const newAttempts = attempts + 1;
         setAttempts(newAttempts);

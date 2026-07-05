@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { authFetch } from "@/lib/auth";
 import {
   type KitchenOrder,
   type OrderStatus,
@@ -47,9 +48,12 @@ function getTimeSince(isoDate: string): string {
 }
 
 function KitchenDisplayPage() {
-  const orders = useKitchenOrders();
+  const localOrders = useKitchenOrders();
+  const [apiOrders, setApiOrders] = useState<KitchenOrder[] | null>(null);
   const [filter, setFilter] = useState<"active" | "all">("active");
   const [, setTick] = useState(0);
+  const orders = apiOrders && apiOrders.length > 0 ? apiOrders : localOrders;
+  const usingApiOrders = Boolean(apiOrders && apiOrders.length > 0);
 
   // Refresh time displays every 10s
   useEffect(() => {
@@ -77,6 +81,25 @@ function KitchenDisplayPage() {
     return () => clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    authFetch("/api/orders")
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const data = (await res.json()) as { orders?: ApiOrder[] };
+        return (data.orders ?? []).map(apiOrderToKitchenOrder);
+      })
+      .then((next) => {
+        if (!cancelled && next) setApiOrders(next);
+      })
+      .catch(() => {
+        if (!cancelled) setApiOrders(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const activeOrders = useMemo(
     () =>
       orders.filter((o) => o.status !== "served" && o.status !== "cancelled"),
@@ -96,7 +119,38 @@ function KitchenDisplayPage() {
     [orders],
   );
 
-  function handleStatusChange(orderId: string, newStatus: OrderStatus) {
+  async function handleStatusChange(orderId: string, newStatus: OrderStatus) {
+    if (usingApiOrders) {
+      const previous = apiOrders;
+      setApiOrders(
+        (current) =>
+          current?.map((order) =>
+            order.id === orderId
+              ? {
+                  ...order,
+                  status: newStatus,
+                  updatedAt: new Date().toISOString(),
+                }
+              : order,
+          ) ?? current,
+      );
+      try {
+        const res = await authFetch(`/api/orders/${orderId}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ status: newStatus }),
+        });
+        if (!res.ok) throw new Error("status update failed");
+        toast.success(
+          `Order ${orderId.slice(0, 8)} → ${STATUS_CONFIG[newStatus].label}`,
+        );
+      } catch {
+        setApiOrders(previous);
+        toast.error("Could not update order status");
+      }
+      return;
+    }
+
     const updated = updateKitchenOrderStatus(orderId, newStatus);
     if (updated) {
       toast.success(
@@ -181,6 +235,46 @@ function KitchenDisplayPage() {
       )}
     </div>
   );
+}
+
+type ApiOrder = {
+  id: string;
+  table_id?: string | null;
+  status: OrderStatus;
+  total: number | string;
+  created_at?: string;
+  updated_at?: string;
+  items?: ApiOrderItem[];
+};
+
+type ApiOrderItem = {
+  id: string;
+  name: string;
+  qty?: number | string;
+  price?: number | string;
+  notes?: string | null;
+};
+
+function apiOrderToKitchenOrder(order: ApiOrder): KitchenOrder {
+  const tableId = order.table_id ?? "";
+  const tableNumber = Number.parseInt(tableId, 10);
+  return {
+    id: order.id,
+    tableId,
+    tableNumber: Number.isFinite(tableNumber) ? tableNumber : 0,
+    status: order.status,
+    total: Number(order.total ?? 0),
+    fulfilment: "dine-in",
+    createdAt: order.created_at ?? new Date().toISOString(),
+    updatedAt: order.updated_at ?? order.created_at ?? new Date().toISOString(),
+    items: (order.items ?? []).map((item) => ({
+      id: item.id,
+      name: item.name,
+      quantity: Number(item.qty ?? 1),
+      price: Number(item.price ?? 0),
+      notes: item.notes ?? undefined,
+    })),
+  };
 }
 
 function StatCard({

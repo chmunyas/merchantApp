@@ -1,5 +1,5 @@
 import { getSql } from "@/lib/db";
-import { resolveVenue } from "@/api/auth";
+import { requireAuth, resolveVenue } from "@/api/auth";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,6 +24,9 @@ export async function handleAnalyticsRoute(
   if (path !== "/api/analytics/agent") return null;
   if (request.method !== "GET") return null;
 
+  if (!(await requireAuth(request, env))) {
+    return json({ error: "unauthorized" }, 401);
+  }
   const sql = getSql(env);
   if (!sql) return json({ error: "database not configured" }, 503);
   const venue = await resolveVenue(request, env, url);

@@ -9,6 +9,8 @@ import {
 export type UserRole =
   | "admin"
   | "merchant"
+  | "manager"
+  | "supervisor"
   | "staff"
   | "customer"
   | "reseller_admin";
@@ -220,7 +222,9 @@ export function getDefaultRouteForRole(role: UserRole) {
     case "admin":
       return "/admin";
     case "staff":
-      return "/merchant";
+    case "supervisor":
+      return "/staff-console";
+    case "manager":
     case "merchant":
       return "/dashboard";
     case "reseller_admin":

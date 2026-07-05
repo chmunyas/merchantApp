@@ -11,6 +11,8 @@ import { handleStateRoute } from "./api/state";
 import { handleBrandingRoute } from "./api/branding";
 import { handleOrgRoute } from "./api/org";
 import { handleStaffRoute } from "./api/staff";
+import { handleTipsRoute } from "./api/tips";
+import { handleOrdersRoute } from "./api/orders";
 import { handleWhatsappRoute } from "./api/whatsapp";
 import { handleTelegramRoute } from "./api/telegram";
 import { handleChannelRoute } from "./api/channels";
@@ -168,6 +170,14 @@ export default {
           // Server-authoritative staff (team members)
           const staffResponse = await handleStaffRoute(request, env);
           if (staffResponse) return staffResponse;
+
+          // Tips (attribution + pooling + reporting)
+          const tipsResponse = await handleTipsRoute(request, env);
+          if (tipsResponse) return tipsResponse;
+
+          // Server-authoritative orders + kitchen tickets
+          const ordersResponse = await handleOrdersRoute(request, env);
+          if (ordersResponse) return ordersResponse;
 
           // WhatsApp AI agent (Cloud API webhook + simulator)
           const whatsappResponse = await handleWhatsappRoute(request, env);

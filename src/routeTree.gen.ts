@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TableRouteImport } from './routes/table'
 import { Route as StaffLoginRouteImport } from './routes/staff-login'
+import { Route as StaffConsoleRouteImport } from './routes/staff-console'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as ResetPinRouteImport } from './routes/reset-pin'
 import { Route as ResellerRouteImport } from './routes/reseller'
@@ -63,6 +64,11 @@ const TableRoute = TableRouteImport.update({
 const StaffLoginRoute = StaffLoginRouteImport.update({
   id: '/staff-login',
   path: '/staff-login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StaffConsoleRoute = StaffConsoleRouteImport.update({
+  id: '/staff-console',
+  path: '/staff-console',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignInRoute = SignInRouteImport.update({
@@ -296,6 +302,7 @@ export interface FileRoutesByFullPath {
   '/reseller': typeof ResellerRoute
   '/reset-pin': typeof ResetPinRoute
   '/sign-in': typeof SignInRoute
+  '/staff-console': typeof StaffConsoleRoute
   '/staff-login': typeof StaffLoginRoute
   '/table': typeof TableRouteWithChildren
   '/admin/activity': typeof AdminActivityRoute
@@ -341,6 +348,7 @@ export interface FileRoutesByTo {
   '/reseller': typeof ResellerRoute
   '/reset-pin': typeof ResetPinRoute
   '/sign-in': typeof SignInRoute
+  '/staff-console': typeof StaffConsoleRoute
   '/staff-login': typeof StaffLoginRoute
   '/table': typeof TableRouteWithChildren
   '/admin/activity': typeof AdminActivityRoute
@@ -389,6 +397,7 @@ export interface FileRoutesById {
   '/reseller': typeof ResellerRoute
   '/reset-pin': typeof ResetPinRoute
   '/sign-in': typeof SignInRoute
+  '/staff-console': typeof StaffConsoleRoute
   '/staff-login': typeof StaffLoginRoute
   '/table': typeof TableRouteWithChildren
   '/admin/activity': typeof AdminActivityRoute
@@ -438,6 +447,7 @@ export interface FileRouteTypes {
     | '/reseller'
     | '/reset-pin'
     | '/sign-in'
+    | '/staff-console'
     | '/staff-login'
     | '/table'
     | '/admin/activity'
@@ -483,6 +493,7 @@ export interface FileRouteTypes {
     | '/reseller'
     | '/reset-pin'
     | '/sign-in'
+    | '/staff-console'
     | '/staff-login'
     | '/table'
     | '/admin/activity'
@@ -530,6 +541,7 @@ export interface FileRouteTypes {
     | '/reseller'
     | '/reset-pin'
     | '/sign-in'
+    | '/staff-console'
     | '/staff-login'
     | '/table'
     | '/admin/activity'
@@ -578,6 +590,7 @@ export interface RootRouteChildren {
   ResellerRoute: typeof ResellerRoute
   ResetPinRoute: typeof ResetPinRoute
   SignInRoute: typeof SignInRoute
+  StaffConsoleRoute: typeof StaffConsoleRoute
   StaffLoginRoute: typeof StaffLoginRoute
   TableRoute: typeof TableRouteWithChildren
   BookBusinessIdRoute: typeof BookBusinessIdRoute
@@ -598,6 +611,13 @@ declare module '@tanstack/react-router' {
       path: '/staff-login'
       fullPath: '/staff-login'
       preLoaderRoute: typeof StaffLoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/staff-console': {
+      id: '/staff-console'
+      path: '/staff-console'
+      fullPath: '/staff-console'
+      preLoaderRoute: typeof StaffConsoleRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sign-in': {
@@ -999,6 +1019,7 @@ const rootRouteChildren: RootRouteChildren = {
   ResellerRoute: ResellerRoute,
   ResetPinRoute: ResetPinRoute,
   SignInRoute: SignInRoute,
+  StaffConsoleRoute: StaffConsoleRoute,
   StaffLoginRoute: StaffLoginRoute,
   TableRoute: TableRouteWithChildren,
   BookBusinessIdRoute: BookBusinessIdRoute,

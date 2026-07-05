@@ -240,7 +240,7 @@ function InvoicesPage() {
 
   async function openActivity(inv: Invoice) {
     try {
-      const res = await fetch(`/api/invoices/${inv.id}/activity?venue=${venue}`);
+      const res = await authFetch(`/api/invoices/${inv.id}/activity?venue=${venue}`);
       const data = (await res.json()) as { events?: ActivityEvent[] };
       setActivity({ number: inv.number, events: data.events ?? [] });
     } catch {
