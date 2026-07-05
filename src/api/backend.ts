@@ -127,6 +127,9 @@ export async function handleBackendRoute(
   }
 
   if (path === "/api/contacts") {
+    if (!(await requireAuth(request, env))) {
+      return json({ error: "unauthorized" }, 401);
+    }
     const sql = getSql(env);
     if (!sql) return json({ error: "database not configured" }, 503);
     try {

@@ -13,12 +13,41 @@ in place (needs external resources to complete), ⛔ = not started.
 - ✅ **RBAC** — `requireRole(request, env, roles)`; the platform admin-password
   change is admin-only (was a privilege-escalation hole).
 - ✅ **Enforcement toggles** — `AUTH_REQUIRE_LOGIN=1` disables the anonymous demo
-  session bootstrap (forces real logins); `AUTH_DISABLE_SIGNUP=1` closes signups.
-- 🟡 **Full read isolation** — reads *pin* to the token venue when a token is sent,
-  but venue-scoped GETs are not yet hard-`requireAuth`. **Next:** require auth on
-  reads to close anonymous `?venue=X` cross-tenant reads.
-- ⛔ Default admin password (`pesaswap-admin`) and JWT secret must be rotated via
-  `ADMIN_PASSWORD` / `JWT_SECRET` (or `/api/auth/password`) before production.
+  session bootstrap (forces real logins; **set on the live deploy**);
+  `AUTH_DISABLE_SIGNUP=1` closes signups.
+- ✅ **Sensitive read isolation** — `requireAuth` now gates the high-PII reads
+  (`/api/contacts`, `/api/invoices` + `/stats`, `/api/whatsapp/conversations` +
+  `/messages`), and `venueFromPayload` pins non-admin tokens to their own venue
+  (a missing claim no longer grants `?venue=` access unless `role==='admin'`).
+- 🟡 **Remaining read gating** — a few lower-sensitivity venue GETs still lack a
+  hard `requireAuth` (`/api/state`, `/api/dlq`, `/api/analytics/agent`,
+  `/api/kb`, `/api/recurring`); gating these also needs the `/api/state` +
+  invoice-activity client calls moved to `authFetch` (tracked in BACKLOG).
+- ✅ **Admin default removed in prod** — when `ADMIN_PASSWORD` is unset on a real
+  deploy (HYPERDRIVE binding present) the seed uses a random secret, never the
+  `pesaswap-admin` dev default; `ADMIN_PASSWORD` / `JWT_SECRET` / `ADMIN_EMAIL`
+  apply on load. The live deploy has strong `ADMIN_PASSWORD` + `JWT_SECRET` set.
+
+## Hardening from the automated security review
+- ✅ **Payments webhook fail-closed** — `POST /api/webhooks/pesaswap` reads
+  `PESASWAP_WEBHOOK_SECRET` from the Worker `env` binding and **rejects** when the
+  secret is unset or the HMAC signature is invalid (was fail-open → forged
+  `payment.succeeded` events broadcast as real sales). Same env fix lets payment
+  create/refund read `PESASWAP_API_KEY`.
+- ✅ **A2A privilege** — `POST /api/a2a` only grants the staff role (invoice
+  creation, contact reads) when a shared `A2A_API_KEY` / `OMNI_API_KEY` is
+  presented via `x-api-key`; otherwise it runs as `customer`. Role is no longer
+  taken from the request body.
+- ✅ **IDOR** — `/api/whatsapp/messages` requires auth and joins on
+  `conversations.venue_id`; `/api/whatsapp/reply` scopes its conversation lookup
+  by venue.
+- ✅ **Security headers** — every response carries `X-Frame-Options: DENY`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`, and
+  HSTS (WebSocket upgrades skipped). CORS stays `*`; tighten to the app origin
+  once on a fixed domain.
+- 🟡 **Provider webhook signatures** — inbound WhatsApp/Telegram/Instagram/SMS
+  webhooks + `/api/invoicing/run` still need provider-signature / shared-secret
+  verification (Alert 7). Tracked in BACKLOG.
 
 ## Rate limiting / abuse protection (#2)
 - ✅ Postgres fixed-window limiter (`src/lib/rate-limit.ts`) applied centrally in

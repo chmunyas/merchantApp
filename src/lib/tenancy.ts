@@ -13,7 +13,13 @@ export function venueFromPayload(
 ): string {
   const claim =
     payload && typeof payload.venue === "string" ? payload.venue : null;
-  return claim || url.searchParams.get("venue") || "main";
+  // A token's venue claim always wins (tenant pinning). An authenticated
+  // principal WITHOUT a claim may only target a venue via ?venue= when it is a
+  // platform admin; any other authenticated caller is pinned to "main". Public
+  // (unauthenticated) callers keep the query-param default for public flows.
+  if (claim) return claim;
+  if (payload && payload.role !== "admin") return "main";
+  return url.searchParams.get("venue") || "main";
 }
 
 // Per-tenant plan limits. Tokens without a plan claim (admin/demo/session) are

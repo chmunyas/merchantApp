@@ -1,4 +1,5 @@
 import { runAgent, type AgentRole } from "@/lib/agent";
+import { envVar } from "@/lib/env";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -64,11 +65,18 @@ export async function handleA2aRoute(
     };
     const message = String(body.message ?? body.text ?? "");
     if (!message.trim()) return json({ error: "message required" }, 400);
+    // Privileged (staff) scope — which can create invoices and read contacts —
+    // requires a shared A2A key. Without it the agent runs with customer scope,
+    // so an anonymous caller cannot self-assign a staff role via the body.
+    const apiKey = envVar(env, "A2A_API_KEY") ?? envVar(env, "OMNI_API_KEY");
+    const provided = request.headers.get("x-api-key") ?? "";
+    const authorized = Boolean(apiKey) && provided === apiKey;
+    const role: AgentRole = authorized ? (body.role ?? "staff") : "customer";
     const result = await runAgent(
       message,
       {
         venue: body.venue ?? "main",
-        role: body.role ?? "staff",
+        role,
         from: body.from ?? "a2a",
         name: body.name,
       },

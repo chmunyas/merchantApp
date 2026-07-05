@@ -42,11 +42,16 @@ async function getAuthConfig(env: unknown): Promise<AuthConfig | null> {
   const [row] = await sql`SELECT value FROM app_settings WHERE key = 'auth'`;
   let cfg = row?.value as AuthConfig | undefined;
   if (!cfg?.secret) {
+    // No hardcoded default admin password in production: when ADMIN_PASSWORD is
+    // unset on a real deploy (detected via the HYPERDRIVE binding) seed an
+    // unguessable random secret so a public deploy never ships a known default.
+    const isProd = Boolean((env as { HYPERDRIVE?: unknown } | null)?.HYPERDRIVE);
     const seeded: AuthConfig = {
       secret: randomSecret(),
       adminEmail: envVar(env, "ADMIN_EMAIL") ?? "admin@pesaswap.io",
       adminPasswordHash: await hashPassword(
-        envVar(env, "ADMIN_PASSWORD") ?? "pesaswap-admin",
+        envVar(env, "ADMIN_PASSWORD") ??
+          (isProd ? randomSecret() : "pesaswap-admin"),
       ),
     };
     await sql`
@@ -57,6 +62,8 @@ async function getAuthConfig(env: unknown): Promise<AuthConfig | null> {
   }
   const envSecret = envVar(env, "JWT_SECRET");
   if (envSecret) cfg = { ...cfg, secret: envSecret };
+  const envAdminEmail = envVar(env, "ADMIN_EMAIL");
+  if (envAdminEmail) cfg = { ...cfg, adminEmail: envAdminEmail };
   return cfg;
 }
 

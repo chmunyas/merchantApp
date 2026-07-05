@@ -56,10 +56,16 @@ export async function handleInvoiceRoute(
   }
 
   if (path === "/api/invoices" && request.method === "GET") {
+    if (!(await requireAuth(request, env))) {
+      return json({ error: "unauthorized" }, 401);
+    }
     return json({ invoices: await listInvoices(sql, venue) });
   }
 
   if (path === "/api/invoices/stats" && request.method === "GET") {
+    if (!(await requireAuth(request, env))) {
+      return json({ error: "unauthorized" }, 401);
+    }
     return json(await invoiceStats(sql, venue));
   }
 

@@ -199,6 +199,9 @@ export async function handleWhatsappRoute(
   const venue = await resolveVenue(request, env, url);
 
   if (path === "/api/whatsapp/conversations" && request.method === "GET") {
+    if (!(await requireAuth(request, env))) {
+      return json({ error: "unauthorized" }, 401);
+    }
     const conversations = await sql`
       SELECT c.id, c.wa_id, c.name, c.role, c.status, c.channel, c.last_message_at,
              (SELECT body FROM messages m WHERE m.conversation_id = c.id
@@ -210,11 +213,19 @@ export async function handleWhatsappRoute(
   }
 
   if (path === "/api/whatsapp/messages" && request.method === "GET") {
+    if (!(await requireAuth(request, env))) {
+      return json({ error: "unauthorized" }, 401);
+    }
     const conversationId = url.searchParams.get("conversation");
     if (!conversationId) return json({ error: "conversation required" }, 400);
+    // Scope by venue via the conversation so a UUID from another tenant (which
+    // the conversations list hands out) cannot be used to read its messages.
     const messages = await sql`
-      SELECT id, direction, body, ai, tool, channel, created_at FROM messages
-      WHERE conversation_id = ${conversationId} ORDER BY created_at`;
+      SELECT m.id, m.direction, m.body, m.ai, m.tool, m.channel, m.created_at
+      FROM messages m
+      JOIN conversations c ON c.id = m.conversation_id
+      WHERE m.conversation_id = ${conversationId} AND c.venue_id = ${venue}
+      ORDER BY m.created_at`;
     return json({ messages });
   }
 
@@ -231,7 +242,8 @@ export async function handleWhatsappRoute(
       return json({ error: "conversation and text required" }, 400);
     }
     const [conversation] = await sql`
-      SELECT wa_id, channel FROM conversations WHERE id = ${body.conversation}`;
+      SELECT wa_id, channel FROM conversations
+      WHERE id = ${body.conversation} AND venue_id = ${venue}`;
     if (!conversation) return json({ error: "conversation not found" }, 404);
 
     await sql`

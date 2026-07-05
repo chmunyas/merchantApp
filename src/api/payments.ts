@@ -14,13 +14,22 @@ type Env = {
   PESASWAP_URL: string; // https://sandbox.Pesaswap.io or https://api.Pesaswap.io
 };
 
-function getEnv(): Env {
+function getEnv(runtimeEnv?: unknown): Env {
+  // On Cloudflare Workers, secrets set via `wrangler secret put` are on the
+  // per-request `env` binding — NOT globalThis/process.env. Read the binding
+  // first so PESASWAP_API_KEY / PESASWAP_WEBHOOK_SECRET are actually available.
+  const e = (runtimeEnv ?? {}) as Record<string, unknown>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const g = globalThis as any;
+  const pick = (k: string): string =>
+    (typeof e[k] === "string" ? (e[k] as string) : "") ||
+    g[k] ||
+    (typeof process !== "undefined" ? process.env?.[k] : undefined) ||
+    "";
   return {
-    PESASWAP_API_KEY: g.PESASWAP_API_KEY || process.env.PESASWAP_API_KEY || "",
-    PESASWAP_WEBHOOK_SECRET: g.PESASWAP_WEBHOOK_SECRET || process.env.PESASWAP_WEBHOOK_SECRET || "",
-    PESASWAP_URL: g.PESASWAP_URL || process.env.PESASWAP_URL || "https://app.Pesaswap.io",
+    PESASWAP_API_KEY: pick("PESASWAP_API_KEY"),
+    PESASWAP_WEBHOOK_SECRET: pick("PESASWAP_WEBHOOK_SECRET"),
+    PESASWAP_URL: pick("PESASWAP_URL") || "https://app.Pesaswap.io",
   };
 }
 
@@ -141,7 +150,7 @@ export async function handlePaymentRoute(
 
   // --- Refund Routes ---
   if (path === "/api/refunds" && request.method === "POST") {
-    return withCors(await handleRefund(request), corsHeaders);
+    return withCors(await handleRefund(request, env), corsHeaders);
   }
 
   // --- Customer Payment Methods ---
@@ -152,7 +161,7 @@ export async function handlePaymentRoute(
 
   // --- Webhook from PesaSwap ---
   if (path === "/api/webhooks/pesaswap" && request.method === "POST") {
-    return withCors(await handleWebhook(request), corsHeaders);
+    return withCors(await handleWebhook(request, env), corsHeaders);
   }
 
   // --- Polling notifications fallback ---
@@ -190,7 +199,7 @@ async function handleCreatePayment(
     return jsonResponse({ error: { message: "Amount must be positive" } }, 400);
   }
 
-  const env = getEnv();
+  const env = getEnv(workerEnv);
 
   try {
     // Call PesaSwap API
@@ -286,14 +295,17 @@ function handleGetPaymentStatus(paymentId: string): Response {
 
 // --- Process Refund ---
 
-async function handleRefund(request: Request): Promise<Response> {
+async function handleRefund(
+  request: Request,
+  runtimeEnv: unknown,
+): Promise<Response> {
   const body = (await request.json()) as RefundRequest;
 
   if (!body.payment_id) {
     return jsonResponse({ error: { message: "payment_id is required" } }, 400);
   }
 
-  const env = getEnv();
+  const env = getEnv(runtimeEnv);
   const payment = payments.get(body.payment_id);
 
   // Calculate refund amount
@@ -413,18 +425,29 @@ function handleGetCustomerMethods(phone: string): Response {
 
 // --- Webhook Handler ---
 
-async function handleWebhook(request: Request): Promise<Response> {
-  const env = getEnv();
+async function handleWebhook(
+  request: Request,
+  runtimeEnv: unknown,
+): Promise<Response> {
+  const env = getEnv(runtimeEnv);
   const rawBody = await request.text();
   const signature = request.headers.get("x-pesaswap-signature") || "";
 
-  // Verify webhook signature (HMAC-SHA256)
-  if (env.PESASWAP_WEBHOOK_SECRET) {
-    const isValid = await verifyWebhookSignature(rawBody, signature, env.PESASWAP_WEBHOOK_SECRET);
-    if (!isValid) {
-      console.warn("[PesaSwap] Invalid webhook signature");
-      return jsonResponse({ error: { message: "Invalid signature" } }, 401);
-    }
+  // Signature verification is MANDATORY (fail closed). Without it, a forged
+  // `payment.succeeded` event would be broadcast to the merchant dashboard as a
+  // real sale. Reject when the secret is unconfigured or the signature is bad.
+  if (!env.PESASWAP_WEBHOOK_SECRET) {
+    console.error("[PesaSwap] Webhook secret not configured; rejecting webhook");
+    return jsonResponse({ error: { message: "Webhook not configured" } }, 503);
+  }
+  const isValid = await verifyWebhookSignature(
+    rawBody,
+    signature,
+    env.PESASWAP_WEBHOOK_SECRET,
+  );
+  if (!isValid) {
+    console.warn("[PesaSwap] Invalid webhook signature");
+    return jsonResponse({ error: { message: "Invalid signature" } }, 401);
   }
 
   const event = JSON.parse(rawBody) as {

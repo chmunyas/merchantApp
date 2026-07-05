@@ -100,9 +100,36 @@ async function normalizeCatastrophicSsrResponse(
   return brandedErrorResponse();
 }
 
+// Defense-in-depth response headers for every response (skips WebSocket
+// upgrades, whose 101 response cannot be reconstructed without losing the
+// socket). Tighten CORS to known origins in production if served from a fixed
+// domain.
+function withSecurityHeaders(response: Response): Response {
+  if (
+    response.status === 101 ||
+    (response as { webSocket?: unknown }).webSocket
+  ) {
+    return response;
+  }
+  const headers = new Headers(response.headers);
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("X-Frame-Options", "DENY");
+  headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  headers.set(
+    "Strict-Transport-Security",
+    "max-age=31536000; includeSubDomains",
+  );
+  headers.set("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
-    return withRequestSql(
+    const response = await withRequestSql(
       env,
       ctx as { waitUntil?: (promise: Promise<unknown>) => void },
       async () => {
@@ -188,5 +215,6 @@ export default {
         }
       },
     );
+    return withSecurityHeaders(response);
   },
 };
