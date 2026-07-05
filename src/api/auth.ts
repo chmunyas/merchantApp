@@ -185,6 +185,7 @@ export async function handleAuthRoute(
       email?: string;
       password?: string;
       phone?: string;
+      org?: string;
     };
     const email = String(body.email ?? "").trim().toLowerCase();
     const password = String(body.password ?? "");
@@ -210,18 +211,28 @@ export async function handleAuthRoute(
           409,
         );
       }
+      // Optional reseller attach: a merchant signing up under a bank's slug is
+      // linked to that org (and inherits its co-brand via the branding join).
+      let orgId: string | null = null;
+      if (body.org) {
+        const [org] = await sql`
+          SELECT id FROM organizations
+          WHERE slug = ${String(body.org).toLowerCase()} AND active = true
+          LIMIT 1`;
+        orgId = (org?.id as string) ?? null;
+      }
       const venueId = `v_${crypto.randomUUID().slice(0, 8)}`;
       const code =
         businessName.replace(/[^A-Za-z]/g, "").slice(0, 3).toUpperCase() ||
         "VEN";
       await sql`
-        INSERT INTO venues (id, name, code, active)
-        VALUES (${venueId}, ${businessName}, ${code}, true)`;
+        INSERT INTO venues (id, name, code, active, org_id)
+        VALUES (${venueId}, ${businessName}, ${code}, true, ${orgId})`;
       const passwordHash = await hashPassword(password);
       await sql`
-        INSERT INTO app_users (email, password_hash, name, phone, venue_id, role, plan)
+        INSERT INTO app_users (email, password_hash, name, phone, venue_id, role, plan, org_id)
         VALUES (${email}, ${passwordHash}, ${businessName},
-                ${body.phone?.trim() || null}, ${venueId}, 'merchant', 'free')`;
+                ${body.phone?.trim() || null}, ${venueId}, 'merchant', 'free', ${orgId})`;
       const token = await signJwt(
         {
           sub: email,
@@ -229,6 +240,7 @@ export async function handleAuthRoute(
           name: businessName,
           venue: venueId,
           plan: "free",
+          org: orgId ?? undefined,
         },
         cfg.secret,
       );
@@ -241,6 +253,7 @@ export async function handleAuthRoute(
             name: businessName,
             venue: venueId,
             plan: "free",
+            org: orgId,
           },
         },
         201,

@@ -9,6 +9,7 @@ import { enforceRateLimit } from "./lib/rate-limit";
 import { handleBackendRoute } from "./api/backend";
 import { handleStateRoute } from "./api/state";
 import { handleBrandingRoute } from "./api/branding";
+import { handleOrgRoute } from "./api/org";
 import { handleWhatsappRoute } from "./api/whatsapp";
 import { handleTelegramRoute } from "./api/telegram";
 import { handleChannelRoute } from "./api/channels";
@@ -158,6 +159,10 @@ export default {
           // Per-tenant branding (merchant logo/colors + reseller co-brand)
           const brandingResponse = await handleBrandingRoute(request, env);
           if (brandingResponse) return brandingResponse;
+
+          // Reseller organizations (bank white-label)
+          const orgResponse = await handleOrgRoute(request, env);
+          if (orgResponse) return orgResponse;
 
           // WhatsApp AI agent (Cloud API webhook + simulator)
           const whatsappResponse = await handleWhatsappRoute(request, env);
