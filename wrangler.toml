@@ -25,7 +25,7 @@ PESASWAP_URL = "https://app.Pesaswap.io"
 # (override per-container with WRANGLER_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE).
 [[hyperdrive]]
 binding = "HYPERDRIVE"
-id = "REPLACE_WITH_HYPERDRIVE_ID"
+id = "37e129fb323e48f8b30c842852bfddd7"
 localConnectionString = "postgres://pesaswap:pesaswap@localhost:5433/pesaswap"
 
 # Secrets (set via `wrangler secret put`):
