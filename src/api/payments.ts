@@ -110,6 +110,30 @@ async function recordLedger(
     typeof meta.staff_id === "string" && /^[0-9a-f-]{36}$/i.test(meta.staff_id)
       ? meta.staff_id
       : null;
+
+  // Loyalty is keyed on the customer phone (the unique loyalty reference). Award
+  // points only on the FIRST transition into a succeeded state, so re-recording
+  // the same payment id never double-counts.
+  const SUCCEEDED = ["succeeded", "paid", "captured"];
+  const loyaltyPhone =
+    typeof meta.customer_phone === "string" ? meta.customer_phone.trim() : "";
+  const willAward =
+    SUCCEEDED.includes(rec.status) &&
+    rec.kind !== "refund" &&
+    Boolean(loyaltyPhone) &&
+    Boolean(rec.venue);
+  let alreadySucceeded = false;
+  if (willAward) {
+    try {
+      const [prev] = await sql`SELECT status FROM payments WHERE id = ${rec.id}`;
+      alreadySucceeded = prev
+        ? SUCCEEDED.includes(String((prev as { status?: string }).status ?? ""))
+        : false;
+    } catch {
+      /* treat as a new payment */
+    }
+  }
+
   try {
     await sql`
       INSERT INTO payments
@@ -123,6 +147,26 @@ async function recordLedger(
         updated_at = now()`;
   } catch {
     /* best-effort ledger */
+  }
+
+  // Accrue loyalty points to the contact identified by phone (upsert on the
+  // unique venue+phone key). Best-effort — never block the payment.
+  if (willAward && !alreadySucceeded) {
+    const points = Math.floor(Number(rec.amount) / 1000);
+    if (points > 0) {
+      try {
+        await sql`
+          INSERT INTO contacts (venue_id, name, phone, points, visits, last_visit)
+          VALUES (${rec.venue ?? null}, ${(meta.customer_name as string) || "Guest"},
+                  ${loyaltyPhone}, ${points}, 1, now())
+          ON CONFLICT (venue_id, phone) WHERE phone IS NOT NULL AND phone <> ''
+          DO UPDATE SET points = contacts.points + ${points},
+                        visits = contacts.visits + 1,
+                        last_visit = now()`;
+      } catch {
+        /* best-effort loyalty */
+      }
+    }
   }
 }
 

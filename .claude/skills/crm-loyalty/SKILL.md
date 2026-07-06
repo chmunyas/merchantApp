@@ -15,6 +15,10 @@ the agent, invoicing and campaigns.
 - `src/api/backend.ts` — `/api/contacts` (GET/POST) + `/api/ai/command` (NL CRM).
 - `src/routes/dashboard/contacts.tsx` — the back-office UI.
 - `db/01-schema.sql` — `contacts` table (tier, points, total_spent, visits, tags).
+- `db/27-loyalty-phone.sql` — **phone is the unique loyalty reference** per venue
+  (`contacts_venue_phone_key`).
+- `src/api/payments.ts` (`recordLedger`) — accrues points to the contact by phone
+  on a successful payment; `src/lib/loyalty.ts` — tier ladder + `tierProgress`.
 
 ## Endpoints
 - `GET /api/contacts?venue=` — list (dashboard sends the token → venue-pinned).
@@ -24,7 +28,12 @@ the agent, invoicing and campaigns.
 
 ## Conventions
 - Venue is resolved from the JWT (`resolveVenue`) — see the auth-tenancy skill.
-- Tiers: `Bronze` → `Silver` → `Gold` → `Platinum`; default `Bronze`.
+- **Loyalty is keyed on the customer phone number** — `(venue_id, phone)` is unique
+  (`contacts_venue_phone_key`). Points accrue via a phone-keyed UPSERT in
+  `recordLedger` on the first transition of a payment into `succeeded`, so a phone
+  is one loyalty identity per venue (never a duplicate contact).
+- Tiers: `Bronze` → `Silver` → `Gold` → `Platinum`; default `Bronze`. Thresholds +
+  "points to next tier" live in `src/lib/loyalty.ts` (`TIER_LADDER`, `tierProgress`).
 - The same contact identity is used across WhatsApp/web/Telegram (identity graph);
   see the omnichannel-agent skill for the cross-channel timeline.
 

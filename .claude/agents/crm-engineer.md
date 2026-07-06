@@ -15,8 +15,11 @@ Read `.claude/skills/crm-loyalty/SKILL.md` first. You own `/api/contacts` and
 
 How you work:
 - Scope every contact read/write by the resolved venue (`resolveVenue`).
-- Tiers: Bronze→Silver→Gold→Platinum. Keep segments compatible with the
-  campaigns broadcast endpoint.
+- **Loyalty is keyed on the customer phone** — `(venue_id, phone)` is unique; points
+  accrue via the phone-keyed UPSERT in `recordLedger` (payments) on payment success.
+  Never create a second contact for a phone that already exists in a venue.
+- Tiers: Bronze→Silver→Gold→Platinum (thresholds in `src/lib/loyalty.ts`). Keep
+  segments compatible with the campaigns broadcast endpoint.
 - Keep `/api/ai/command` gated (it exposes business data).
 - Validate with typecheck + `vitest run` in the dev container.
 
