@@ -185,6 +185,7 @@ function ServicesDashboardPage() {
     ensureServicesDemoData(),
   );
   const [weekOffset, setWeekOffset] = useState(0);
+  const [jumpDate, setJumpDate] = useState("");
   const [bookingFilterStaff, setBookingFilterStaff] = useState("all");
   const [bookingFilterService, setBookingFilterService] = useState("all");
   const [bookingFilterStatus, setBookingFilterStatus] = useState("all");
@@ -276,6 +277,23 @@ function ServicesDashboardPage() {
     snapshot.bookings,
     weekDays,
   ]);
+
+  // Jump the weekly schedule to the week that contains a chosen date.
+  function jumpToWeekOf(value: string) {
+    setJumpDate(value);
+    if (!value) return;
+    const target = new Date(`${value}T00:00:00`);
+    if (Number.isNaN(target.getTime())) return;
+    const thisWeekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
+    thisWeekStart.setHours(0, 0, 0, 0);
+    const targetWeekStart = startOfWeek(target, { weekStartsOn: 1 });
+    targetWeekStart.setHours(0, 0, 0, 0);
+    const weeks = Math.round(
+      (targetWeekStart.getTime() - thisWeekStart.getTime()) /
+        (7 * 24 * 60 * 60 * 1000),
+    );
+    setWeekOffset(weeks);
+  }
 
   const selectedClient =
     snapshot.clients.find((client) => client.id === selectedClientId) ??
@@ -915,6 +933,14 @@ function ServicesDashboardPage() {
                       })),
                     ]}
                   />
+                  <Field label="Jump to date">
+                    <Input
+                      type="date"
+                      value={jumpDate}
+                      onChange={(event) => jumpToWeekOf(event.target.value)}
+                      className="h-10"
+                    />
+                  </Field>
                 </div>
               </CardHeader>
               <CardContent>
