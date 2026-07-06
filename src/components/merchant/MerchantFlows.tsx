@@ -586,7 +586,7 @@ function FlowShell({
       <div className="flex justify-between items-center px-6 pt-3 pb-1 text-[11px] font-mono">
         <span>9:41</span>
         <span className="flex items-center gap-1">
-          <span className="size-1.5 bg-accent rounded-full" /> FX·Live
+          <span className="size-1.5 bg-accent rounded-full" /> PesaSwap
         </span>
       </div>
       <div className="px-5 pt-3">
