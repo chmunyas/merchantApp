@@ -3933,6 +3933,7 @@ export type ServiceBusinessProfile = {
   location: string;
   phone: string;
   whatsapp: string;
+  email: string;
   tillNumber: string;
   logoUrl: string;
   website?: string;
@@ -4050,6 +4051,7 @@ function buildServiceBusiness(): ServiceBusinessProfile {
     location: "Muthithi Road, Westlands, Nairobi",
     phone: "+254711247365",
     whatsapp: "+254711247365",
+    email: "service@nairobiautocare.co.ke",
     tillNumber: "522247",
     logoUrl: serviceImage("Auto Care", "1e3a8a"),
     website: "https://pesaswap.africa/book/nairobi-auto-care",

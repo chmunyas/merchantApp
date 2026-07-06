@@ -6,13 +6,16 @@ import {
   CheckCircle2,
   Clock3,
   CreditCard,
+  Mail,
   MapPin,
+  MessageCircle,
   Phone,
+  Send,
   ShieldCheck,
   UserRound,
   Wallet,
 } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { BNPLTransaction } from "@/lib/coop-bnpl";
 import { BNPLCheckout } from "@/components/merchant/features/BNPLCheckout";
 import type { Booking } from "@/components/merchant/features/types";
@@ -94,6 +97,69 @@ function PublicBookingPage() {
   const [submitting, setSubmitting] = useState(false);
 
   const business = snapshot.business;
+  const [customerEmail, setCustomerEmail] = useState("");
+  const [branding, setBranding] = useState<{
+    businessName?: string;
+    logoUrl?: string | null;
+  } | null>(null);
+  const [contactMessage, setContactMessage] = useState("");
+  const [contactSending, setContactSending] = useState(false);
+
+  // Pull the merchant's real branding (logo the owner set in Settings) for this
+  // venue; fall back to the demo branding if none is configured.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/branding?venue=${encodeURIComponent(businessId)}`,
+        );
+        if (res.ok) {
+          const data = (await res.json()) as {
+            branding?: { businessName?: string; logoUrl?: string | null };
+          };
+          if (data.branding) setBranding(data.branding);
+        }
+      } catch {
+        /* fall back to the demo branding */
+      }
+    })();
+  }, [businessId]);
+
+  const logoUrl = branding?.logoUrl || business.logoUrl;
+  const businessName = branding?.businessName || business.name;
+  const whatsappDigits = business.whatsapp.replace(/[^\d]/g, "");
+
+  // Omnichannel natural-language message → the merchant's enquiry inbox.
+  async function sendContactMessage() {
+    if (!contactMessage.trim()) {
+      toast.error("Type a message first.");
+      return;
+    }
+    setContactSending(true);
+    try {
+      const res = await fetch(
+        `/api/enquiries?venue=${encodeURIComponent(businessId)}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            customerName: customerName.trim() || "Website visitor",
+            phone: customerPhone.trim() || undefined,
+            notes: `${contactMessage.trim()}${
+              customerEmail.trim() ? ` · email: ${customerEmail.trim()}` : ""
+            }`,
+          }),
+        },
+      );
+      if (!res.ok) throw new Error("failed");
+      toast.success("Message sent — the team will be in touch.");
+      setContactMessage("");
+    } catch {
+      toast.error("Couldn't send. Try WhatsApp or call us directly.");
+    } finally {
+      setContactSending(false);
+    }
+  }
   const service =
     snapshot.services.find((entry) => entry.id === selectedServiceId) ??
     snapshot.services[0];
@@ -377,7 +443,7 @@ function PublicBookingPage() {
               </Badge>
               <div className="space-y-2">
                 <h1 className="text-3xl font-semibold tracking-tight lg:text-4xl">
-                  {business.name}
+                  {businessName}
                 </h1>
                 <p className="max-w-2xl text-sm text-blue-100 sm:text-base">
                   {business.description}
@@ -389,6 +455,9 @@ function PublicBookingPage() {
                 </span>
                 <span className="inline-flex items-center gap-2">
                   <Phone className="h-4 w-4" /> {business.phone}
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <Mail className="h-4 w-4" /> {business.email}
                 </span>
                 <span className="inline-flex items-center gap-2">
                   <Clock3 className="h-4 w-4" />{" "}
@@ -408,13 +477,65 @@ function PublicBookingPage() {
             </div>
             <div className="rounded-3xl bg-white/10 p-4 backdrop-blur-sm">
               <img
-                src={business.logoUrl}
-                alt={business.name}
+                src={logoUrl}
+                alt={businessName}
                 className="h-52 w-full rounded-3xl object-cover"
               />
             </div>
           </div>
         </div>
+
+        <Card className="rounded-3xl border-0 shadow-lg shadow-slate-200/60">
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <CardTitle className="text-xl">Talk to us</CardTitle>
+                <CardDescription>
+                  Ask a question in your own words — we&apos;ll reply on your
+                  preferred channel.
+                </CardDescription>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <a
+                  href={`https://wa.me/${whatsappDigits}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-medium text-white"
+                >
+                  <MessageCircle className="h-4 w-4" /> WhatsApp
+                </a>
+                <a
+                  href={`tel:${business.phone}`}
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700"
+                >
+                  <Phone className="h-4 w-4" /> Call
+                </a>
+                <a
+                  href={`mailto:${business.email}`}
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700"
+                >
+                  <Mail className="h-4 w-4" /> Email
+                </a>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Textarea
+              value={contactMessage}
+              onChange={(event) => setContactMessage(event.target.value)}
+              placeholder="e.g. Do you service Prado brakes today? What time can I bring it in?"
+              rows={3}
+            />
+            <Button
+              onClick={() => void sendContactMessage()}
+              disabled={contactSending}
+              className="gap-2"
+            >
+              <Send className="h-4 w-4" />
+              {contactSending ? "Sending…" : "Send message"}
+            </Button>
+          </CardContent>
+        </Card>
 
         {confirmation ? (
           <Card className="rounded-3xl border-0 shadow-lg shadow-slate-200/60">
@@ -641,6 +762,16 @@ function PublicBookingPage() {
                           setCustomerPhone(event.target.value)
                         }
                         placeholder="07xx xxx xxx"
+                      />
+                    </Field>
+                    <Field label="Email (optional)">
+                      <Input
+                        type="email"
+                        value={customerEmail}
+                        onChange={(event) =>
+                          setCustomerEmail(event.target.value)
+                        }
+                        placeholder="you@email.com"
                       />
                     </Field>
                     <Field label="Notes" className="md:col-span-2">
