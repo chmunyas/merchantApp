@@ -7,6 +7,7 @@
 // --- Environment Config ---
 
 import { getSql } from "@/lib/db";
+import { requireAuth } from "@/api/auth";
 import {
   postCogsEntry,
   postPaymentEntry,
@@ -305,6 +306,15 @@ export async function handlePaymentRoute(
     return withCors(await handleCreatePayment(request, env), corsHeaders);
   }
 
+  // Capture a previously authorised (manual-capture / pre-auth hold) payment.
+  if (
+    path.match(/^\/api\/payments\/[^/]+\/capture$/) &&
+    request.method === "POST"
+  ) {
+    const paymentId = path.split("/")[3];
+    return withCors(await handleCapture(paymentId, request, env), corsHeaders);
+  }
+
   if (path.match(/^\/api\/payments\/[^/]+\/status$/) && request.method === "GET") {
     const paymentId = path.split("/")[3];
     return withCors(handleGetPaymentStatus(paymentId), corsHeaders);
@@ -500,6 +510,72 @@ function handleGetPaymentStatus(paymentId: string): Response {
     refunds: payment.refunds,
     created_at: payment.created_at,
   });
+}
+
+// --- Capture a pre-authorised payment ---
+
+// Completes a payment created with `capture: false` (a manual-capture / card
+// pre-auth hold). Gated. Simulated under PAYMENTS_TEST_MODE or without live keys.
+async function handleCapture(
+  paymentId: string,
+  request: Request,
+  workerEnv: unknown,
+): Promise<Response> {
+  if (!(await requireAuth(request, workerEnv))) {
+    return jsonResponse({ error: { message: "unauthorized" } }, 401);
+  }
+  const env = getEnv(workerEnv);
+  const body = (await request.json().catch(() => ({}))) as { amount?: number };
+  const payment = payments.get(paymentId);
+  const amount = payment?.amount ?? Number(body.amount ?? 0);
+  const currency = payment?.currency ?? "KES";
+  const venue = (payment?.metadata?.venue as string) ?? null;
+
+  const testMode =
+    typeof env.PAYMENTS_TEST_MODE === "string" &&
+    env.PAYMENTS_TEST_MODE !== "" &&
+    env.PAYMENTS_TEST_MODE !== "0" &&
+    env.PAYMENTS_TEST_MODE.toLowerCase() !== "false";
+
+  async function settleCaptured() {
+    if (payment) payment.status = "captured";
+    await recordLedger(workerEnv, {
+      id: paymentId,
+      amount,
+      currency,
+      status: "captured",
+      venue,
+      metadata: payment?.metadata ?? {},
+    });
+  }
+
+  if (testMode || !env.PESASWAP_API_KEY) {
+    await settleCaptured();
+    return jsonResponse({ payment_id: paymentId, status: "captured", test_mode: true });
+  }
+
+  try {
+    const apiResponse = await fetch(
+      `${env.PESASWAP_URL}/payments/${paymentId}/capture`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "api-key": env.PESASWAP_API_KEY,
+        },
+        body: JSON.stringify(body.amount ? { amount: body.amount } : {}),
+      },
+    );
+    const result = await apiResponse.json();
+    if (result.error) {
+      return jsonResponse({ error: result.error }, apiResponse.status);
+    }
+    await settleCaptured();
+    return jsonResponse({ payment_id: paymentId, status: "captured" });
+  } catch (err) {
+    console.error("[PesaSwap] Capture error:", err);
+    return jsonResponse({ error: { message: "Failed to capture payment" } }, 500);
+  }
 }
 
 // --- Process Refund ---

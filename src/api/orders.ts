@@ -1,5 +1,7 @@
 import { requireAuth } from "@/api/auth";
 import { getSql } from "@/lib/db";
+import { getAdapter } from "@/lib/channels";
+import { orderReadyMessage } from "@/lib/order-notify";
 import { venueFromPayload } from "@/lib/tenancy";
 
 const corsHeaders = {
@@ -180,17 +182,56 @@ export async function handleOrdersRoute(
     const id = match[1];
     const body = (await request.json().catch(() => ({}))) as {
       status?: string;
+      pickupAt?: string;
+      fulfilment?: string;
     };
-    if (!body.status || !STATUSES.has(body.status)) {
+    if (body.status && !STATUSES.has(body.status)) {
       return json({ error: "invalid status" }, 400);
     }
+    const pickupAt =
+      typeof body.pickupAt === "string" && !Number.isNaN(Date.parse(body.pickupAt))
+        ? new Date(body.pickupAt)
+        : null;
+    const fulfilment =
+      body.fulfilment &&
+      ["dine_in", "takeaway", "collection"].includes(body.fulfilment)
+        ? body.fulfilment
+        : null;
     const [updated] = await sql`
-      UPDATE orders
-      SET status = ${body.status}, updated_at = now()
+      UPDATE orders SET
+        status = COALESCE(${body.status ?? null}, status),
+        pickup_at = COALESCE(${pickupAt}, pickup_at),
+        fulfilment = COALESCE(${fulfilment}, fulfilment),
+        updated_at = now()
       WHERE id = ${id} AND venue_id = ${venue}
-      RETURNING id`;
+      RETURNING id, status, customer_phone, pickup_at, ready_notified_at`;
     if (!updated) return json({ error: "not found" }, 404);
-    return json({ ok: true });
+
+    // One-shot "order ready" notification to the customer (best-effort).
+    let notified = false;
+    if (
+      updated.status === "ready" &&
+      updated.customer_phone &&
+      !updated.ready_notified_at
+    ) {
+      try {
+        const [v] = await sql`SELECT name FROM venues WHERE id = ${venue} LIMIT 1`;
+        const msg = orderReadyMessage(
+          (v?.name as string) || "your order",
+          updated.pickup_at as string | null,
+        );
+        const out = await getAdapter("whatsapp").send(
+          String(updated.customer_phone),
+          msg,
+          env,
+        );
+        await sql`UPDATE orders SET ready_notified_at = now() WHERE id = ${id}`;
+        notified = out.delivery === "sent";
+      } catch {
+        /* best-effort — never block the status change on a notification */
+      }
+    }
+    return json({ ok: true, notified });
   }
 
   return null;

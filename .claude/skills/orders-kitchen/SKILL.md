@@ -17,7 +17,10 @@ kitchen stay in sync, and staff can take payment against an order.
   pay_token, pay_expires_at, paid_at, customer_phone)` — `db/18-orders.sql` +
   `db/28-qr-pay-token.sql` (payment binding).
 - `order_items(id, order_id, name, qty, price, notes)`.
-- API `/api/orders`: list (venue+status), create, `PATCH /:id` (status). The
+- API `/api/orders`: list (venue+status), create, `PATCH /:id` (status,
+  `pickupAt`, `fulfilment`). Transitioning to `ready` sends a one-shot "order
+  ready for collection" message to `customer_phone` (best-effort, via the
+  omnichannel adapter). Click-&-collect fields + `db/34`. The
   unified-QR flow (`POST /api/qr/:code/order`) also creates an order + a
   **server-bound pay token** (`/pay?o=<token>`).
 - **Payment:** an order is charged via the pay flow; `recordLedger` stamps

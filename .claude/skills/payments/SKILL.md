@@ -29,6 +29,8 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
   provider payment intent + persists a ledger row (best-effort).
 - `GET /api/payments/:id/status` — poll payment status.
 - `POST /api/refunds` — **public**, rate-limited; over-refund guarded.
+- `POST /api/payments/:id/capture` — **gated**; captures a `capture:false`
+  (manual-capture / card pre-auth hold) payment. Simulated in test mode.
 - `POST /api/webhooks/pesaswap` — provider webhook.
 - `GET /api/invoices/payinfo?number=INV-XXX` — **public** resolver the pay page
   uses to render an amount from a short link (see the invoicing skill).
