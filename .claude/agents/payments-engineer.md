@@ -21,6 +21,10 @@ How you work:
   gate them with `requireAuth`. Keep the SAQ-A posture: no PAN on the server, ever.
 - Persist to the `payments` ledger via best-effort `recordLedger` (never block a
   payment). Keep idempotency keys.
+- Pay links are **server-bound**: `pay.tsx` resolves `?i=` (invoices) + `?o=` (QR
+  orders → `/api/qr/pay/:token`) to a server amount — never trust the URL.
+  `recordLedger` also accrues loyalty by phone + marks `orders.paid_at`
+  (one-time-use) on a succeeded payment.
 - Validate before you claim done: run typecheck + tests in the dev container
   (`docker exec pesaswap-merchant-app sh -lc 'cd /app && node_modules/.bin/tsc
   --noEmit --skipLibCheck && node_modules/.bin/vitest run'`).

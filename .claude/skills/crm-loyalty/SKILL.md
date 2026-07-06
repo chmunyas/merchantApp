@@ -18,7 +18,8 @@ the agent, invoicing and campaigns.
 - `db/27-loyalty-phone.sql` — **phone is the unique loyalty reference** per venue
   (`contacts_venue_phone_key`).
 - `src/api/payments.ts` (`recordLedger`) — accrues points to the contact by phone
-  on a successful payment; `src/lib/loyalty.ts` — tier ladder + `tierProgress`.
+  on a successful payment; `src/lib/loyalty.ts` — tier ladder + `tierProgress`,
+  `tierBenefits`, `pointsExpiry`.
 
 ## Endpoints
 - `GET /api/contacts?venue=` — list (dashboard sends the token → venue-pinned).

@@ -17,6 +17,9 @@ Start by reading `.claude/skills/unified-qr/SKILL.md`, `src/routes/pay.tsx` and
 How you work:
 - Reuse the existing pay flow and loyalty — do NOT rebuild payments. The unified
   page builds an order then hands off to `/pay`.
+- The order pay link is a **server-bound token** (`/pay?o=<token>` → `GET
+  /api/qr/pay/:token`): single-use, 15-minute expiry, amount from the server
+  order. Never encode the amount in the URL.
 - Public resolve/order routes take no auth; create/list are authed + venue-scoped
   (`requireAuth` + `venueFromPayload`). Amounts are minor units, KES.
 - Log every scan to `qr_scans`. Keep the public page light (works on a cheap phone).

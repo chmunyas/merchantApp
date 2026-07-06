@@ -19,7 +19,9 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
   Postgres ledger via `recordLedger`.
 - `src/lib/pesaswap-payments.ts` — client SDK helpers (`executePayment`,
   `loadHyperLoader`, `buildPaymentMetadata`).
-- `src/routes/pay.tsx` — the customer pay page (`/pay?i=INV-XXX` and QR `?tapgo=`).
+- `src/routes/pay.tsx` — the customer pay page. Resolves **server-bound** tokens:
+  `/pay?i=INV-XXX` (invoices) and `/pay?o=<token>` (QR orders) — the amount always
+  comes from the server, never the URL.
 - `db/13-payments.sql` — the durable `payments` ledger (amounts in minor units).
 
 ## Endpoints
@@ -42,8 +44,12 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
 - Ledger writes are best-effort (`recordLedger`) — they must never block a payment.
 
 ## Common tasks
-- **Resolve a short pay link:** `pay.tsx` reads `?i=INV-XXX` → fetches
-  `/api/invoices/payinfo` → shows loading/error states → drives the pay flow.
+- **Resolve a short pay link:** `pay.tsx` reads `?i=INV-XXX` (invoices) or
+  `?o=<token>` (QR orders → `/api/qr/pay/:token`) → server-authoritative amount →
+  drives the pay flow. **Never trust an amount from the URL.**
+- **`recordLedger` side effects (on a succeeded payment):** accrues loyalty points
+  to the contact by **phone** (unique key), and marks a QR `orders.paid_at`
+  (one-time-use) when `metadata.order_id` is present — both best-effort.
 - **Add a webhook side effect:** update `handleWebhook` in `payments.ts` and
   persist status changes to the `payments` ledger via `recordLedger`.
 

@@ -19,6 +19,7 @@ catalogue. Alipay's "points mall" + ERPNext's customer portal, localized.
   (`/api/rewards`).
 - `src/routes/me.$token.tsx` — the public, branded portal page.
 - `src/routes/dashboard/rewards.tsx` — merchant rewards catalogue editor.
+- `src/lib/loyalty.ts` — tier ladder + `tierProgress`, `tierBenefits`, `pointsExpiry`.
 - `db/26-loyalty-portal.sql` — `loyalty_rewards`, `reward_redemptions`, `portal_tokens`.
 
 ## Endpoints
@@ -32,6 +33,9 @@ catalogue. Alipay's "points mall" + ERPNext's customer portal, localized.
   enumeration. Production should OTP-verify before issuing a token.
 - Points are integers; deduct atomically and never let a balance go negative.
 - Money is minor units (KES) for display; portal is venue-scoped via the token.
+- The portal returns **tier progress** (points to next tier), **tier benefits**
+  (perks + unlock-next) and a **points-expiry nudge**; pay-success (`pay.tsx`
+  `SuccessState`) shows a QR to `/me/:token` (receipt-as-portal).
 
 ## Guidelines
 - Keep the portal dependency-light and resilient (a cheap phone opens it).
