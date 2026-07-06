@@ -1,5 +1,6 @@
 import { getSql } from "@/lib/db";
 import { requireAuth } from "@/api/auth";
+import { roleAtLeast } from "@/lib/rbac";
 import { venueFromPayload } from "@/lib/tenancy";
 
 const corsHeaders = {
@@ -78,6 +79,10 @@ export async function handleBrandingRoute(
   if (request.method === "PUT" || request.method === "POST") {
     const payload = await requireAuth(request, env);
     if (!payload) return json({ error: "unauthorized" }, 401);
+    // Branding is an owner-only setting — staff/supervisor/manager cannot change it.
+    if (!roleAtLeast(payload, "merchant")) {
+      return json({ error: "forbidden" }, 403);
+    }
     const venue = venueFromPayload(payload, url);
     const body = (await request.json().catch(() => ({}))) as {
       businessName?: string;

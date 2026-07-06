@@ -1,5 +1,6 @@
 import { getTelegramConfig } from "@/lib/channels/telegram-config";
 import { getSql } from "@/lib/db";
+import { roleAtLeast } from "@/lib/rbac";
 import { requireAuth } from "@/api/auth";
 
 const corsHeaders = {
@@ -34,8 +35,11 @@ export async function handleTelegramRoute(
   }
 
   if (path === "/api/telegram/config" && request.method === "POST") {
-    if (!(await requireAuth(request, env))) {
-      return json({ error: "unauthorized" }, 401);
+    const cfgPayload = await requireAuth(request, env);
+    if (!cfgPayload) return json({ error: "unauthorized" }, 401);
+    // Bot token is an owner-only setting.
+    if (!roleAtLeast(cfgPayload, "merchant")) {
+      return json({ error: "forbidden" }, 403);
     }
     const sql = getSql(env);
     if (!sql) return json({ error: "database not configured" }, 503);

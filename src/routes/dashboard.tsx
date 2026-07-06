@@ -46,7 +46,8 @@ import { UserProfileMenu } from "@/components/auth/UserProfileMenu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { useAuth, ensureSessionToken } from "@/lib/auth";
+import { useAuth, ensureSessionToken, type UserRole } from "@/lib/auth";
+import { canAccessPath } from "@/lib/rbac";
 import {
   ensureMerchantDemoData,
   getCurrentVenue,
@@ -131,47 +132,78 @@ const navItems = navGroups.flatMap((group) =>
 
 function NavSections({
   pathname,
+  role,
   newEnquiries,
   onNavigate,
 }: {
   pathname: string;
+  role: UserRole;
   newEnquiries: number;
   onNavigate?: () => void;
 }) {
   return (
     <nav className="flex-1 space-y-5 px-3 py-4">
-      {navGroups.map((group) => (
-        <div key={group.label} className="space-y-1">
-          <p className="px-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-            {group.label}
-          </p>
-          {group.items.map((item) => {
-            const Icon = item.icon;
-            const active =
-              pathname === item.to || pathname.startsWith(`${item.to}/`);
-            return (
-              <Link
-                key={item.to}
-                to={item.to}
-                onClick={onNavigate}
-                className={cn(
-                  "flex items-center gap-3 rounded-r-xl px-4 py-2.5 text-sm font-medium transition hover:bg-slate-800",
-                  active && "bg-slate-800 border-l-2 border-emerald-500",
-                )}
-              >
-                <Icon className="h-4 w-4" />
-                <span>{item.label}</span>
-                {item.label === "Enquiries" && newEnquiries > 0 ? (
-                  <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[11px] font-semibold text-white">
-                    {newEnquiries}
-                  </span>
-                ) : null}
-              </Link>
-            );
-          })}
-        </div>
-      ))}
+      {navGroups.map((group) => {
+        // Hide any nav item the current role may not open, and drop groups that
+        // become empty (per-page RBAC — see src/lib/rbac.ts).
+        const items = group.items.filter((item) =>
+          canAccessPath(role, item.to),
+        );
+        if (items.length === 0) return null;
+        return (
+          <div key={group.label} className="space-y-1">
+            <p className="px-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+              {group.label}
+            </p>
+            {items.map((item) => {
+              const Icon = item.icon;
+              const active =
+                pathname === item.to || pathname.startsWith(`${item.to}/`);
+              return (
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  onClick={onNavigate}
+                  className={cn(
+                    "flex items-center gap-3 rounded-r-xl px-4 py-2.5 text-sm font-medium transition hover:bg-slate-800",
+                    active && "bg-slate-800 border-l-2 border-emerald-500",
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                  <span>{item.label}</span>
+                  {item.label === "Enquiries" && newEnquiries > 0 ? (
+                    <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[11px] font-semibold text-white">
+                      {newEnquiries}
+                    </span>
+                  ) : null}
+                </Link>
+              );
+            })}
+          </div>
+        );
+      })}
     </nav>
+  );
+}
+
+function AccessDenied({ role }: { role: UserRole }) {
+  return (
+    <div className="flex min-h-[60vh] flex-col items-center justify-center text-center">
+      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-2xl">
+        🔒
+      </div>
+      <h1 className="mt-3 text-xl font-bold">Access restricted</h1>
+      <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+        Your role ({role}) can&apos;t open this page. Ask an owner or manager if
+        you need access.
+      </p>
+      <Link
+        to="/dashboard"
+        className="mt-4 rounded-lg bg-foreground px-4 py-2 text-sm font-semibold text-background"
+      >
+        Back to overview
+      </Link>
+    </div>
   );
 }
 
@@ -251,7 +283,11 @@ function DashboardShell() {
           ) : null}
         </div>
         <div className="overflow-y-auto">
-          <NavSections pathname={pathname} newEnquiries={newEnquiries} />
+          <NavSections
+            pathname={pathname}
+            role={user?.role ?? "staff"}
+            newEnquiries={newEnquiries}
+          />
         </div>
       </aside>
 
@@ -288,6 +324,7 @@ function DashboardShell() {
           </div>
           <NavSections
             pathname={pathname}
+            role={user?.role ?? "staff"}
             newEnquiries={newEnquiries}
             onNavigate={() => setMobileOpen(false)}
           />
@@ -340,7 +377,11 @@ function DashboardShell() {
         </header>
 
         <main className="flex-1 overflow-y-auto p-4 lg:p-8">
-          <Outlet />
+          {user && !canAccessPath(user.role, pathname) ? (
+            <AccessDenied role={user.role} />
+          ) : (
+            <Outlet />
+          )}
         </main>
       </div>
 

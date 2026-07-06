@@ -8,6 +8,7 @@ import { getSql } from "@/lib/db";
 import { envVar } from "@/lib/env";
 import { processInbound } from "@/lib/inbound";
 import { verifyHubSignature, verifyToken } from "@/lib/webhook-verify";
+import { roleAtLeast } from "@/lib/rbac";
 import { requireAuth, resolveVenue } from "@/api/auth";
 
 const corsHeaders = {
@@ -94,8 +95,11 @@ export async function handleWhatsappRoute(
     });
   }
   if (path === "/api/whatsapp/config" && request.method === "POST") {
-    if (!(await requireAuth(request, env))) {
-      return json({ error: "unauthorized" }, 401);
+    const cfgPayload = await requireAuth(request, env);
+    if (!cfgPayload) return json({ error: "unauthorized" }, 401);
+    // Channel API keys are an owner-only setting.
+    if (!roleAtLeast(cfgPayload, "merchant")) {
+      return json({ error: "forbidden" }, 403);
     }
     const sql = getSql(env);
     if (!sql) return json({ error: "database not configured" }, 503);
