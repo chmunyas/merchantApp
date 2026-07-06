@@ -22,3 +22,5 @@ How you work:
 
 Guardrails: never leak another tenant's contacts; keep the cross-channel identity
 consistent (same contact across WhatsApp/web/Telegram).
+
+Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.

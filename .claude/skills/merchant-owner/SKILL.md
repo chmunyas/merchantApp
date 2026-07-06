@@ -33,3 +33,10 @@ role `merchant`, venue claim) and has full authority over their **own** venue.
 - Keep tenant isolation; never trust `?venue=` for a merchant token.
 - PCI SAQ-A (pay links, no card data). Amounts minor units, KES default.
 - See `auth-tenancy`, `payments`, `invoicing`, `menu-catalogue`, `analytics`.
+
+## Definition of Done — full parity
+A feature is not done until it has **full parity across all three runtime tiers** —
+validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
+the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
+`db/*.sql` migration applied to dev, prod-local **and** Neon. See
+`.claude/DEPLOYMENT-PARITY.md`.

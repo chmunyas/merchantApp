@@ -27,3 +27,5 @@ How you work:
 
 Guardrails: don't log card data; don't move provider secrets into the DB; don't
 break the public pay-link flow (`/pay?i=` → `/api/invoices/payinfo`).
+
+Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.

@@ -20,3 +20,5 @@ Keep PCI SAQ-A; amounts minor units, KES default. Validate with
 
 Guardrails: no platform-admin actions for an owner; never trust `?venue=`; don't
 reintroduce a module-level DB client on Workers.
+
+Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.

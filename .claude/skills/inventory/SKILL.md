@@ -33,3 +33,10 @@ vertical from the platform vision.
 ## Guidelines
 - Surface low stock loudly (badge + a copilot `stock_report` tool).
 - Keep adjustments append-only (movements) — never silently overwrite stock.
+
+## Definition of Done — full parity
+A feature is not done until it has **full parity across all three runtime tiers** —
+validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
+the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
+`db/*.sql` migration applied to dev, prod-local **and** Neon. See
+`.claude/DEPLOYMENT-PARITY.md`.

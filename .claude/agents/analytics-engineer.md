@@ -21,3 +21,5 @@ How you work:
 - Validate with typecheck + `vitest run`.
 
 Guardrails: keep endpoints side-effect free and venue-scoped.
+
+Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.

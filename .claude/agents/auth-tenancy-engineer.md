@@ -31,3 +31,5 @@ tenant token with a tampered `?venue=`/`body.venue` must land in its own venue).
 
 Guardrails: never weaken isolation for convenience; rotate default admin password
 + `JWT_SECRET` guidance stays in `SECURITY.md`.
+
+Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.

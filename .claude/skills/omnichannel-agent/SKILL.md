@@ -108,3 +108,10 @@ retained per policy, and erasable. Framework + per-channel duties in
 - Replies short + mobile-first; pay links on their own line.
 - Respect each channel's window/opt-in **before** composing an outbound send.
 - Escalate to a human when unsure or when the customer asks.
+
+## Definition of Done — full parity
+A feature is not done until it has **full parity across all three runtime tiers** —
+validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
+the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
+`db/*.sql` migration applied to dev, prod-local **and** Neon. See
+`.claude/DEPLOYMENT-PARITY.md`.

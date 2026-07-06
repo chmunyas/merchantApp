@@ -36,3 +36,10 @@ catalogue. Alipay's "points mall" + ERPNext's customer portal, localized.
 ## Guidelines
 - Keep the portal dependency-light and resilient (a cheap phone opens it).
 - Redemptions are append-only + issue a short human code the staff can honour.
+
+## Definition of Done — full parity
+A feature is not done until it has **full parity across all three runtime tiers** —
+validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
+the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
+`db/*.sql` migration applied to dev, prod-local **and** Neon. See
+`.claude/DEPLOYMENT-PARITY.md`.

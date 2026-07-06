@@ -25,3 +25,5 @@ How you work:
 Guardrails: never edit `src/server.ts` (the lead registers the route) or the
 generated `routeTree.gen.ts`; no whole-array clobber; the QR carries only an
 opaque id resolved server-side.
+
+Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.

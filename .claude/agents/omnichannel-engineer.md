@@ -44,3 +44,5 @@ Compliance guardrails (non-negotiable — see `compliance.md`):
 Guardrails: keep replies short/mobile-first with pay links on their own line;
 route escalations to a human (respect each channel's window); keep everything
 venue-scoped.
+
+Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.

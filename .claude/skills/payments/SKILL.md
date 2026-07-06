@@ -52,3 +52,10 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
 - Keep idempotency (`Idempotency-Key`) on create + refund.
 - When adding ledger fields, migrate in a new `db/NN-*.sql` and keep `recordLedger`
   best-effort (wrapped in try/catch).
+
+## Definition of Done — full parity
+A feature is not done until it has **full parity across all three runtime tiers** —
+validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
+the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
+`db/*.sql` migration applied to dev, prod-local **and** Neon. See
+`.claude/DEPLOYMENT-PARITY.md`.

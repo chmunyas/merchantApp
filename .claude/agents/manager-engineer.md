@@ -17,3 +17,5 @@ refunds (`/api/refunds`, over-refund guarded), comps, tip pooling/payout,
 scheduling and staff permissions — all venue-pinned + authenticated. Owner-only
 (plan/billing, branding, venue delete) is off-limits. Keep PCI SAQ-A; amounts
 minor units, KES. Validate with typecheck + tests in the container.
+
+Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.

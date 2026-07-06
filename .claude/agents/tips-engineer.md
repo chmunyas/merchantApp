@@ -17,3 +17,5 @@ run, report). Attribute tips only to an authenticated `staff_id` — never from 
 request body. Ledger writes are best-effort and must never block a payment.
 Amounts minor units, KES default, venue-pinned. Validate with typecheck + tests
 in the container.
+
+Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.

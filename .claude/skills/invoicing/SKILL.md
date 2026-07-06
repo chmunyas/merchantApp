@@ -48,3 +48,10 @@ page.
 - Amounts are numeric; keep tax/line-item math in `src/lib/invoices.ts`.
 - Free plan caps recurring schedules (`PLAN_LIMITS.recurring`) — return 402 on
   exceed, don't silently drop.
+
+## Definition of Done — full parity
+A feature is not done until it has **full parity across all three runtime tiers** —
+validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
+the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
+`db/*.sql` migration applied to dev, prod-local **and** Neon. See
+`.claude/DEPLOYMENT-PARITY.md`.

@@ -35,3 +35,10 @@ back office.
 ## Guidelines
 - Validate `customerName`; default covers/date/time server-side.
 - New enquiry sources should still set a `source` and be venue-scoped.
+
+## Definition of Done — full parity
+A feature is not done until it has **full parity across all three runtime tiers** —
+validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
+the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
+`db/*.sql` migration applied to dev, prod-local **and** Neon. See
+`.claude/DEPLOYMENT-PARITY.md`.

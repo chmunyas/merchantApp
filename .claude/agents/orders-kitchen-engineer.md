@@ -19,3 +19,5 @@ DB the source of truth. Status lifecycle is fixed
 (`new→accepted→preparing→ready→served|cancelled`). Taking payment generates a
 pay link (PCI SAQ-A). Venue-pinned + authed for staff writes. Validate with
 typecheck + tests in the container.
+
+Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.

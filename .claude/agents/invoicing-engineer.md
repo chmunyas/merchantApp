@@ -26,3 +26,5 @@ How you work:
   for flow changes, add/adjust an entry in `__tests__/e2e/pwa-to-backoffice.e2e.ts`.
 
 Guardrails: keep `/api/invoices/payinfo` public; keep venue isolation intact.
+
+Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.

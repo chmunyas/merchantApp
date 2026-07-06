@@ -23,3 +23,5 @@ How you work:
   covered by `__tests__/e2e` and `e2e-browser/` — keep them green.
 
 Guardrails: venue-scope everything; validate `customerName`.
+
+Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.

@@ -31,3 +31,10 @@ pooling + payout system (Sunday's moat).
 - Amounts minor units, KES default. Venue-pinned. Payout writes are an
   append-only ledger; best-effort must never block a payment.
 - See `staff-operations`, `payments`, `manager` + SECURITY.md.
+
+## Definition of Done — full parity
+A feature is not done until it has **full parity across all three runtime tiers** —
+validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
+the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
+`db/*.sql` migration applied to dev, prod-local **and** Neon. See
+`.claude/DEPLOYMENT-PARITY.md`.

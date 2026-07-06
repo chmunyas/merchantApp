@@ -72,6 +72,11 @@ Copilot's skills at `.claude/skills/`. The subagent files double as scoped
 instructions you can paste into a Copilot custom agent / chat mode.
 
 ## Conventions these encode (repo-wide)
+- **Definition of Done — full parity**: every feature function is validated
+  (typecheck + tests) and deployed + verified across all three tiers (dev
+  `:8080`, prod-local workerd `:8787`, Cloudflare) with any migration applied to
+  dev, prod-local **and** Neon. This is a standard requirement for all skills and
+  agents — see [`DEPLOYMENT-PARITY.md`](./DEPLOYMENT-PARITY.md).
 - Tenant isolation via `resolveVenue` (JWT `venue` claim wins) — see
   `skills/auth-tenancy`.
 - Staff mutations gated with `requireAuth`; public (pay/chat/enquiries/webhooks)

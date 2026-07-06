@@ -19,3 +19,5 @@ Everything is venue-pinned. Validate with typecheck + tests in the container.
 
 Guardrails: keep approvals within the manager-set limits; don't grant
 refunds/schedule/permission edits (manager+); don't break tenant isolation.
+
+Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.

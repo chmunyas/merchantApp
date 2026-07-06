@@ -33,3 +33,10 @@ understand, invoke and trust.
 - Keep the catalogue stable + self-describing (ids, prices, currency, checkout endpoint).
 - Return an intent id so an agent can correlate to the eventual payment.
 - Never weaken the A2A staff-scope key gate to enable checkout.
+
+## Definition of Done — full parity
+A feature is not done until it has **full parity across all three runtime tiers** —
+validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
+the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
+`db/*.sql` migration applied to dev, prod-local **and** Neon. See
+`.claude/DEPLOYMENT-PARITY.md`.

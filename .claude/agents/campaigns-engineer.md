@@ -24,3 +24,5 @@ How you work:
 
 Guardrails: require a non-empty message; log to `events` for history; keep sends
 idempotent enough to retry.
+
+Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.

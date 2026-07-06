@@ -26,3 +26,5 @@ How you work:
 
 Guardrails: never edit `src/server.ts` (lead registers the route) or
 `routeTree.gen.ts`; don't leak cross-venue or cross-phone data through the token.
+
+Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.

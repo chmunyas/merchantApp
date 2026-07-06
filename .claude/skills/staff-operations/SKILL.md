@@ -75,3 +75,10 @@ Bring parity with Sunday/Toast/Square on the essentials, then lean into the agen
   a request body/allowlist for privileged money actions (see SECURITY.md, Alert 5).
 - Keep PCI SAQ-A: staff never handle card data; they send a pay link / QR.
 - Amounts are minor units; currency defaults KES.
+
+## Definition of Done — full parity
+A feature is not done until it has **full parity across all three runtime tiers** —
+validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
+the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
+`db/*.sql` migration applied to dev, prod-local **and** Neon. See
+`.claude/DEPLOYMENT-PARITY.md`.

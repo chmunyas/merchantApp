@@ -23,3 +23,5 @@ How you work:
 
 Guardrails: never edit `src/server.ts` (the lead registers the route) or
 `routeTree.gen.ts`; keep inventory distinct from menu availability (86/restock).
+
+Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.
