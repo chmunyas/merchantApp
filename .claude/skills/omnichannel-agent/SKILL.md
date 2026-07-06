@@ -88,6 +88,11 @@ retained per policy, and erasable. Framework + per-channel duties in
   `/api/{telegram,instagram,sms}/{webhook,inbound}` — **public** provider webhooks.
 - `POST /api/a2a` + `/.well-known/agent-card.json`.
 - Staff: `POST /api/whatsapp/reply` (**gated**), `GET /api/whatsapp/conversations`.
+- `POST /api/share` (**gated**) — merchant-initiated outbound: push a payment link,
+  invoice, QR, booking or enquiry to a customer over WhatsApp / Telegram / SMS
+  (`{channel, to, text, link, kind}`). Normalises phones, honours `isSuppressed`,
+  logs to `conversations`/`messages`, returns `{delivery}`. Surfaced in-app via the
+  `OmniShare` sheet (with a deep-link "open in my own app" fallback).
 
 ## Conventions
 - **All inbound webhooks are public** — never add `requireAuth`; staff reply/config

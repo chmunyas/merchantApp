@@ -18,6 +18,7 @@ import { handleTablesRoute } from "./api/tables";
 import { handleQrRoute } from "./api/qr";
 import { handleCopilotRoute } from "./api/copilot";
 import { handleAgentCommerceRoute } from "./api/agentcommerce";
+import { handleShareRoute } from "./api/share";
 import { handleInventoryRoute } from "./api/inventory";
 import { handleSettlementRoute } from "./api/settlement";
 import { handlePortalRoute } from "./api/portal";
@@ -226,6 +227,10 @@ export default {
           // Web chat widget (same agent pipeline, channel = web)
           const omniResponse = await handleOmniRoute(request, env);
           if (omniResponse) return omniResponse;
+
+          // Merchant-initiated outbound share (pay links / invoices / QR / bookings)
+          const shareResponse = await handleShareRoute(request, env);
+          if (shareResponse) return shareResponse;
 
           // Web Push (PWA staff notifications)
           const pushResponse = await handlePushRoute(request, env);

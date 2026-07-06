@@ -52,12 +52,22 @@ export const telegramAdapter: ChannelAdapter = {
     if (!botToken) return { delivery: "simulated" };
     const chatId = handle.replace(/^tg:/, "");
     try {
-      await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ chat_id: chatId, text }),
-      });
-      return { delivery: "sent" };
+      const res = await fetch(
+        `https://api.telegram.org/bot${botToken}/sendMessage`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ chat_id: chatId, text }),
+        },
+      );
+      // Telegram returns HTTP 200 with {ok:true} on success, or a 4xx with
+      // {ok:false} (e.g. "chat not found"). fetch does not throw on 4xx, so
+      // inspect the body to avoid reporting a rejected send as delivered.
+      const data = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+      } | null;
+      if (res.ok && data?.ok) return { delivery: "sent" };
+      return { delivery: "simulated" };
     } catch {
       return { delivery: "simulated" };
     }

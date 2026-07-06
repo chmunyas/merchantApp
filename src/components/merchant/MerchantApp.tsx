@@ -37,6 +37,7 @@ import { InvoiceCreator } from "./features/InvoiceCreator";
 import { TableServiceView } from "./features/TableServiceView";
 import { TapGoPOS } from "./features/TapGoPOS";
 import { WalletReconciliationView } from "./features/WalletReconciliationView";
+import { OmniShare } from "./OmniShare";
 import { useInvoices } from "./features/hooks";
 import type { Invoice } from "./features/types";
 import {
@@ -873,6 +874,7 @@ function InvoiceDetailSheet({
   const timeline = timelineFor(invoice);
   const [showRecordPayment, setShowRecordPayment] = useState(false);
   const [partialAmount, setPartialAmount] = useState("");
+  const [showShare, setShowShare] = useState(false);
   const [partialVia, setPartialVia] = useState("PesaSwap");
   const paid = totalPaid(invoice);
   const remaining = amountRemaining(invoice);
@@ -1079,6 +1081,13 @@ function InvoiceDetailSheet({
             <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
               Send invoice via
             </p>
+            <button
+              type="button"
+              onClick={() => setShowShare(true)}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-foreground py-3 text-xs font-bold text-background"
+            >
+              <Send className="size-4" /> Send to {invoice.customer}
+            </button>
             <div className="grid grid-cols-3 gap-2">
               <a
                 href={whatsAppLink(invoice, link)}
@@ -1112,6 +1121,15 @@ function InvoiceDetailSheet({
             </div>
           </div>
         )}
+
+        <OmniShare
+          open={showShare}
+          onClose={() => setShowShare(false)}
+          title="Send payment link"
+          message={`Hi ${invoice.customer}, here's your ${invoice.currency} ${invoice.amount.toLocaleString()} invoice (${invoice.id}).`}
+          link={link}
+          defaultPhone={invoice.customerPhone ?? ""}
+        />
 
         {invoice.fxLock && (
           <div
