@@ -9,6 +9,7 @@ import {
   recordPayment,
   sendReminder,
 } from "@/lib/invoicing";
+import { getBaseUrl, payLink } from "@/lib/links";
 import { requireAuth, resolveVenue } from "@/api/auth";
 
 const corsHeaders = {
@@ -113,6 +114,46 @@ export async function handleInvoiceRoute(
     });
     if ("error" in result) return json(result, 400);
     return json(result, 201);
+  }
+
+  // Publish a client-side (MerchantApp / pesaswapApp) invoice to Postgres so its
+  // shared link + QR resolve to a real, payable /pay?i=<number> page. Idempotent:
+  // keyed on the client id as the invoice `number` (UPSERT). Preserves an existing
+  // paid/void status and amount_paid so re-sharing never resets a real payment.
+  if (path === "/api/invoices/publish" && request.method === "POST") {
+    if (!(await requireAuth(request, env))) {
+      return json({ error: "unauthorized" }, 401);
+    }
+    const body = (await request.json()) as {
+      id?: string;
+      amount?: number;
+      currency?: string;
+      customer?: string | null;
+      phone?: string | null;
+      note?: string | null;
+      status?: string | null;
+    };
+    const number = (body.id ?? "").trim();
+    const amount = Number(body.amount ?? 0);
+    if (!number) return json({ error: "id required" }, 400);
+    if (!(amount > 0)) return json({ error: "amount required" }, 400);
+    const currency = body.currency ?? "KES";
+    const status = (body.status ?? "").toLowerCase() === "paid" ? "paid" : "sent";
+    const base = await getBaseUrl(env);
+    const link = payLink(base, { number });
+    await sql`
+      INSERT INTO invoices (venue_id, number, customer_name, phone, amount,
+                            currency, description, status, pay_link)
+      VALUES (${venue}, ${number}, ${body.customer ?? null}, ${body.phone ?? null},
+              ${amount}, ${currency}, ${body.note ?? null}, ${status}, ${link})
+      ON CONFLICT (venue_id, number) DO UPDATE SET
+        amount = EXCLUDED.amount,
+        currency = EXCLUDED.currency,
+        customer_name = EXCLUDED.customer_name,
+        phone = EXCLUDED.phone,
+        description = EXCLUDED.description,
+        pay_link = EXCLUDED.pay_link`;
+    return json({ number, payLink: link });
   }
 
   const idMatch = path.match(/^\/api\/invoices\/([^/]+)\/([^/]+)$/);

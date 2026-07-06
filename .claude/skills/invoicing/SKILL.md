@@ -24,6 +24,10 @@ page.
 ## Endpoints (all venue-scoped)
 - `POST /api/invoices` — **gated**; creates + optionally sends. Venue is derived
   from the JWT (never `body.venue`).
+- `POST /api/invoices/publish` — **gated**; idempotently persists a client-side
+  (MerchantApp / pesaswapApp) invoice, keyed on its client id → `number` (UPSERT on
+  `(venue, number)`), so its shared link + QR resolve to a real, payable
+  `/pay?i=<number>` page. Preserves an existing paid/void status.
 - `POST /api/invoices/:id/:action` — `paid`, `cancel`, `remind`, etc. **gated**.
 - `GET /api/invoices` · `/api/invoices/stats` — dashboard reads (send the token).
 - `GET /api/invoices/payinfo?number=` — **public** (pay page).
@@ -35,7 +39,11 @@ page.
   wins over `?venue=`/`body.venue` (tenant isolation). See auth-tenancy skill.
 - Pay links must be **short + public**: build with `payLink(await getBaseUrl(env),
   { number })`, put the link on its own line in messages. Set
-  `app_settings.public_base_url` for a real domain/tunnel.
+  `app_settings.public_base_url` for a real domain/tunnel — it **overrides
+  everything** in `getBaseUrl`, so a stale value (e.g. a dead tunnel) silently
+  breaks every invoice link + QR; keep it on the tier's reachable origin (deployed
+  = the Worker URL; local = localhost). A link/QR is only payable if the invoice
+  lives in that tier's database.
 - Reminders + recurring generation run via the `invoicing/run` sweep (bridge).
 
 ## Common tasks

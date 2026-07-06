@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import { realtime } from "../../lib/realtime";
+import { authFetch } from "@/lib/auth";
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -48,7 +49,6 @@ import {
   fxLockTimeRemaining,
   getPaymentMethodsForRegion,
   MERCHANT_NAME,
-  payloadFor,
   payLink,
   smsLink,
   timeAgo,
@@ -870,14 +870,47 @@ function InvoiceDetailSheet({
   onSendReminder: () => void;
   onRecordPayment: (amount: number, via?: string) => void;
 }) {
-  const link = payLink(invoice);
   const timeline = timelineFor(invoice);
   const [showRecordPayment, setShowRecordPayment] = useState(false);
   const [partialAmount, setPartialAmount] = useState("");
   const [showShare, setShowShare] = useState(false);
   const [partialVia, setPartialVia] = useState("PesaSwap");
+  // Persist this (client-side) invoice to Postgres so its shared link + QR
+  // resolve to a real, payable /pay?i=<number> page. Falls back to the in-app
+  // link until it publishes (or if the app is unauthenticated).
+  const [publicLink, setPublicLink] = useState<string | null>(null);
+  const link = publicLink ?? payLink(invoice);
   const paid = totalPaid(invoice);
   const remaining = amountRemaining(invoice);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await authFetch("/api/invoices/publish", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            id: invoice.id,
+            amount: invoice.amount,
+            currency: invoice.currency,
+            customer: invoice.customer,
+            phone: invoice.customerPhone ?? null,
+            note: invoice.note ?? null,
+            status: invoice.status,
+          }),
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as { payLink?: string };
+        if (!cancelled && data.payLink) setPublicLink(data.payLink);
+      } catch {
+        /* keep the in-app fallback link */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [invoice.id, invoice.amount, invoice.currency, invoice.status]);
 
   async function copyLink() {
     try {
@@ -926,7 +959,7 @@ function InvoiceDetailSheet({
 
         <div className="rounded-2xl border border-border bg-background p-5 flex flex-col items-center gap-3">
           <QRCodeSVG
-            value={payloadFor(invoice)}
+            value={link}
             size={180}
             level="M"
             bgColor="transparent"
