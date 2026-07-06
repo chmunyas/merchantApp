@@ -66,12 +66,32 @@ type Tab =
   | "tapgo"
   | "tables";
 
-export function MerchantApp() {
+export function MerchantApp({
+  standalone = false,
+}: {
+  standalone?: boolean;
+} = {}) {
   const ledger = useInvoices();
   const [tab, setTab] = useState<Tab>("home");
   const [showInvoice, setShowInvoice] = useState<Invoice | null>(null);
   const [payTarget, setPayTarget] = useState<Invoice | null>(null);
   const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
+  const [clock, setClock] = useState("9:41");
+
+  // Live status-bar clock when running as the standalone app.
+  useEffect(() => {
+    if (!standalone) return;
+    const tick = () =>
+      setClock(
+        new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      );
+    tick();
+    const id = setInterval(tick, 30_000);
+    return () => clearInterval(id);
+  }, [standalone]);
 
   // Connect to PesaSwap real-time notifications
   useEffect(() => {
@@ -156,7 +176,7 @@ export function MerchantApp() {
     <div className="h-full flex flex-col bg-background relative">
       {/* status bar */}
       <div className="flex justify-between items-center px-6 pt-3 pb-1 text-[11px] font-mono">
-        <span>9:41</span>
+        <span>{clock}</span>
         <span className="flex items-center gap-1">
           <span className="size-1.5 bg-accent rounded-full" />
           PesaSwap
@@ -213,7 +233,7 @@ export function MerchantApp() {
       </div>
 
       {/* bottom nav */}
-      <nav className="absolute bottom-0 inset-x-0 border-t border-border bg-card/95 backdrop-blur px-2 py-2 grid grid-cols-6 gap-1 rounded-b-[2.4rem]">
+      <nav className={`absolute bottom-0 inset-x-0 border-t border-border bg-card/95 backdrop-blur px-2 py-2 grid grid-cols-6 gap-1 ${standalone ? "pb-[calc(0.5rem+env(safe-area-inset-bottom))]" : "rounded-b-[2.4rem]"}`}>
         {[
           { id: "tapgo", icon: Zap, label: "Tap&Go" },
           { id: "tables", icon: Layers, label: "Tables" },

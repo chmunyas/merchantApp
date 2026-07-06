@@ -207,7 +207,8 @@ function RootComponent() {
     pathname.startsWith("/get-started") ||
     pathname.startsWith("/admin") ||
     pathname.startsWith("/sign-in") ||
-    pathname.startsWith("/staff-login");
+    pathname.startsWith("/staff-login") ||
+    pathname.startsWith("/pesaswapApp");
 
   // Customer touchpoints get the in-app chat widget (seamless omnichannel).
   const isCustomerFacing =

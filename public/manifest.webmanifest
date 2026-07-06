@@ -49,6 +49,13 @@
   ],
   "shortcuts": [
     {
+      "name": "PesaSwap App",
+      "short_name": "App",
+      "description": "Open pesaswapApp",
+      "url": "/pesaswapApp",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
       "name": "Scan to pay",
       "short_name": "Pay",
       "description": "Open the Tap & Go checkout",

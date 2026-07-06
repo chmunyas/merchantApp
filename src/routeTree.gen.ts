@@ -16,6 +16,7 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as ResetPinRouteImport } from './routes/reset-pin'
 import { Route as ResellerRouteImport } from './routes/reseller'
 import { Route as ReportsRouteImport } from './routes/reports'
+import { Route as PesaswapAppRouteImport } from './routes/pesaswapApp'
 import { Route as PaymentsRouteImport } from './routes/payments'
 import { Route as PayRouteImport } from './routes/pay'
 import { Route as MerchantRouteImport } from './routes/merchant'
@@ -97,6 +98,11 @@ const ResellerRoute = ResellerRouteImport.update({
 const ReportsRoute = ReportsRouteImport.update({
   id: '/reports',
   path: '/reports',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PesaswapAppRoute = PesaswapAppRouteImport.update({
+  id: '/pesaswapApp',
+  path: '/pesaswapApp',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PaymentsRoute = PaymentsRouteImport.update({
@@ -346,6 +352,7 @@ export interface FileRoutesByFullPath {
   '/merchant': typeof MerchantRoute
   '/pay': typeof PayRoute
   '/payments': typeof PaymentsRoute
+  '/pesaswapApp': typeof PesaswapAppRoute
   '/reports': typeof ReportsRoute
   '/reseller': typeof ResellerRoute
   '/reset-pin': typeof ResetPinRoute
@@ -400,6 +407,7 @@ export interface FileRoutesByTo {
   '/merchant': typeof MerchantRoute
   '/pay': typeof PayRoute
   '/payments': typeof PaymentsRoute
+  '/pesaswapApp': typeof PesaswapAppRoute
   '/reports': typeof ReportsRoute
   '/reseller': typeof ResellerRoute
   '/reset-pin': typeof ResetPinRoute
@@ -457,6 +465,7 @@ export interface FileRoutesById {
   '/merchant': typeof MerchantRoute
   '/pay': typeof PayRoute
   '/payments': typeof PaymentsRoute
+  '/pesaswapApp': typeof PesaswapAppRoute
   '/reports': typeof ReportsRoute
   '/reseller': typeof ResellerRoute
   '/reset-pin': typeof ResetPinRoute
@@ -515,6 +524,7 @@ export interface FileRouteTypes {
     | '/merchant'
     | '/pay'
     | '/payments'
+    | '/pesaswapApp'
     | '/reports'
     | '/reseller'
     | '/reset-pin'
@@ -569,6 +579,7 @@ export interface FileRouteTypes {
     | '/merchant'
     | '/pay'
     | '/payments'
+    | '/pesaswapApp'
     | '/reports'
     | '/reseller'
     | '/reset-pin'
@@ -625,6 +636,7 @@ export interface FileRouteTypes {
     | '/merchant'
     | '/pay'
     | '/payments'
+    | '/pesaswapApp'
     | '/reports'
     | '/reseller'
     | '/reset-pin'
@@ -682,6 +694,7 @@ export interface RootRouteChildren {
   MerchantRoute: typeof MerchantRoute
   PayRoute: typeof PayRoute
   PaymentsRoute: typeof PaymentsRoute
+  PesaswapAppRoute: typeof PesaswapAppRoute
   ReportsRoute: typeof ReportsRoute
   ResellerRoute: typeof ResellerRoute
   ResetPinRoute: typeof ResetPinRoute
@@ -744,6 +757,13 @@ declare module '@tanstack/react-router' {
       path: '/reports'
       fullPath: '/reports'
       preLoaderRoute: typeof ReportsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pesaswapApp': {
+      id: '/pesaswapApp'
+      path: '/pesaswapApp'
+      fullPath: '/pesaswapApp'
+      preLoaderRoute: typeof PesaswapAppRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/payments': {
@@ -1181,6 +1201,7 @@ const rootRouteChildren: RootRouteChildren = {
   MerchantRoute: MerchantRoute,
   PayRoute: PayRoute,
   PaymentsRoute: PaymentsRoute,
+  PesaswapAppRoute: PesaswapAppRoute,
   ReportsRoute: ReportsRoute,
   ResellerRoute: ResellerRoute,
   ResetPinRoute: ResetPinRoute,

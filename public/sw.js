@@ -2,7 +2,7 @@
 // Offline-first shell: precache the offline page + icons + key route shells,
 // network-first for navigations (fresh SSR when online, cached/offline fallback
 // when not), and cache-first for immutable static assets.
-const CACHE = "pesaswap-v2";
+const CACHE = "pesaswap-v3";
 const PRECACHE = [
   "/offline.html",
   "/manifest.webmanifest",
@@ -10,7 +10,7 @@ const PRECACHE = [
   "/icons/icon-512.png",
 ];
 // Best-effort route shells so these open even fully offline.
-const PRECACHE_ROUTES = ["/", "/pay", "/table", "/enquire", "/get-started"];
+const PRECACHE_ROUTES = ["/", "/pay", "/table", "/enquire", "/get-started", "/pesaswapApp"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
