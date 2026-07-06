@@ -1,5 +1,6 @@
 import { requireAuth } from "@/api/auth";
 import { getSql } from "@/lib/db";
+import { postSettlementEntry } from "@/lib/accounting";
 import { venueFromPayload } from "@/lib/tenancy";
 
 const corsHeaders = {
@@ -184,6 +185,20 @@ export async function handleSettlementRoute(
       }
       return serializeBatch(created);
     });
+
+    // Post the settlement to the general ledger: move cleared funds to the bank,
+    // net of processing fees (best-effort — never fail the batch on bookkeeping).
+    try {
+      await postSettlementEntry(sql, {
+        venue,
+        id: String(batch.id),
+        gross: batch.gross,
+        fees: batch.fees,
+        date: batch.created_at as unknown as string,
+      });
+    } catch {
+      /* best-effort accounting */
+    }
 
     return json({ batch }, 201);
   }

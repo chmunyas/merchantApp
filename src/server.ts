@@ -21,6 +21,7 @@ import { handleAgentCommerceRoute } from "./api/agentcommerce";
 import { handleShareRoute } from "./api/share";
 import { handleInventoryRoute } from "./api/inventory";
 import { handleSettlementRoute } from "./api/settlement";
+import { handleAccountingRoute } from "./api/accounting";
 import { handlePortalRoute } from "./api/portal";
 import { handleWhatsappRoute } from "./api/whatsapp";
 import { handleTelegramRoute } from "./api/telegram";
@@ -207,6 +208,10 @@ export default {
           // Settlement + reconciliation (batch payments, fees/net)
           const settlementResponse = await handleSettlementRoute(request, env);
           if (settlementResponse) return settlementResponse;
+
+          // Accounting: double-entry general ledger + financial statements
+          const accountingResponse = await handleAccountingRoute(request, env);
+          if (accountingResponse) return accountingResponse;
 
           // Customer portal (public, token) + loyalty rewards (authed)
           const portalResponse = await handlePortalRoute(request, env);

@@ -7,6 +7,7 @@
 // --- Environment Config ---
 
 import { getSql } from "@/lib/db";
+import { postPaymentEntry, postRefundEntry } from "@/lib/accounting";
 
 type Env = {
   PESASWAP_API_KEY: string;
@@ -149,6 +150,31 @@ async function recordLedger(
         updated_at = now()`;
   } catch {
     /* best-effort ledger */
+  }
+
+  // Post the double-entry accounting journal (best-effort — an unbalanced or
+  // failed post must never block a payment). Idempotent per payment id.
+  if (rec.venue) {
+    try {
+      if (rec.kind === "refund") {
+        await postRefundEntry(sql, {
+          venue: rec.venue,
+          id: rec.id,
+          amount: Number(rec.amount),
+          currency: rec.currency,
+        });
+      } else if (SUCCEEDED.includes(rec.status)) {
+        await postPaymentEntry(sql, {
+          venue: rec.venue,
+          id: rec.id,
+          amount: Number(rec.amount),
+          tip: tipAmount,
+          currency: rec.currency,
+        });
+      }
+    } catch {
+      /* best-effort accounting */
+    }
   }
 
   // Accrue loyalty points to the contact identified by phone (upsert on the
@@ -502,6 +528,23 @@ async function handleRefund(
         timestamp: refundRecord.created_at,
       },
     });
+
+    // Persist the refund to the durable ledger + post its accounting entry
+    // (best-effort — never fail the refund on a bookkeeping error).
+    try {
+      await recordLedger(env, {
+        id: refundRecord.id,
+        kind: "refund",
+        amount: refundAmount,
+        currency: (payment?.currency as string) || "KES",
+        status: "refunded",
+        venue: (payment?.metadata?.venue as string) || null,
+        reference: body.payment_id,
+        metadata: { ...(payment?.metadata ?? {}), refund_of: body.payment_id },
+      });
+    } catch {
+      /* best-effort */
+    }
 
     // Deduct loyalty points for refunded amount
     if (payment?.metadata?.customer_phone) {
