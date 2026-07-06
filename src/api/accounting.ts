@@ -3,11 +3,14 @@ import {
   CHART,
   arAging,
   balanceSheet,
+  closePeriod,
   generalLedger,
   incomeStatement,
   journalList,
+  listPeriods,
   lostBasket,
   postEntry,
+  reopenPeriod,
   trialBalance,
 } from "@/lib/accounting";
 import { getSql } from "@/lib/db";
@@ -119,6 +122,42 @@ export async function handleAccountingRoute(
       arAging: ar,
       lostBasket: basket,
     });
+  }
+
+  // --- Period close / lock ---
+  if (path === "/api/accounting/periods" && request.method === "GET") {
+    return json({ periods: await listPeriods(sql, venue) });
+  }
+
+  if (path === "/api/accounting/period/close" && request.method === "POST") {
+    const role = typeof payload.role === "string" ? payload.role : "";
+    if (!POST_ROLES.has(role)) return json({ error: "forbidden" }, 403);
+    const body = (await request.json().catch(() => ({}))) as {
+      period_end?: string;
+      note?: string;
+    };
+    const periodEnd = body.period_end ?? "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(periodEnd)) {
+      return json({ error: "period_end (YYYY-MM-DD) required" }, 400);
+    }
+    const by = typeof payload.sub === "string" ? payload.sub : null;
+    return json(
+      { ok: true, period: await closePeriod(sql, venue, periodEnd, by, body.note ?? null) },
+      201,
+    );
+  }
+
+  if (path === "/api/accounting/period/reopen" && request.method === "POST") {
+    const role = typeof payload.role === "string" ? payload.role : "";
+    if (!POST_ROLES.has(role)) return json({ error: "forbidden" }, 403);
+    const body = (await request.json().catch(() => ({}))) as { period_end?: string };
+    const periodEnd = body.period_end ?? "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(periodEnd)) {
+      return json({ error: "period_end (YYYY-MM-DD) required" }, 400);
+    }
+    const reopened = await reopenPeriod(sql, venue, periodEnd);
+    if (!reopened) return json({ error: "period not found" }, 404);
+    return json({ ok: true, period: reopened });
   }
 
   // Manual journal adjustment (accountant-only). Body is validated + balanced by

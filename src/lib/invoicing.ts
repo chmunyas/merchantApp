@@ -2,6 +2,7 @@ import { getAdapter } from "@/lib/channels";
 import { getSql } from "@/lib/db";
 import { getBaseUrl, payLink } from "@/lib/links";
 import { createInvoice, logInvoiceEvent } from "@/lib/invoices";
+import { postInvoicePaymentEntry } from "@/lib/accounting";
 
 type Sql = NonNullable<ReturnType<typeof getSql>>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -41,6 +42,19 @@ export async function recordPayment(
     `Payment ${invoice.currency} ${Number(amount).toLocaleString()}`,
     { amount },
   );
+  // Settle the receivable in the general ledger (Dr Cash, Cr A/R). Idempotent
+  // per cumulative-paid amount; best-effort so bookkeeping never fails a payment.
+  // Invoice amounts are whole KES; the ledger is in minor units (×100).
+  try {
+    await postInvoicePaymentEntry(sql, {
+      venue,
+      sourceId: `${invoiceId}:${newPaid}`,
+      amount: Number(amount) * 100,
+      currency: invoice.currency as string,
+    });
+  } catch {
+    /* best-effort accounting */
+  }
   return { ok: true, status: paid ? "paid" : "partial", balance: total - newPaid };
 }
 

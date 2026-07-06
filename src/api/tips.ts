@@ -1,4 +1,5 @@
 import { getSql } from "@/lib/db";
+import { postTipPayoutEntry } from "@/lib/accounting";
 import { requireAuth } from "@/api/auth";
 import { venueFromPayload } from "@/lib/tenancy";
 
@@ -185,6 +186,36 @@ export async function handleTipsRoute(
         amount: money(row.amount),
       })),
     });
+  }
+
+  // Pay out pooled tips to staff: clears the Tips Payable liability and posts
+  // the double-entry payout (Dr Tips Payable, Cr Bank). Manager/owner only.
+  if (url.pathname === "/api/tips/payout" && request.method === "POST") {
+    const role = typeof payload.role === "string" ? payload.role : "";
+    if (!["manager", "merchant", "admin"].includes(role)) {
+      return json({ error: "forbidden" }, 403);
+    }
+    const body = (await request.json().catch(() => ({}))) as { period?: string };
+    const period = typeof body.period === "string" ? body.period.trim() : "";
+    const paid = await sql`
+      UPDATE tip_allocations
+      SET paid_at = now()
+      WHERE venue_id = ${venue} AND paid_at IS NULL
+        AND (${period} = '' OR period = ${period})
+      RETURNING amount`;
+    const total = paid.reduce((sum, row) => sum + money(row.amount), 0);
+    if (total > 0) {
+      try {
+        await postTipPayoutEntry(sql, {
+          venue,
+          id: crypto.randomUUID(),
+          amount: total,
+        });
+      } catch {
+        /* best-effort accounting */
+      }
+    }
+    return json({ ok: true, paidCount: paid.length, total });
   }
 
   return null;

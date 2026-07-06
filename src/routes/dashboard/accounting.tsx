@@ -103,6 +103,7 @@ function AccountingPage() {
   } | null>(null);
   const [journal, setJournal] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [periodEnd, setPeriodEnd] = useState(isoDaysAgo(0));
 
   const load = useCallback(
     async (f = from, t = to) => {
@@ -151,6 +152,49 @@ function AccountingPage() {
     a.download = `trial-balance-${from}_${to}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function closePeriodNow() {
+    const r = await authFetch("/api/accounting/period/close", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ period_end: periodEnd }),
+    });
+    if (r.ok) {
+      toast.success(`Books closed through ${periodEnd}`);
+      void load();
+    } else {
+      toast.error("Couldn't close the period");
+    }
+  }
+
+  async function reopenPeriodNow() {
+    const r = await authFetch("/api/accounting/period/reopen", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ period_end: periodEnd }),
+    });
+    if (r.ok) toast.success(`Period ${periodEnd} reopened`);
+    else toast.error("Couldn't reopen the period");
+  }
+
+  async function payoutTips() {
+    const r = await authFetch("/api/tips/payout", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (r.ok) {
+      const d = (await r.json()) as { total: number; paidCount: number };
+      toast.success(
+        d.total > 0
+          ? `Paid out ${kes(d.total)} to ${d.paidCount} staff`
+          : "No tips awaiting payout",
+      );
+      void load();
+    } else {
+      toast.error("Couldn't pay out tips");
+    }
   }
 
   const is = summary?.incomeStatement;
@@ -430,6 +474,37 @@ function AccountingPage() {
               </Table>
             </div>
           ))}
+        </CardContent>
+      </Card>
+
+      {/* Period close + tip payout controls */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Controls</CardTitle>
+          <CardDescription>
+            Lock a period after reporting, or pay pooled tips out to staff.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="text-xs text-muted-foreground">
+              Close books through
+            </label>
+            <Input
+              type="date"
+              value={periodEnd}
+              onChange={(e) => setPeriodEnd(e.target.value)}
+            />
+          </div>
+          <Button onClick={closePeriodNow}>Close period</Button>
+          <Button variant="outline" onClick={reopenPeriodNow}>
+            Reopen
+          </Button>
+          <div className="ml-auto">
+            <Button variant="secondary" onClick={payoutTips}>
+              Pay out tips
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>

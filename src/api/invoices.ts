@@ -10,6 +10,7 @@ import {
   sendReminder,
 } from "@/lib/invoicing";
 import { getBaseUrl, payLink } from "@/lib/links";
+import { postInvoiceIssueEntry } from "@/lib/accounting";
 import { requireAuth, resolveVenue } from "@/api/auth";
 
 const corsHeaders = {
@@ -153,6 +154,19 @@ export async function handleInvoiceRoute(
         phone = EXCLUDED.phone,
         description = EXCLUDED.description,
         pay_link = EXCLUDED.pay_link`;
+    // Accrual: recognise the receivable when the invoice is published/shared.
+    // Invoice amounts are whole KES; the ledger is in minor units (×100).
+    try {
+      await postInvoiceIssueEntry(sql, {
+        venue,
+        number,
+        subtotal: amount * 100,
+        tax: 0,
+        currency,
+      });
+    } catch {
+      /* best-effort accounting */
+    }
     return json({ number, payLink: link });
   }
 

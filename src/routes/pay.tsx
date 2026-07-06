@@ -44,6 +44,7 @@ type PaymentData = {
   staffId?: string | null;
   venue?: string | null;
   orderId?: string | null;
+  invoiceNumber?: string | null;
   phone?: string | null;
 };
 
@@ -120,6 +121,7 @@ function PayPage() {
         logoUrl: data.logoUrl ?? null,
         poweredBy: data.poweredBy ?? null,
         staffId: data.staffId ?? null,
+        invoiceNumber: number,
       });
       if (data.status === "paid") {
         setState("success");
@@ -202,6 +204,12 @@ function PayPage() {
     }
     if (paymentData.orderId) {
       (metadata as Record<string, unknown>).order_id = paymentData.orderId;
+    }
+    // Tag invoice payments so the ledger settles A/R instead of re-recognising
+    // revenue (revenue was booked when the invoice was issued).
+    if (paymentData.invoiceNumber) {
+      (metadata as Record<string, unknown>).invoice_number =
+        paymentData.invoiceNumber;
     }
     (metadata as Record<string, unknown>).till = paymentData.till;
 

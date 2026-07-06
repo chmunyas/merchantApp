@@ -1,6 +1,7 @@
 import { getAdapter } from "@/lib/channels";
 import { getSql } from "@/lib/db";
 import { getBaseUrl, payLink } from "@/lib/links";
+import { postInvoiceIssueEntry } from "@/lib/accounting";
 
 type Sql = NonNullable<ReturnType<typeof getSql>>;
 
@@ -150,6 +151,20 @@ export async function createInvoice(
       channel,
       delivery,
     });
+  }
+
+  // Recognise revenue on account (accrual): the invoice becomes a receivable.
+  // Invoice amounts are whole KES; the ledger is in minor units, so scale ×100.
+  try {
+    await postInvoiceIssueEntry(sql, {
+      venue: input.venue,
+      number,
+      subtotal: subtotal * 100,
+      tax: taxAmount * 100,
+      currency,
+    });
+  } catch {
+    /* best-effort accounting */
   }
 
   return { id: invoice.id, number, amount, currency, payLink: link, delivery };

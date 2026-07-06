@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 
 import {
+  cogsLines,
+  invoiceIssueLines,
+  invoicePaymentLines,
   isBalanced,
   paymentLines,
   postEntry,
@@ -81,6 +84,58 @@ describe("tipPayoutLines", () => {
     expect(debit(lines, "2000")).toBe(3000);
     expect(credit(lines, "1010")).toBe(3000);
     expect(isBalanced(lines)).toBe(true);
+  });
+});
+
+describe("invoiceIssueLines (accrual)", () => {
+  it("books a receivable, revenue and tax and stays balanced", () => {
+    const lines = invoiceIssueLines(1000, 160);
+    expect(debit(lines, "1100")).toBe(1160); // A/R (total)
+    expect(credit(lines, "4000")).toBe(1000); // revenue (subtotal)
+    expect(credit(lines, "2100")).toBe(160); // tax payable
+    expect(isBalanced(lines)).toBe(true);
+  });
+
+  it("omits the tax line when there is no tax", () => {
+    const lines = invoiceIssueLines(1000, 0);
+    expect(debit(lines, "1100")).toBe(1000);
+    expect(credit(lines, "4000")).toBe(1000);
+    expect(lines.find((l) => l.account === "2100")).toBeUndefined();
+    expect(isBalanced(lines)).toBe(true);
+  });
+});
+
+describe("invoicePaymentLines (settlement)", () => {
+  it("settles the receivable without re-recognising revenue", () => {
+    const lines = invoicePaymentLines(1160);
+    expect(debit(lines, "1000")).toBe(1160); // cash in
+    expect(credit(lines, "1100")).toBe(1160); // A/R down
+    expect(lines.find((l) => l.account === "4000")).toBeUndefined();
+    expect(isBalanced(lines)).toBe(true);
+  });
+});
+
+describe("cogsLines", () => {
+  it("expenses inventory cost and balances", () => {
+    const lines = cogsLines(600);
+    expect(debit(lines, "5000")).toBe(600);
+    expect(credit(lines, "1200")).toBe(600);
+    expect(isBalanced(lines)).toBe(true);
+  });
+});
+
+describe("accrual round-trip (issue then pay)", () => {
+  it("recognises revenue once and leaves A/R at zero", () => {
+    const issue = invoiceIssueLines(1000, 160);
+    const pay = invoicePaymentLines(1160);
+    const arNet =
+      debit(issue, "1100") +
+      debit(pay, "1100") -
+      credit(issue, "1100") -
+      credit(pay, "1100");
+    const revenue = credit(issue, "4000") + credit(pay, "4000");
+    expect(arNet).toBe(0); // receivable fully settled
+    expect(revenue).toBe(1000); // revenue recognised exactly once
   });
 });
 

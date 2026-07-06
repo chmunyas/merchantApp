@@ -7,7 +7,12 @@
 // --- Environment Config ---
 
 import { getSql } from "@/lib/db";
-import { postPaymentEntry, postRefundEntry } from "@/lib/accounting";
+import {
+  postCogsEntry,
+  postPaymentEntry,
+  postRefundEntry,
+} from "@/lib/accounting";
+import { recordPayment as recordInvoicePayment } from "@/lib/invoicing";
 
 type Env = {
   PESASWAP_API_KEY: string;
@@ -87,6 +92,31 @@ const merchantConnections = new Map<string, Set<WebSocket>>();
 // Idempotency key cache (prevents double charges)
 const idempotencyCache = new Map<string, { response: unknown; expires: number }>();
 
+// Post cost-of-goods-sold for a paid order: match its line items to inventory
+// by name and expense the cost (Dr COGS, Cr Inventory). Idempotent per order;
+// best-effort. Unmatched items simply contribute no cost.
+async function postOrderCogs(
+  sql: NonNullable<ReturnType<typeof getSql>>,
+  venue: string,
+  meta: Record<string, unknown>,
+): Promise<void> {
+  const orderId =
+    typeof meta.order_id === "string" && /^[0-9a-f-]{36}$/i.test(meta.order_id)
+      ? meta.order_id
+      : null;
+  if (!orderId) return;
+  const [row] = await sql`
+    SELECT COALESCE(sum(oi.qty * inv.cost), 0)::bigint AS cogs
+    FROM order_items oi
+    JOIN inventory_items inv
+      ON inv.venue_id = ${venue} AND lower(inv.name) = lower(oi.name)
+    WHERE oi.order_id = ${orderId}`;
+  const cogs = Number(row?.cogs ?? 0);
+  if (cogs > 0) {
+    await postCogsEntry(sql, { venue, orderId, cost: cogs });
+  }
+}
+
 // Persist a payment/refund to the Postgres ledger (best-effort — never blocks
 // the payment). Foundation for settlement + reconciliation, replacing the
 // ephemeral in-memory Map above.
@@ -120,13 +150,13 @@ async function recordLedger(
   const SUCCEEDED = ["succeeded", "paid", "captured"];
   const loyaltyPhone =
     typeof meta.customer_phone === "string" ? meta.customer_phone.trim() : "";
-  const willAward =
-    SUCCEEDED.includes(rec.status) &&
-    rec.kind !== "refund" &&
-    Boolean(loyaltyPhone) &&
-    Boolean(rec.venue);
+  // Side effects that must fire exactly once (loyalty accrual, invoice
+  // settlement) are gated on the FIRST transition of this payment id into a
+  // succeeded state, so re-recording the same payment never double-counts.
+  const succeededNow =
+    SUCCEEDED.includes(rec.status) && rec.kind !== "refund" && Boolean(rec.venue);
   let alreadySucceeded = false;
-  if (willAward) {
+  if (succeededNow) {
     try {
       const [prev] = await sql`SELECT status FROM payments WHERE id = ${rec.id}`;
       alreadySucceeded = prev
@@ -136,6 +166,7 @@ async function recordLedger(
       /* treat as a new payment */
     }
   }
+  const firstSuccess = succeededNow && !alreadySucceeded;
 
   try {
     await sql`
@@ -153,7 +184,7 @@ async function recordLedger(
   }
 
   // Post the double-entry accounting journal (best-effort — an unbalanced or
-  // failed post must never block a payment). Idempotent per payment id.
+  // failed post must never block a payment).
   if (rec.venue) {
     try {
       if (rec.kind === "refund") {
@@ -164,13 +195,48 @@ async function recordLedger(
           currency: rec.currency,
         });
       } else if (SUCCEEDED.includes(rec.status)) {
-        await postPaymentEntry(sql, {
-          venue: rec.venue,
-          id: rec.id,
-          amount: Number(rec.amount),
-          tip: tipAmount,
-          currency: rec.currency,
-        });
+        const invoiceNumber =
+          typeof meta.invoice_number === "string"
+            ? meta.invoice_number.trim()
+            : "";
+        if (invoiceNumber) {
+          // Invoice payment: settle the receivable + mark the invoice paid via
+          // recordPayment (revenue was booked at issue, not here). Once only.
+          if (firstSuccess) {
+            const [inv] = await sql`
+              SELECT id FROM invoices
+              WHERE venue_id = ${rec.venue} AND number = ${invoiceNumber}
+              LIMIT 1`;
+            if (inv?.id) {
+              // recordPayment works in the invoice's whole-KES units; the
+              // payment amount is in minor units, so scale ÷100.
+              await recordInvoicePayment(
+                env,
+                rec.venue,
+                String(inv.id),
+                Math.round(Number(rec.amount) / 100),
+              );
+            } else {
+              await postPaymentEntry(sql, {
+                venue: rec.venue,
+                id: rec.id,
+                amount: Number(rec.amount),
+                tip: tipAmount,
+                currency: rec.currency,
+              });
+            }
+          }
+        } else {
+          // Direct sale — recognise revenue on receipt (cash basis). Idempotent.
+          await postPaymentEntry(sql, {
+            venue: rec.venue,
+            id: rec.id,
+            amount: Number(rec.amount),
+            tip: tipAmount,
+            currency: rec.currency,
+          });
+          await postOrderCogs(sql, rec.venue, meta);
+        }
       }
     } catch {
       /* best-effort accounting */
@@ -179,7 +245,7 @@ async function recordLedger(
 
   // Accrue loyalty points to the contact identified by phone (upsert on the
   // unique venue+phone key). Best-effort — never block the payment.
-  if (willAward && !alreadySucceeded) {
+  if (firstSuccess && loyaltyPhone) {
     const points = Math.floor(Number(rec.amount) / 1000);
     if (points > 0) {
       try {

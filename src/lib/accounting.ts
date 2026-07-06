@@ -89,6 +89,41 @@ export function tipPayoutLines(amount: number): PostLine[] {
   ];
 }
 
+// Issuing an invoice recognises revenue on account (accrual): a receivable is
+// created, revenue is earned, and any tax becomes a liability owed to the
+// authority. The matching payment later SETTLES the receivable (no new revenue).
+export function invoiceIssueLines(subtotal: number, tax = 0): PostLine[] {
+  const s = Math.max(0, round(subtotal));
+  const t = Math.max(0, round(tax));
+  const total = s + t;
+  if (total <= 0) return [];
+  const lines: PostLine[] = [
+    { account: "1100", debit: total, memo: "Invoice issued (A/R)" },
+  ];
+  if (s > 0) lines.push({ account: "4000", credit: s, memo: "Sales revenue" });
+  if (t > 0) lines.push({ account: "2100", credit: t, memo: "Tax payable" });
+  return lines;
+}
+
+// Paying an invoice settles the receivable — revenue was already booked at issue.
+export function invoicePaymentLines(amount: number): PostLine[] {
+  const a = Math.max(0, round(amount));
+  return [
+    { account: "1000", debit: a, memo: "Invoice payment received" },
+    { account: "1100", credit: a, memo: "A/R settled" },
+  ];
+}
+
+// Cost of goods sold: inventory value leaves the balance sheet as an expense
+// when a sale is fulfilled.
+export function cogsLines(cost: number): PostLine[] {
+  const c = Math.max(0, round(cost));
+  return [
+    { account: "5000", debit: c, memo: "Cost of goods sold" },
+    { account: "1200", credit: c, memo: "Inventory consumed" },
+  ];
+}
+
 export function isBalanced(lines: PostLine[]): boolean {
   const d = lines.reduce((s, l) => s + Math.max(0, round(l.debit ?? 0)), 0);
   const c = lines.reduce((s, l) => s + Math.max(0, round(l.credit ?? 0)), 0);
@@ -134,6 +169,13 @@ export async function postEntry(
   }
   const currency = input.currency ?? "KES";
   const entryDate = input.date ? new Date(input.date) : new Date();
+
+  // A closed period is locked: nothing may post on or before its period_end.
+  if (await isPeriodClosed(sql, input.venue, entryDate)) {
+    throw new Error(
+      `accounting period closed on/before ${entryDate.toISOString().slice(0, 10)}`,
+    );
+  }
 
   return sql.begin(async (tx) => {
     const [entry] = await tx`
@@ -215,6 +257,100 @@ export function postTipPayoutEntry(
     memo: "Tips paid out",
     lines: tipPayoutLines(p.amount),
   });
+}
+
+export function postInvoiceIssueEntry(
+  sql: Sql,
+  p: { venue: string; number: string; subtotal: number; tax?: number; currency?: string; date?: Date | string },
+): Promise<string | null> {
+  return postEntry(sql, {
+    venue: p.venue,
+    sourceType: "invoice",
+    sourceId: p.number,
+    currency: p.currency,
+    date: p.date,
+    memo: `Invoice ${p.number} issued`,
+    lines: invoiceIssueLines(p.subtotal, p.tax ?? 0),
+  });
+}
+
+export function postInvoicePaymentEntry(
+  sql: Sql,
+  p: { venue: string; sourceId: string; amount: number; currency?: string; date?: Date | string },
+): Promise<string | null> {
+  return postEntry(sql, {
+    venue: p.venue,
+    sourceType: "invoice_payment",
+    sourceId: p.sourceId,
+    currency: p.currency,
+    date: p.date,
+    memo: "Invoice payment (A/R settled)",
+    lines: invoicePaymentLines(p.amount),
+  });
+}
+
+export function postCogsEntry(
+  sql: Sql,
+  p: { venue: string; orderId: string; cost: number; currency?: string; date?: Date | string },
+): Promise<string | null> {
+  return postEntry(sql, {
+    venue: p.venue,
+    sourceType: "cogs",
+    sourceId: p.orderId,
+    currency: p.currency,
+    date: p.date,
+    memo: "Cost of goods sold",
+    lines: cogsLines(p.cost),
+  });
+}
+
+// --- Period close / lock --------------------------------------------------
+
+// A date is locked if it falls on or before the period_end of any CLOSED period.
+export async function isPeriodClosed(
+  sql: Sql,
+  venue: string,
+  date: Date | string,
+): Promise<boolean> {
+  const d =
+    typeof date === "string" ? date : new Date(date).toISOString().slice(0, 10);
+  const [row] = await sql`
+    SELECT 1 FROM ledger_periods
+    WHERE venue_id = ${venue} AND status = 'closed' AND period_end >= ${d}
+    LIMIT 1`;
+  return Boolean(row);
+}
+
+export async function closePeriod(
+  sql: Sql,
+  venue: string,
+  periodEnd: string,
+  by?: string | null,
+  note?: string | null,
+) {
+  const [row] = await sql`
+    INSERT INTO ledger_periods (venue_id, period_end, status, note, closed_by)
+    VALUES (${venue}, ${periodEnd}, 'closed', ${note ?? null}, ${by ?? null})
+    ON CONFLICT (venue_id, period_end)
+    DO UPDATE SET status = 'closed', closed_at = now(),
+                  closed_by = ${by ?? null}, note = ${note ?? null}
+    RETURNING period_end, status, closed_at, closed_by, note`;
+  return row;
+}
+
+export async function reopenPeriod(sql: Sql, venue: string, periodEnd: string) {
+  const [row] = await sql`
+    UPDATE ledger_periods SET status = 'open'
+    WHERE venue_id = ${venue} AND period_end = ${periodEnd}
+    RETURNING period_end, status`;
+  return row ?? null;
+}
+
+export async function listPeriods(sql: Sql, venue: string) {
+  return sql`
+    SELECT period_end, status, closed_at, closed_by, note
+    FROM ledger_periods WHERE venue_id = ${venue}
+    ORDER BY period_end DESC LIMIT 60`;
 }
 
 // --- Reports --------------------------------------------------------------
@@ -391,7 +527,7 @@ export async function arAging(sql: Sql, venue: string) {
       COALESCE(sum(bal) FILTER (WHERE age > 90),0)::numeric AS d90_plus,
       count(*)::int AS open_count
     FROM (
-      SELECT (amount - amount_paid) AS bal,
+      SELECT ((amount - amount_paid) * 100) AS bal,
              GREATEST(0, (CURRENT_DATE - created_at::date)) AS age
       FROM invoices
       WHERE venue_id = ${venue}
@@ -400,7 +536,7 @@ export async function arAging(sql: Sql, venue: string) {
     ) x`;
   const outstanding = await sql`
     SELECT number, customer_name, phone, currency,
-           (amount - amount_paid) AS balance, due_date, created_at,
+           ((amount - amount_paid) * 100) AS balance, due_date, created_at,
            GREATEST(0, (CURRENT_DATE - created_at::date)) AS age_days
     FROM invoices
     WHERE venue_id = ${venue}
