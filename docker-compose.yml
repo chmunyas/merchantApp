@@ -16,6 +16,9 @@ services:
       - CHOKIDAR_USEPOLLING=true
       # Optional Baileys bridge (QR-login for a WhatsApp Business App number).
       - WHATSAPP_BRIDGE_URL=http://whatsapp-bridge:8090
+      # Simulate successful payments so the full journey is testable without live
+      # PesaSwap creds. Set to 0 + a real PESASWAP_API_KEY for real payments.
+      - PAYMENTS_TEST_MODE=1
       # Cloud backend (Postgres). In production this is a Hyperdrive binding.
       - DATABASE_URL=postgres://pesaswap:pesaswap@postgres:5432/pesaswap
     volumes:
