@@ -18,6 +18,9 @@ import { handleTablesRoute } from "./api/tables";
 import { handleQrRoute } from "./api/qr";
 import { handleCopilotRoute } from "./api/copilot";
 import { handleAgentCommerceRoute } from "./api/agentcommerce";
+import { handleInventoryRoute } from "./api/inventory";
+import { handleSettlementRoute } from "./api/settlement";
+import { handlePortalRoute } from "./api/portal";
 import { handleWhatsappRoute } from "./api/whatsapp";
 import { handleTelegramRoute } from "./api/telegram";
 import { handleChannelRoute } from "./api/channels";
@@ -195,6 +198,18 @@ export default {
           // Unified QR: scan -> order -> pay -> loyalty (public resolve + authed mgmt)
           const qrResponse = await handleQrRoute(request, env);
           if (qrResponse) return qrResponse;
+
+          // Inventory (stock, COGS, reorder) — retail vertical
+          const inventoryResponse = await handleInventoryRoute(request, env);
+          if (inventoryResponse) return inventoryResponse;
+
+          // Settlement + reconciliation (batch payments, fees/net)
+          const settlementResponse = await handleSettlementRoute(request, env);
+          if (settlementResponse) return settlementResponse;
+
+          // Customer portal (public, token) + loyalty rewards (authed)
+          const portalResponse = await handlePortalRoute(request, env);
+          if (portalResponse) return portalResponse;
 
           // WhatsApp AI agent (Cloud API webhook + simulator)
           const whatsappResponse = await handleWhatsappRoute(request, env);

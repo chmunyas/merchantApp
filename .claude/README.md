@@ -53,6 +53,13 @@ by GitHub Copilot's Agent Skills support.
 | Merchant copilot (runtime AI employee) | `skills/merchant-copilot` | `merchant-copilot-engineer` |
 | Agentic checkout / AI-Collect (external agents buy) | `skills/agentic-checkout` | `agentic-checkout-engineer` |
 
+### Operations & finance depth
+| Capability | Skill | Subagent |
+| --- | --- | --- |
+| Inventory (stock, COGS, reorder) | `skills/inventory` | `inventory-engineer` |
+| Reconciliation & settlement | `skills/reconciliation` | `reconciliation-engineer` |
+| Customer portal & rewards redemption | `skills/customer-portal` | `customer-portal-engineer` |
+
 ## Using them
 
 **Claude Code** — skills and subagents in `.claude/` are auto-discovered.

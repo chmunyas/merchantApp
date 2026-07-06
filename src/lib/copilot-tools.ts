@@ -140,6 +140,58 @@ async function toolTopCustomers(
   return { reply: `Top spenders:\n${list}`, tool: "top_customers", data: { rows } };
 }
 
+async function toolStockReport(
+  _message: string,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const sql = getSql(ctx.env);
+  if (!sql) return { reply: "Inventory is unavailable right now.", tool: "stock_report" };
+  const rows = await sql`
+    SELECT name, stock, reorder_level, unit
+    FROM inventory_items
+    WHERE venue_id = ${ctx.venue} AND active = true AND stock <= reorder_level
+    ORDER BY (reorder_level - stock) DESC
+    LIMIT 10`;
+  if (rows.length === 0) {
+    return {
+      reply: "Nothing is below its reorder level — stock looks healthy.",
+      tool: "stock_report",
+    };
+  }
+  const list = rows
+    .map(
+      (r) =>
+        `• ${r.name}: ${Number(r.stock)} ${r.unit} left (reorder at ${Number(r.reorder_level)})`,
+    )
+    .join("\n");
+  return {
+    reply: `${rows.length} item${rows.length === 1 ? "" : "s"} low on stock:\n${list}`,
+    tool: "stock_report",
+    data: { rows },
+  };
+}
+
+async function toolSettlementStatus(
+  _message: string,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const sql = getSql(ctx.env);
+  if (!sql) return { reply: "Settlement data is unavailable right now.", tool: "settlement_status" };
+  const [row] = await sql`
+    SELECT coalesce(sum(amount) FILTER (WHERE settlement_id IS NULL), 0)::bigint AS unreconciled,
+           count(*) FILTER (WHERE settlement_id IS NULL)::int AS unreconciled_tx
+    FROM payments
+    WHERE venue_id = ${ctx.venue}
+      AND status IN ('succeeded', 'paid', 'captured')`;
+  const unreconciled = Number(row?.unreconciled ?? 0) / 100;
+  const n = Number(row?.unreconciled_tx ?? 0);
+  const reply =
+    n === 0
+      ? "Everything is settled — no unreconciled payments."
+      : `${kes(unreconciled)} across ${n} payment${n === 1 ? "" : "s"} is unsettled. Run a settlement in the Settlement tab to batch it.`;
+  return { reply, tool: "settlement_status", data: { unreconciled, count: n } };
+}
+
 async function toolReprice(
   message: string,
   ctx: ToolContext,
@@ -345,6 +397,24 @@ const ROUTES: Route[] = [
         m,
       ),
     run: toolAvailability,
+  },
+  {
+    name: "stock_report",
+    describe: "inventory items that are low on stock / need reordering",
+    test: (m) =>
+      /\b(running low|low on stock|what'?s? low|reorder|reorder level|inventory levels?|stock levels?|low stock|running out)\b/.test(
+        m,
+      ),
+    run: toolStockReport,
+  },
+  {
+    name: "settlement_status",
+    describe: "how much is unsettled / unreconciled / awaiting payout",
+    test: (m) =>
+      /\b(unsettled|unreconciled|un-reconciled|to settle|awaiting (settlement|payout)|how much.*(settle|payout))\b/.test(
+        m,
+      ),
+    run: toolSettlementStatus,
   },
   {
     name: "add_menu_item",
