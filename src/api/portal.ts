@@ -1,6 +1,7 @@
 import { requireAuth } from "@/api/auth";
 import { getSql } from "@/lib/db";
 import { venueFromPayload } from "@/lib/tenancy";
+import { tierProgress } from "@/lib/loyalty";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -178,14 +179,16 @@ export async function handlePortalRoute(
         ORDER BY rr.created_at DESC
         LIMIT 10
       `;
+      const points = Number(contact?.points ?? 0);
       return json({
         venue,
         branding: await loadBranding(sql, venue),
         contact: {
           name: contact?.name ?? "Guest",
-          points: Number(contact?.points ?? 0),
+          points,
           tier: contact?.tier ?? "Bronze",
         },
+        progress: tierProgress(points),
         invoices,
         payments,
         rewards: rewards.map(rewardPayload),

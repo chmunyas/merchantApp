@@ -17,6 +17,7 @@ import {
   loadHyperLoader,
   type PaymentStatus,
 } from "../lib/pesaswap-payments";
+import { QRCodeSVG } from "qrcode.react";
 
 export const Route = createFileRoute("/pay")({
   head: () => ({
@@ -693,6 +694,33 @@ function SuccessState({
   onDone: () => void;
 }) {
   const elapsedSec = Math.round(elapsedMs / 1000);
+  const [portalUrl, setPortalUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const venue = data.venue;
+    if (!venue || !phone) return;
+    let active = true;
+    void (async () => {
+      try {
+        const res = await fetch("/api/portal/token", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ venue, phone }),
+        });
+        if (!res.ok) return;
+        const d = (await res.json()) as { url?: string };
+        if (active && d.url) {
+          setPortalUrl(`${window.location.origin}${d.url}`);
+        }
+      } catch {
+        /* the rewards portal is a bonus — never block the receipt */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [data.venue, phone]);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col items-center py-6 space-y-4">
@@ -732,6 +760,28 @@ function SuccessState({
           vs. 2 minutes the old way — {Math.max(50, Math.round((120 - elapsedSec) / 1.2))}% faster
         </p>
       </div>
+
+      {portalUrl ? (
+        <div className="rounded-2xl border border-emerald-200 bg-white p-4 text-center space-y-3">
+          <p className="text-sm font-bold text-foreground">
+            Your rewards &amp; receipt
+          </p>
+          <div className="flex justify-center">
+            <div className="rounded-xl bg-white p-2 ring-1 ring-border">
+              <QRCodeSVG value={portalUrl} size={132} />
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Scan to see your points, redeem rewards &amp; rebook
+          </p>
+          <a
+            href={portalUrl}
+            className="inline-block text-xs font-bold text-emerald-700 underline"
+          >
+            Open my rewards →
+          </a>
+        </div>
+      ) : null}
 
       <button
         onClick={onDone}

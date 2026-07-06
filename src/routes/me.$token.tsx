@@ -53,6 +53,13 @@ type PortalPayload = {
   venue: string;
   branding: Branding;
   contact: { name: string; points: number; tier: string };
+  progress?: {
+    tier: string;
+    nextTier: string | null;
+    pointsToNext: number;
+    progressPct: number;
+    atTop: boolean;
+  };
   invoices: Invoice[];
   payments: Payment[];
   rewards: Reward[];
@@ -185,6 +192,31 @@ function CustomerPortalPage() {
                 {payload.contact.tier}
               </span>
             </div>
+            {payload.progress ? (
+              <div className="mt-4">
+                {payload.progress.atTop ? (
+                  <p className="text-xs font-semibold opacity-90">
+                    🎉 You&apos;re at our top tier
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex justify-between text-[11px] font-semibold opacity-90">
+                      <span>{payload.progress.tier}</span>
+                      <span>
+                        {payload.progress.pointsToNext.toLocaleString()} pts to{" "}
+                        {payload.progress.nextTier}
+                      </span>
+                    </div>
+                    <div className="mt-1 h-2 overflow-hidden rounded-full bg-white/25">
+                      <div
+                        className="h-full rounded-full bg-white transition-all"
+                        style={{ width: `${payload.progress.progressPct}%` }}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : null}
           </div>
           {payload.branding.reseller?.poweredBy ? (
             <p className="mt-4 text-xs opacity-75">
