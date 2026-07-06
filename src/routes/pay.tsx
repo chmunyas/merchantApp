@@ -10,6 +10,7 @@ import {
   QrCode,
   Camera,
   AlertCircle,
+  Star,
 } from "lucide-react";
 import {
   executePayment,
@@ -830,6 +831,14 @@ function SuccessState({
         </div>
       ) : null}
 
+      <ReviewPrompt
+        venue={data.venue}
+        merchant={data.merchant}
+        phone={phone}
+        paymentId={paymentId}
+        staffId={data.staffId}
+      />
+
       <button
         onClick={onDone}
         className="w-full bg-foreground text-background py-4 rounded-2xl text-sm font-bold"
@@ -840,6 +849,117 @@ function SuccessState({
       <p className="text-[9px] text-center text-muted-foreground">
         Receipt sent to your M-Pesa. Powered by PesaSwap.
       </p>
+    </div>
+  );
+}
+
+// Post-payment review capture — SundayApp's "payment = start of the
+// relationship". A high rating is nudged to Google; a low one is captured
+// privately and flagged to the team for service recovery.
+function ReviewPrompt({
+  venue,
+  merchant,
+  phone,
+  paymentId,
+  staffId,
+}: {
+  venue?: string | null;
+  merchant: string;
+  phone: string;
+  paymentId: string | null;
+  staffId?: string | null;
+}) {
+  const [rating, setRating] = useState(0);
+  const [comment, setComment] = useState("");
+  const [sent, setSent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  if (!venue) return null;
+
+  async function submit(stars: number, withComment = false) {
+    setBusy(true);
+    try {
+      await fetch(`/api/reviews?venue=${encodeURIComponent(venue as string)}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          rating: stars,
+          comment: withComment ? comment : undefined,
+          phone: phone || undefined,
+          paymentId: paymentId || undefined,
+          staffId: staffId || undefined,
+          source: "pay",
+        }),
+      });
+    } catch {
+      /* best-effort — never block leaving */
+    } finally {
+      setSent(true);
+      setBusy(false);
+    }
+  }
+
+  if (sent) {
+    return (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-center space-y-2">
+        <p className="text-sm font-bold">Thanks for the feedback! 🙏</p>
+        {rating >= 4 ? (
+          <a
+            href={`https://www.google.com/search?q=${encodeURIComponent(`${merchant} reviews`)}`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-block text-xs font-bold text-amber-700 underline"
+          >
+            Loved it? Share on Google →
+          </a>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">
+            We&apos;ve flagged this to the team to make it right.
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-border bg-white p-4 text-center space-y-3">
+      <p className="text-sm font-bold">How was it at {merchant}?</p>
+      <div className="flex justify-center gap-1">
+        {[1, 2, 3, 4, 5].map((s) => (
+          <button
+            key={s}
+            type="button"
+            aria-label={`${s} star`}
+            disabled={busy}
+            onClick={() => {
+              setRating(s);
+              if (s >= 4) void submit(s);
+            }}
+          >
+            <Star
+              className={`size-8 ${s <= rating ? "fill-amber-400 text-amber-400" : "text-slate-300"}`}
+            />
+          </button>
+        ))}
+      </div>
+      {rating > 0 && rating < 4 ? (
+        <div className="space-y-2">
+          <textarea
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            placeholder="What could be better? (optional)"
+            rows={2}
+            className="w-full rounded-xl border border-border p-2 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+          <button
+            type="button"
+            onClick={() => submit(rating, true)}
+            disabled={busy}
+            className="w-full rounded-xl bg-foreground py-2.5 text-xs font-bold text-background disabled:opacity-50"
+          >
+            Send feedback
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

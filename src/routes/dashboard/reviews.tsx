@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { authFetch } from "@/lib/auth";
 import {
   ensureMerchantDemoData,
   loadMerchantSnapshot,
@@ -29,6 +30,48 @@ function DashboardReviewsPage() {
   const [selectedTemplate, setSelectedTemplate] = useState<
     Record<string, string>
   >({});
+  const [liveReviews, setLiveReviews] = useState<
+    Array<{
+      id: string;
+      rating: 1 | 2 | 3 | 4 | 5;
+      comment: string | null;
+      customer_name: string | null;
+      created_at: string;
+      response: string | null;
+    }>
+  >([]);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await authFetch("/api/reviews");
+        if (res.ok) {
+          const data = (await res.json()) as { reviews?: typeof liveReviews };
+          setLiveReviews(data.reviews ?? []);
+        }
+      } catch {
+        /* live reviews are additive to the demo view */
+      }
+    })();
+  }, []);
+
+  async function aiReply(id: string) {
+    try {
+      const res = await authFetch(`/api/reviews/${id}/reply`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      if (!res.ok) throw new Error("failed");
+      const data = (await res.json()) as { response: string };
+      setLiveReviews((cur) =>
+        cur.map((r) => (r.id === id ? { ...r, response: data.response } : r)),
+      );
+      toast.success("AI reply posted");
+    } catch {
+      toast.error("Couldn't generate a reply");
+    }
+  }
 
   useEffect(() => {
     generateDemoData();
@@ -37,10 +80,23 @@ function DashboardReviewsPage() {
 
   const reviews = useMemo(() => {
     if (!snapshot) return [];
-    return snapshot.reviews.filter(
+    const live = liveReviews.map((r) => ({
+      id: r.id,
+      paymentId: "",
+      rating: r.rating,
+      comment: r.comment ?? "",
+      customerName: r.customer_name ?? "Guest",
+      tableNumber: 0,
+      server: "",
+      date: r.created_at,
+      response: r.response ?? undefined,
+      real: true,
+    }));
+    const demo = snapshot.reviews.map((r) => ({ ...r, real: false }));
+    return [...live, ...demo].filter(
       (review) => ratingFilter === "all" || review.rating === ratingFilter,
     );
-  }, [snapshot, ratingFilter]);
+  }, [snapshot, liveReviews, ratingFilter]);
 
   const stats = useMemo(() => {
     if (!snapshot || !snapshot.reviews.length) return null;
@@ -207,6 +263,11 @@ function DashboardReviewsPage() {
                 ) : null}
               </div>
               <div className="flex w-full max-w-sm flex-col gap-2">
+                {review.real ? (
+                  <Button onClick={() => aiReply(review.id)}>
+                    ✨ AI reply
+                  </Button>
+                ) : null}
                 <select
                   value={selectedTemplate[review.id] || ""}
                   onChange={(event) =>

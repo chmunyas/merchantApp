@@ -22,6 +22,7 @@ import { handleShareRoute } from "./api/share";
 import { handleInventoryRoute } from "./api/inventory";
 import { handleSettlementRoute } from "./api/settlement";
 import { handleAccountingRoute } from "./api/accounting";
+import { handleReviewsRoute } from "./api/reviews";
 import { handlePortalRoute } from "./api/portal";
 import { handleWhatsappRoute } from "./api/whatsapp";
 import { handleTelegramRoute } from "./api/telegram";
@@ -212,6 +213,10 @@ export default {
           // Accounting: double-entry general ledger + financial statements
           const accountingResponse = await handleAccountingRoute(request, env);
           if (accountingResponse) return accountingResponse;
+
+          // Reputation: reviews capture (public) + list/stats + AI reply
+          const reviewsResponse = await handleReviewsRoute(request, env);
+          if (reviewsResponse) return reviewsResponse;
 
           // Customer portal (public, token) + loyalty rewards (authed)
           const portalResponse = await handlePortalRoute(request, env);
