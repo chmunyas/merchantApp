@@ -60,6 +60,12 @@ type PortalPayload = {
     progressPct: number;
     atTop: boolean;
   };
+  benefits?: {
+    tier: string;
+    current: string[];
+    next: { tier: string; benefits: string[] } | null;
+  };
+  expiry?: { expiresAt: string | null; atRisk: boolean; daysLeft: number | null };
   invoices: Invoice[];
   payments: Payment[];
   rewards: Reward[];
@@ -236,6 +242,16 @@ function CustomerPortalPage() {
           </div>
         ) : null}
         {error ? <p className="rounded-2xl bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
+        {payload.expiry?.atRisk && payload.expiry.expiresAt ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-center text-sm font-semibold text-amber-800">
+            ⏳ {payload.contact.points.toLocaleString()} points expire on{" "}
+            {payload.expiry.expiresAt}
+            {typeof payload.expiry.daysLeft === "number"
+              ? ` (${payload.expiry.daysLeft} days)`
+              : ""}{" "}
+            — redeem or visit to keep them.
+          </div>
+        ) : null}
 
         <div>
           <h2 className="mb-3 flex items-center gap-2 text-sm font-black uppercase tracking-[0.2em] text-slate-500">
@@ -269,6 +285,37 @@ function CustomerPortalPage() {
             })}
           </div>
         </div>
+
+        {payload.benefits ? (
+          <div className="rounded-3xl bg-white p-5 shadow-sm">
+            <h2 className="flex items-center gap-2 font-black text-slate-950">
+              <Sparkles className="h-4 w-4" /> Your {payload.benefits.tier} perks
+            </h2>
+            <ul className="mt-3 space-y-1.5 text-sm text-slate-600">
+              {payload.benefits.current.map((b) => (
+                <li key={b} className="flex gap-2">
+                  <span style={{ color: accent }}>✓</span>
+                  {b}
+                </li>
+              ))}
+            </ul>
+            {payload.benefits.next ? (
+              <div className="mt-4 rounded-2xl bg-slate-50 p-3">
+                <p className="text-xs font-bold text-slate-700">
+                  Unlock {payload.benefits.next.tier}
+                </p>
+                <ul className="mt-1 space-y-1 text-xs text-slate-500">
+                  {payload.benefits.next.benefits
+                    .filter((b) => !b.startsWith("Everything"))
+                    .slice(0, 3)
+                    .map((b) => (
+                      <li key={b}>＋ {b}</li>
+                    ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="rounded-3xl bg-white p-5 shadow-sm">
           <h2 className="flex items-center gap-2 font-black text-slate-950">

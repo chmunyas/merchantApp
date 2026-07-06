@@ -1,7 +1,7 @@
 import { requireAuth } from "@/api/auth";
 import { getSql } from "@/lib/db";
 import { venueFromPayload } from "@/lib/tenancy";
-import { tierProgress } from "@/lib/loyalty";
+import { tierProgress, tierBenefits, pointsExpiry } from "@/lib/loyalty";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -31,6 +31,7 @@ type ContactRow = {
   name: string | null;
   points: number | string | null;
   tier: string | null;
+  last_visit: string | null;
 };
 type BrandingRow = {
   business_name: string | null;
@@ -142,7 +143,7 @@ export async function handlePortalRoute(
 
     if (!action && request.method === "GET") {
       const [contact] = (await sql`
-        SELECT id, name, points, tier
+        SELECT id, name, points, tier, last_visit
         FROM contacts
         WHERE venue_id = ${venue} AND phone = ${phone}
         ORDER BY created_at DESC
@@ -189,6 +190,8 @@ export async function handlePortalRoute(
           tier: contact?.tier ?? "Bronze",
         },
         progress: tierProgress(points),
+        benefits: tierBenefits(points),
+        expiry: pointsExpiry(contact?.last_visit ?? null, points),
         invoices,
         payments,
         rewards: rewards.map(rewardPayload),
