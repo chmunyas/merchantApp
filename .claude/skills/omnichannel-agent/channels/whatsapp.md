@@ -9,7 +9,12 @@ config in `app_settings.whatsapp_cloud`, `transport: auto|cloud|bridge`):
   `graph.facebook.com/<phoneId>/messages`. End-to-end encrypted transport.
 - **Baileys bridge** (`whatsapp-bridge/`) — links an existing WhatsApp Business
   **App** number by QR (multi-device). Inbound → `/api/whatsapp/bridge/inbound`;
-  outbound via `POST http://localhost:8090/send`. Unofficial: use only where the
+  outbound via `POST <WHATSAPP_BRIDGE_URL>/send`. The bridge is a **local**
+  container; `/send`, `/qr`, `/logout` are guarded by a shared `BRIDGE_TOKEN`
+  (the adapter presents it as `Authorization: Bearer`). To let the **deployed**
+  Worker reach it, expose it via a Cloudflare Tunnel (`docker compose --profile
+  tunnel up -d cloudflared`) and set the Worker secrets `WHATSAPP_BRIDGE_URL`
+  (the tunnel URL) + `WHATSAPP_BRIDGE_TOKEN`. Unofficial: use only where the
   merchant owns the number and accepts WhatsApp's ToS risk.
 
 ## Capabilities
@@ -46,4 +51,6 @@ outside it, staff must use a template to reopen. See `../handoff.md`.
 
 ## Status in this app
 **Live** — Cloud API webhook + Baileys bridge both implemented; `transport` chooses
-per venue.
+per venue. The deployed Worker reaches the local bridge over a token-secured
+Cloudflare Tunnel; without it (tunnel down / secret unset), WhatsApp outbound
+falls back to Cloud API, then to simulated.

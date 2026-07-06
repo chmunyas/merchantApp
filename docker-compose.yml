@@ -16,6 +16,9 @@ services:
       - CHOKIDAR_USEPOLLING=true
       # Optional Baileys bridge (QR-login for a WhatsApp Business App number).
       - WHATSAPP_BRIDGE_URL=http://whatsapp-bridge:8090
+      # Shared secret the app presents to the bridge's /send. Must match the
+      # bridge's BRIDGE_TOKEN. Set WHATSAPP_BRIDGE_TOKEN in .env (see .env.example).
+      - WHATSAPP_BRIDGE_TOKEN=${WHATSAPP_BRIDGE_TOKEN:-}
       # Simulate successful payments so the full journey is testable without live
       # PesaSwap creds. Set to 0 + a real PESASWAP_API_KEY for real payments.
       - PAYMENTS_TEST_MODE=1
@@ -39,10 +42,29 @@ services:
       - APP_BASE_URL=http://merchant-app:8080
       - BRIDGE_PORT=8090
       - BRIDGE_VENUE=main
+      # Shared secret required on /send, /qr, /logout once the bridge is exposed
+      # publicly (see the cloudflared service). Unset => open (internal-only).
+      - BRIDGE_TOKEN=${WHATSAPP_BRIDGE_TOKEN:-}
     ports:
       - "8090:8090"
     depends_on:
       - postgres
+    restart: unless-stopped
+
+  # Public ingress so the DEPLOYED Cloudflare Worker can reach the local bridge.
+  # Cloudflare Quick Tunnel -> a random https://<id>.trycloudflare.com URL, printed
+  # in `docker logs pesaswap-cloudflared`. Opt-in (does not start by default):
+  #   docker compose --profile tunnel up -d cloudflared
+  # The bridge is guarded by BRIDGE_TOKEN, so the public URL still needs the secret.
+  # Point the Worker at it: wrangler secret put WHATSAPP_BRIDGE_URL (the tunnel URL)
+  # and WHATSAPP_BRIDGE_TOKEN (the same shared secret).
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: pesaswap-cloudflared
+    command: tunnel --no-autoupdate --url http://whatsapp-bridge:8090
+    profiles: ["tunnel"]
+    depends_on:
+      - whatsapp-bridge
     restart: unless-stopped
 
   postgres:

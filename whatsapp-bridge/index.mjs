@@ -23,6 +23,10 @@ const APP_INBOUND_URL =
 const APP_BASE_URL = process.env.APP_BASE_URL ?? "http://merchant-app:8080";
 const BRIDGE_PORT = Number(process.env.BRIDGE_PORT ?? 8090);
 const BRIDGE_VENUE = process.env.BRIDGE_VENUE ?? "main";
+// Shared secret required on mutating / pairing endpoints when the bridge is
+// exposed publicly (e.g. behind a Cloudflare Tunnel so the deployed Worker can
+// reach it). Unset => open (safe only on an internal-only Docker network).
+const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN ?? "";
 
 const logger = pino({ level: "silent" });
 const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 4 });
@@ -349,6 +353,15 @@ function readBody(req) {
   });
 }
 
+// Constant-time-ish check that the request carries the shared bridge secret.
+// When BRIDGE_TOKEN is unset the bridge is open (internal-only dev).
+function authorized(req) {
+  if (!BRIDGE_TOKEN) return true;
+  const header = req.headers["authorization"] ?? "";
+  const provided = header.startsWith("Bearer ") ? header.slice(7) : "";
+  return provided.length === BRIDGE_TOKEN.length && provided === BRIDGE_TOKEN;
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   try {
@@ -361,6 +374,16 @@ const server = http.createServer(async (req, res) => {
         hasQR: currentQR !== null,
         venue: BRIDGE_VENUE,
       });
+    }
+    // /qr exposes the pairing QR, /send impersonates the number, /logout wipes
+    // the session — all require the shared secret when the bridge is exposed.
+    if (
+      (url.pathname === "/qr" ||
+        url.pathname === "/send" ||
+        url.pathname === "/logout") &&
+      !authorized(req)
+    ) {
+      return sendJson(res, 401, { ok: false, error: "unauthorized" });
     }
     if (url.pathname === "/qr" && req.method === "GET") {
       return sendJson(res, 200, { qr: currentQR, status });

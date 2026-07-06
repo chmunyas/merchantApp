@@ -8,6 +8,7 @@ export type WhatsappConfig = {
   phoneId?: string;
   verifyToken: string;
   bridgeUrl?: string;
+  bridgeToken?: string;
   transport: WhatsappTransport;
 };
 
@@ -20,6 +21,7 @@ export async function getWhatsappConfig(env: unknown): Promise<WhatsappConfig> {
   let phoneId = envVar(env, "WHATSAPP_PHONE_ID");
   let verifyToken = envVar(env, "WHATSAPP_VERIFY_TOKEN") ?? "pesaswap-verify";
   const bridgeUrl = envVar(env, "WHATSAPP_BRIDGE_URL");
+  const bridgeToken = envVar(env, "WHATSAPP_BRIDGE_TOKEN");
   let transport: WhatsappTransport = "auto";
 
   try {
@@ -51,5 +53,5 @@ export async function getWhatsappConfig(env: unknown): Promise<WhatsappConfig> {
     /* fall back to env */
   }
 
-  return { token, phoneId, verifyToken, bridgeUrl, transport };
+  return { token, phoneId, verifyToken, bridgeUrl, bridgeToken, transport };
 }

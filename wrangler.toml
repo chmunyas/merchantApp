@@ -51,3 +51,7 @@ localConnectionString = "postgres://pesaswap:pesaswap@localhost:5433/pesaswap"
 # Secrets (set via `wrangler secret put`):
 # - PESASWAP_API_KEY
 # - PESASWAP_WEBHOOK_SECRET
+# - WHATSAPP_BRIDGE_URL    (public Cloudflare-Tunnel URL of the local WhatsApp
+#                           bridge, so the edge Worker can send via WhatsApp)
+# - WHATSAPP_BRIDGE_TOKEN  (shared secret guarding the bridge; must match the
+#                           bridge container's BRIDGE_TOKEN)
