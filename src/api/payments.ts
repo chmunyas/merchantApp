@@ -168,6 +168,20 @@ async function recordLedger(
       }
     }
   }
+
+  // Mark a QR order as paid (one-time-use) once its payment succeeds, so its pay
+  // token cannot be replayed.
+  const paidOrderId =
+    typeof meta.order_id === "string" && /^[0-9a-f-]{36}$/i.test(meta.order_id)
+      ? meta.order_id
+      : null;
+  if (SUCCEEDED.includes(rec.status) && paidOrderId) {
+    try {
+      await sql`UPDATE orders SET paid_at = COALESCE(paid_at, now()) WHERE id = ${paidOrderId}`;
+    } catch {
+      /* best-effort */
+    }
+  }
 }
 
 // --- Route Handler ---

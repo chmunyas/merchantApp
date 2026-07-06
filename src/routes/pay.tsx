@@ -87,6 +87,13 @@ function PayPage() {
       void loadInvoice(invoiceNo);
     }
 
+    // Server-bound QR order pay link (/pay?o=<token>) — the amount is loaded from
+    // the server, never read from the URL, so it cannot be tampered with.
+    const orderToken = params.get("o");
+    if (orderToken) {
+      void loadQrOrder(orderToken);
+    }
+
     // Check for return from payment redirect
     const status = params.get("status");
     if (status === "complete") {
@@ -130,6 +137,38 @@ function PayPage() {
   function confirmPayment(phone: string) {
     setCustomerPhone(phone);
     setState("pin");
+  }
+
+  // Resolve a server-bound QR order token to its authoritative amount + merchant.
+  // The amount is never read from the URL, so it cannot be tampered with.
+  async function loadQrOrder(token: string) {
+    setLinkError(false);
+    setLinkLoading(true);
+    try {
+      const res = await fetch(`/api/qr/pay/${encodeURIComponent(token)}`);
+      if (!res.ok) throw new Error("invalid");
+      const data = (await res.json()) as PaymentData & { status?: string };
+      if (data.status === "paid") {
+        setState("success");
+        return;
+      }
+      setPaymentData({
+        till: data.till,
+        amount: data.amount,
+        merchant: data.merchant,
+        logoUrl: data.logoUrl ?? null,
+        poweredBy: data.poweredBy ?? null,
+        venue: data.venue ?? null,
+        orderId: data.orderId ?? null,
+      });
+      if (data.phone) setCustomerPhone(data.phone);
+      setState("scanned");
+      startTimeRef.current = Date.now();
+    } catch {
+      setLinkError(true);
+    } finally {
+      setLinkLoading(false);
+    }
   }
 
   async function submitPin() {

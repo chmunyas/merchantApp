@@ -26,12 +26,17 @@ code" insight localized to M-Pesa.
 - `GET /api/qr/:code` — **public**; resolve → { venue, branding, table?, items };
   logs a `qr_scans` row.
 - `POST /api/qr/:code/order` — **public**; creates an order, returns
-  { orderId, amount, payUrl }.
+  { orderId, amount, payUrl } where payUrl is a server-bound token link.
+- `GET /api/qr/pay/:token` — **public**; server-authoritative order payinfo
+  (amount, merchant) for a single-use, 15-minute token — the pay page reads the
+  amount from here, never from the URL.
 
 ## Conventions
 - Reuse the existing pay flow (`/pay?…`) — never rebuild payments here.
 - Loyalty enrolls through the pay flow (points on success by `customer_phone`).
 - Amounts are minor units, KES; authed routes scope by venue.
+- **The order pay link is a server-bound token** (`/pay?o=<token>`) — single-use,
+  15-minute expiry, amount bound to the server order (never trusted from the URL).
 - The printed code carries only an opaque id; resolve server-side.
 
 ## Guidelines

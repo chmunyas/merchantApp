@@ -27,12 +27,10 @@ function wholeNumber(value: unknown, fallback: number): number {
   return Number.isFinite(next) ? Math.floor(next) : fallback;
 }
 
-function encodePayPayload(payload: Record<string, unknown>): string {
-  const text = JSON.stringify(payload);
-  const bytes = new TextEncoder().encode(text);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
+// Opaque, unguessable, single-use pay token (256-bit) so the amount is bound to
+// the server order and can never be tampered with in the URL.
+function payToken(): string {
+  return `${crypto.randomUUID()}${crypto.randomUUID()}`.replace(/-/g, "");
 }
 
 function poweredBy(orgName: string | null, orgBranding: unknown): string | null {
@@ -125,10 +123,13 @@ export async function handleQrRoute(
     if (items.length === 0) return json({ error: "items required" }, 400);
 
     const amount = items.reduce((sum, item) => sum + item.qty * item.price, 0);
+    const phone = body.phone ? String(body.phone).trim() : null;
+    const token = payToken();
     const [created] = await sql.begin(async (tx) => {
       const [order] = await tx`
-        INSERT INTO orders (venue_id, table_id, total)
-        VALUES (${code.venue_id}, ${code.table_id ?? null}, ${amount})
+        INSERT INTO orders (venue_id, table_id, total, pay_token, pay_expires_at, customer_phone)
+        VALUES (${code.venue_id}, ${code.table_id ?? null}, ${amount}, ${token},
+                now() + interval '15 minutes', ${phone})
         RETURNING id`;
       for (const item of items) {
         await tx`
@@ -141,20 +142,47 @@ export async function handleQrRoute(
       return tx`SELECT id FROM orders WHERE id = ${order.id} LIMIT 1`;
     });
 
-    const payPayload = {
-      till: String(created.id),
-      amount: amount / 100,
-      merchant: code.merchant,
-      logoUrl: code.logo_url ?? null,
-      poweredBy: poweredBy(code.org_name ?? null, code.org_branding),
-      venue: code.venue_id,
-      orderId: String(created.id),
-      phone: body.phone ? String(body.phone) : undefined,
-    };
-    const payUrl = `${url.origin}/pay?tapgo=${encodeURIComponent(
-      encodePayPayload(payPayload),
-    )}`;
+    // Server-bound pay link: the amount is NEVER trusted from the URL. The pay
+    // page resolves this opaque, single-use, 15-minute token to the authoritative
+    // order total via GET /api/qr/pay/:token.
+    const payUrl = `${url.origin}/pay?o=${token}`;
     return json({ orderId: created.id, amount, payUrl }, 201);
+  }
+
+  const payMatch = url.pathname.match(/^\/api\/qr\/pay\/([0-9a-f]+)$/i);
+  if (payMatch && request.method === "GET") {
+    const token = payMatch[1];
+    const [order] = await sql`
+      SELECT o.id, o.venue_id, o.total, o.paid_at, o.pay_expires_at, o.customer_phone,
+             COALESCE(vb.business_name, v.name, 'PesaSwap') AS merchant,
+             vb.logo_url, org.name AS org_name, org.branding AS org_branding
+      FROM orders o
+      JOIN venues v ON v.id = o.venue_id
+      LEFT JOIN venue_branding vb ON vb.venue_id = o.venue_id
+      LEFT JOIN organizations org ON org.id = v.org_id
+      WHERE o.pay_token = ${token}
+      LIMIT 1`;
+    if (!order) return json({ error: "not found" }, 404);
+    // One-time-use: a paid order returns a paid status (the page shows success).
+    if (order.paid_at) return json({ orderId: order.id, status: "paid" });
+    // Expiry: a stale token cannot be paid — the customer re-scans for a fresh one.
+    if (
+      order.pay_expires_at &&
+      new Date(order.pay_expires_at as string).getTime() < Date.now()
+    ) {
+      return json({ error: "expired" }, 410);
+    }
+    return json({
+      till: String(order.id),
+      orderId: String(order.id),
+      venue: order.venue_id,
+      amount: Number(order.total) / 100,
+      merchant: order.merchant,
+      logoUrl: order.logo_url ?? null,
+      poweredBy: poweredBy(order.org_name ?? null, order.org_branding),
+      phone: order.customer_phone ?? null,
+      status: "pending",
+    });
   }
 
   const codeMatch = url.pathname.match(/^\/api\/qr\/([0-9a-fA-F-]+)$/);
