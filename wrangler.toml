@@ -55,3 +55,5 @@ localConnectionString = "postgres://pesaswap:pesaswap@localhost:5433/pesaswap"
 #                           bridge, so the edge Worker can send via WhatsApp)
 # - WHATSAPP_BRIDGE_TOKEN  (shared secret guarding the bridge; must match the
 #                           bridge container's BRIDGE_TOKEN)
+# - CRON_SECRET            (shared secret guarding the invoicing/run +
+#                           sequences/run sweeps against anonymous callers)

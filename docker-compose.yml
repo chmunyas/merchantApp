@@ -19,6 +19,9 @@ services:
       # Shared secret the app presents to the bridge's /send. Must match the
       # bridge's BRIDGE_TOKEN. Set WHATSAPP_BRIDGE_TOKEN in .env (see .env.example).
       - WHATSAPP_BRIDGE_TOKEN=${WHATSAPP_BRIDGE_TOKEN:-}
+      # Shared secret guarding the cron sweeps (invoicing/run, sequences/run) so
+      # only the bridge (which presents x-cron-secret) can fire them.
+      - CRON_SECRET=${CRON_SECRET:-}
       # Simulate successful payments so the full journey is testable without live
       # PesaSwap creds. Set to 0 + a real PESASWAP_API_KEY for real payments.
       - PAYMENTS_TEST_MODE=1
@@ -45,6 +48,9 @@ services:
       # Shared secret required on /send, /qr, /logout once the bridge is exposed
       # publicly (see the cloudflared service). Unset => open (internal-only).
       - BRIDGE_TOKEN=${WHATSAPP_BRIDGE_TOKEN:-}
+      # Presented as x-cron-secret when calling the app's invoicing/run +
+      # sequences/run sweeps (must match the app's CRON_SECRET).
+      - CRON_SECRET=${CRON_SECRET:-}
     ports:
       - "8090:8090"
     depends_on:

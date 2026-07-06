@@ -27,6 +27,9 @@ const BRIDGE_VENUE = process.env.BRIDGE_VENUE ?? "main";
 // exposed publicly (e.g. behind a Cloudflare Tunnel so the deployed Worker can
 // reach it). Unset => open (safe only on an internal-only Docker network).
 const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN ?? "";
+// Shared secret presented to the app's cron sweeps (invoicing/run, sequences/run)
+// so those endpoints can reject anonymous callers. Matches the app's CRON_SECRET.
+const CRON_SECRET = process.env.CRON_SECRET ?? "";
 
 const logger = pino({ level: "silent" });
 const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 4 });
@@ -249,11 +252,14 @@ setInterval(() => {
 // Auto-run due sequence steps + invoice reminders/recurring every 3 minutes so
 // follow-ups and billing fire 24/7 without an external cron.
 setInterval(() => {
+  const cronHeaders = CRON_SECRET ? { "x-cron-secret": CRON_SECRET } : {};
   fetch(`${APP_BASE_URL}/api/sequences/run?venue=${BRIDGE_VENUE}`, {
     method: "POST",
+    headers: cronHeaders,
   }).catch(() => {});
   fetch(`${APP_BASE_URL}/api/invoicing/run?venue=${BRIDGE_VENUE}`, {
     method: "POST",
+    headers: cronHeaders,
   }).catch(() => {});
 }, 180000);
 

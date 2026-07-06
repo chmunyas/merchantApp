@@ -1,5 +1,7 @@
 import { getSql } from "@/lib/db";
+import { envVar } from "@/lib/env";
 import { enroll, runDueSteps } from "@/lib/sequences";
+import { verifyToken } from "@/lib/webhook-verify";
 import { requireAuth, resolveVenue } from "@/api/auth";
 
 const corsHeaders = {
@@ -83,6 +85,17 @@ export async function handleSequenceRoute(
   }
 
   if (path === "/api/sequences/run" && request.method === "POST") {
+    // Public sweep called by the bridge — guard it like /api/invoicing/run so it
+    // can't be abused to fire outbound drip messages. Bridge presents
+    // x-cron-secret; otherwise a signed-in operator may trigger it.
+    const cronSecret = envVar(env, "CRON_SECRET");
+    if (cronSecret) {
+      if (!verifyToken(request.headers.get("x-cron-secret"), cronSecret)) {
+        return json({ error: "unauthorized" }, 401);
+      }
+    } else if (!(await requireAuth(request, env))) {
+      return json({ error: "unauthorized" }, 401);
+    }
     const result = await runDueSteps(env, venue);
     return json(result);
   }
