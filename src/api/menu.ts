@@ -1,5 +1,12 @@
 import { getSql } from "@/lib/db";
 import { getMenu } from "@/lib/menu";
+import { aiChat } from "@/lib/ai-providers";
+import {
+  buildTranslatePrompt,
+  parseTranslation,
+  recommendUpsells,
+  type MenuItemLite,
+} from "@/lib/menu-ai";
 import { requireAuth, resolveVenue } from "@/api/auth";
 import { venueFromPayload } from "@/lib/tenancy";
 
@@ -50,6 +57,49 @@ export async function handleMenuRoute(
   if (path === "/api/menu" && request.method === "GET") {
     const venue = await resolveVenue(request, env, url);
     return json({ items: await getMenu(sql, venue, true) });
+  }
+
+  // Upsell recommendations for the current cart (public — used by the order/pay
+  // flow AND the omnichannel agent's "a drink with that?"). Deterministic.
+  if (path === "/api/menu/recommend" && request.method === "POST") {
+    const venue = await resolveVenue(request, env, url);
+    const body = (await request.json().catch(() => ({}))) as {
+      cart?: { id?: string; name?: string; category?: string }[];
+      max?: number;
+    };
+    const raw = (await getMenu(sql, venue, true)) as unknown as MenuItemLite[];
+    const items = raw.map((i) => ({ ...i, price: Number(i.price) }));
+    const recs = recommendUpsells(
+      items,
+      body.cart ?? [],
+      Math.min(5, Math.max(1, Number(body.max) || 3)),
+    );
+    return json({ recommendations: recs });
+  }
+
+  // AI menu translation (public, best-effort — falls back to the original menu
+  // if no AI provider is configured or the response can't be parsed).
+  if (path === "/api/menu/translate" && request.method === "POST") {
+    const venue = await resolveVenue(request, env, url);
+    const body = (await request.json().catch(() => ({}))) as { lang?: string };
+    const lang = String(body.lang ?? "").trim();
+    if (!lang) return json({ error: "lang required" }, 400);
+    const items = (await getMenu(sql, venue, true)) as unknown as MenuItemLite[];
+    const out = await aiChat(
+      buildTranslatePrompt(
+        lang,
+        items.map((i) => ({ name: i.name, description: i.description ?? "" })),
+      ),
+      env,
+    );
+    const parsed = parseTranslation(out, items.length);
+    if (!parsed) return json({ lang, translated: false, items });
+    const merged = items.map((it, i) => ({
+      ...it,
+      name: parsed[i].name || it.name,
+      description: parsed[i].description || it.description,
+    }));
+    return json({ lang, translated: true, items: merged });
   }
 
   if (path === "/api/menu/item" && request.method === "POST") {

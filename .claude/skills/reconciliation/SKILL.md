@@ -23,6 +23,10 @@ get paid".
 - `GET /api/settlement/summary?from=&to=` — gross, fees, net, reconciled/unreconciled.
 - `GET /api/settlement` · `GET /api/settlement/:id` — batches + batch detail.
 - `POST /api/settlement/run` — **manager+**; batch unsettled succeeded payments.
+- `POST /api/shifts/open` · `GET /api/shifts/current` · `POST /api/shifts/close`
+  · `GET /api/shifts` — staff shift lifecycle + **end-of-shift Z-report** (digital
+  sales + tips + tx count for the window, plus a cash drawer reconciliation:
+  float + cash sales vs counted = variance). `src/lib/shifts.ts` `zReport` + `db/33`.
 
 ## Conventions
 - Amounts minor units, KES; succeeded = `('succeeded','paid','captured')`.

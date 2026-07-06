@@ -21,6 +21,11 @@ edits.
 
 ## Endpoints
 - `GET /api/menu?venue=` — the agent + customer menu view.
+- `POST /api/menu/recommend?venue=` — **public**; deterministic upsell suggestions
+  for a cart (drink→dessert→side→add-ons), consumed by the order/pay flow + the
+  omnichannel agent. `src/lib/menu-ai.ts` `recommendUpsells`.
+- `POST /api/menu/translate?venue=` — **public**; AI menu translation into a target
+  language (best-effort via `aiChat`, falls back to the original menu).
 - `POST /api/menu/item` — **gated**; create one item (server-authoritative).
 - `PATCH /api/menu/item/:id` — **gated**; partial update, no whole-array clobber.
 - `DELETE /api/menu/item/:id` — **gated**; remove one item.

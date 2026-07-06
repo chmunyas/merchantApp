@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { authFetch } from "@/lib/auth";
+import type { ZReport } from "@/lib/shifts";
 
 export const Route = createFileRoute("/dashboard/settlement")({
   component: SettlementPage,
@@ -166,6 +167,8 @@ function SettlementPage() {
         ))}
       </div>
 
+      <ShiftPanel />
+
       <Card>
         <CardHeader>
           <CardTitle>Reconciliation status</CardTitle>
@@ -236,5 +239,171 @@ function SettlementPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+type CurrentShift = {
+  shift: { id: string; opened_at: string; staff_name: string | null } | null;
+  report: ZReport | null;
+};
+
+function ShiftPanel() {
+  const [current, setCurrent] = useState<CurrentShift | null>(null);
+  const [lastReport, setLastReport] = useState<ZReport | null>(null);
+  const [openingFloat, setOpeningFloat] = useState("");
+  const [cashSales, setCashSales] = useState("");
+  const [cashCounted, setCashCounted] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await authFetch("/api/shifts/current");
+      if (res.ok) setCurrent((await res.json()) as CurrentShift);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function openShift() {
+    setBusy(true);
+    try {
+      const res = await authFetch("/api/shifts/open", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ openingFloat: Number(openingFloat) || 0 }),
+      });
+      if (res.ok) {
+        toast.success("Shift started");
+        setOpeningFloat("");
+        setLastReport(null);
+        await load();
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function closeShift() {
+    if (!current?.shift) return;
+    setBusy(true);
+    try {
+      const res = await authFetch("/api/shifts/close", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          shiftId: current.shift.id,
+          cashSales: Number(cashSales) || 0,
+          cashCounted: cashCounted === "" ? undefined : Number(cashCounted),
+        }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { report: ZReport };
+        setLastReport(data.report);
+        toast.success("Shift closed — Z-report ready");
+        setCashSales("");
+        setCashCounted("");
+        await load();
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const report = current?.report ?? lastReport;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Shift &amp; Z-report</CardTitle>
+        <CardDescription>
+          Clock in with a cash float; close to reconcile cash vs digital in one
+          report.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {!current?.shift ? (
+          <div className="flex flex-wrap items-end gap-2">
+            <div>
+              <label className="text-xs text-muted-foreground">
+                Opening cash float (KES)
+              </label>
+              <Input
+                value={openingFloat}
+                onChange={(e) =>
+                  setOpeningFloat(e.target.value.replace(/[^0-9]/g, ""))
+                }
+                placeholder="0"
+              />
+            </div>
+            <Button onClick={() => void openShift()} disabled={busy}>
+              Start shift
+            </Button>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-end gap-2">
+            <div>
+              <label className="text-xs text-muted-foreground">
+                Cash sales this shift (KES)
+              </label>
+              <Input
+                value={cashSales}
+                onChange={(e) =>
+                  setCashSales(e.target.value.replace(/[^0-9]/g, ""))
+                }
+                placeholder="0"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">
+                Cash counted (KES)
+              </label>
+              <Input
+                value={cashCounted}
+                onChange={(e) =>
+                  setCashCounted(e.target.value.replace(/[^0-9]/g, ""))
+                }
+                placeholder="count drawer"
+              />
+            </div>
+            <Button
+              variant="destructive"
+              onClick={() => void closeShift()}
+              disabled={busy}
+            >
+              Close shift &amp; Z-report
+            </Button>
+          </div>
+        )}
+
+        {report ? (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {[
+              ["Digital sales", kes(report.digitalTotal)],
+              ["Tips", kes(report.tips)],
+              ["Transactions", String(report.txCount)],
+              ["Cash sales", kes(report.cashSales)],
+              ["Opening float", kes(report.openingFloat)],
+              ["Expected cash", kes(report.expectedCash)],
+              [
+                "Cash counted",
+                report.cashCounted == null ? "—" : kes(report.cashCounted),
+              ],
+              [
+                "Variance",
+                report.variance == null ? "—" : kes(report.variance),
+              ],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-xl border p-3">
+                <p className="text-xs text-muted-foreground">{label}</p>
+                <p className="text-lg font-bold">{value}</p>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }

@@ -23,6 +23,7 @@ import { handleInventoryRoute } from "./api/inventory";
 import { handleSettlementRoute } from "./api/settlement";
 import { handleAccountingRoute } from "./api/accounting";
 import { handleReviewsRoute } from "./api/reviews";
+import { handleShiftsRoute } from "./api/shifts";
 import { handlePortalRoute } from "./api/portal";
 import { handleWhatsappRoute } from "./api/whatsapp";
 import { handleTelegramRoute } from "./api/telegram";
@@ -217,6 +218,10 @@ export default {
           // Reputation: reviews capture (public) + list/stats + AI reply
           const reviewsResponse = await handleReviewsRoute(request, env);
           if (reviewsResponse) return reviewsResponse;
+
+          // Staff shifts + end-of-shift Z-report
+          const shiftsResponse = await handleShiftsRoute(request, env);
+          if (shiftsResponse) return shiftsResponse;
 
           // Customer portal (public, token) + loyalty rewards (authed)
           const portalResponse = await handlePortalRoute(request, env);
