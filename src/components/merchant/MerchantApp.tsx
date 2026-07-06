@@ -159,7 +159,7 @@ export function MerchantApp() {
         <span>9:41</span>
         <span className="flex items-center gap-1">
           <span className="size-1.5 bg-accent rounded-full" />
-          FX·Live
+          PesaSwap
         </span>
       </div>
 
