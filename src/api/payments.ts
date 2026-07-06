@@ -12,6 +12,7 @@ type Env = {
   PESASWAP_API_KEY: string;
   PESASWAP_WEBHOOK_SECRET: string;
   PESASWAP_URL: string; // https://sandbox.Pesaswap.io or https://api.Pesaswap.io
+  PAYMENTS_TEST_MODE: string;
 };
 
 function getEnv(runtimeEnv?: unknown): Env {
@@ -30,6 +31,7 @@ function getEnv(runtimeEnv?: unknown): Env {
     PESASWAP_API_KEY: pick("PESASWAP_API_KEY"),
     PESASWAP_WEBHOOK_SECRET: pick("PESASWAP_WEBHOOK_SECRET"),
     PESASWAP_URL: pick("PESASWAP_URL") || "https://api.sandbox.pesaswap.io",
+    PAYMENTS_TEST_MODE: pick("PAYMENTS_TEST_MODE"),
   };
 }
 
@@ -268,6 +270,53 @@ async function handleCreatePayment(
   }
 
   const env = getEnv(workerEnv);
+
+  // Test mode: simulate a successful payment WITHOUT calling the provider, so the
+  // full journey (QR -> order -> pay -> success -> loyalty -> receipt portal) works
+  // end-to-end without live PesaSwap credentials. The ledger is still written, so
+  // loyalty accrual + order settlement run. Set PAYMENTS_TEST_MODE=0 and provide a
+  // real PESASWAP_API_KEY to take real payments.
+  const testMode =
+    env.PAYMENTS_TEST_MODE !== "" &&
+    env.PAYMENTS_TEST_MODE !== "0" &&
+    env.PAYMENTS_TEST_MODE.toLowerCase() !== "false";
+  if (testMode) {
+    const meta = (body.metadata ?? {}) as Record<string, unknown>;
+    const paymentId = `test_${crypto.randomUUID().replace(/-/g, "")}`;
+    payments.set(paymentId, {
+      id: paymentId,
+      amount: body.amount,
+      currency: body.currency || "KES",
+      status: "succeeded",
+      metadata: meta,
+      created_at: new Date().toISOString(),
+      refunds: [],
+    });
+    await recordLedger(workerEnv, {
+      id: paymentId,
+      amount: body.amount,
+      currency: body.currency || "KES",
+      status: "succeeded",
+      venue: typeof meta.venue === "string" ? meta.venue : null,
+      reference: typeof meta.till === "string" ? meta.till : null,
+      metadata: meta,
+    });
+    const responseBody = {
+      payment_id: paymentId,
+      client_secret: null,
+      status: "succeeded",
+      amount: body.amount,
+      currency: body.currency || "KES",
+      test_mode: true,
+    };
+    if (idempotencyKey) {
+      idempotencyCache.set(idempotencyKey, {
+        response: responseBody,
+        expires: Date.now() + 3_600_000,
+      });
+    }
+    return jsonResponse(responseBody, 201);
+  }
 
   try {
     // Call PesaSwap API

@@ -172,6 +172,13 @@ function RootComponent() {
             }
           });
         });
+        // Proactively check for a new deploy so a long-open PWA never serves stale
+        // code: whenever the tab regains focus, and hourly.
+        const checkForUpdate = () => registration.update().catch(() => {});
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "visible") checkForUpdate();
+        });
+        window.setInterval(checkForUpdate, 60 * 60 * 1000);
       })
       .catch(() => {});
     let reloaded = false;

@@ -40,6 +40,10 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
   `requireAuth`.
 - Provider config comes from `PESASWAP_API_KEY` / `PESASWAP_URL` /
   `PESASWAP_WEBHOOK_SECRET` (env), not the DB.
+- **`PAYMENTS_TEST_MODE=1`** simulates a succeeded payment (no provider call) so the
+  full journey can be tested end-to-end without live credentials; the ledger is
+  still written (loyalty + settlement run). Set `0` + a real `PESASWAP_API_KEY`
+  for live payments.
 - **Never** log or store a PAN. Keep the SAQ-A posture (see `SECURITY.md`).
 - Ledger writes are best-effort (`recordLedger`) — they must never block a payment.
 

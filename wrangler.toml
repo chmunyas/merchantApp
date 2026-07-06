@@ -23,6 +23,13 @@ AUTH_REQUIRE_LOGIN = "0"
 # links fall back to http://localhost:8080 and break for real customers/agents.
 PUBLIC_BASE_URL = "https://pesaswap-merchant-app.pesaswap.workers.dev"
 
+# Payments test mode. "1" simulates a SUCCESSFUL payment WITHOUT calling PesaSwap,
+# so the full journey (QR -> order -> pay -> success -> loyalty -> receipt portal)
+# can be tested end-to-end without live credentials. The ledger is still written
+# (loyalty + settlement run). Set to "0" and add a real PESASWAP_API_KEY (secret)
+# to take real M-Pesa payments.
+PAYMENTS_TEST_MODE = "1"
+
 # --- Cloudflare edge capabilities ---
 
 # Workers AI: the natural-language ops agent + embeddings for pgvector memory.

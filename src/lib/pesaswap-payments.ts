@@ -512,6 +512,17 @@ export async function executePayment(params: {
       description: describePayment(metadata),
     });
 
+    // Test mode: the server simulated the payment (no provider), so the intent is
+    // already succeeded — skip flow resolution + confirmation.
+    if (payment.status === "succeeded") {
+      onStatusChange?.("succeeded");
+      return {
+        success: true,
+        status: "succeeded",
+        payment_id: payment.payment_id,
+      };
+    }
+
     onStatusChange?.("requires_confirmation");
 
     // 2. Resolve flow
