@@ -15,7 +15,8 @@ import { Toaster } from "@/components/ui/sonner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ChatWidget } from "@/components/omni/ChatWidget";
 import { InstallBanner } from "@/components/InstallBanner";
-import { useEffect } from "react";
+import { Menu } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 function NotFoundComponent() {
@@ -141,6 +142,7 @@ function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const router = useRouter();
   const pathname = router.state.location.pathname;
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
@@ -188,6 +190,15 @@ function RootComponent() {
       window.location.reload();
     });
   }, []);
+  // Sidebar: open by default on desktop, hidden on mobile; follow the breakpoint.
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const apply = () => setSidebarOpen(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+
   const isStandaloneLayout =
     pathname.startsWith("/dashboard") ||
     pathname.startsWith("/pay") ||
@@ -228,8 +239,25 @@ function RootComponent() {
       <AuthProvider>
         <ErrorBoundary>
           <div className="min-h-screen bg-background text-foreground">
-            <AppSidebar />
-            <main className="pl-64">
+            <AppSidebar
+              open={sidebarOpen}
+              onClose={() => setSidebarOpen(false)}
+            />
+            {!sidebarOpen ? (
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(true)}
+                aria-label="Open menu"
+                className="fixed left-4 top-4 z-30 flex size-10 items-center justify-center rounded-xl border border-border bg-card/90 text-foreground shadow-lg backdrop-blur transition-colors hover:bg-muted"
+              >
+                <Menu className="size-5" />
+              </button>
+            ) : null}
+            <main
+              className={`transition-[padding] duration-200 ${
+                sidebarOpen ? "lg:pl-64" : "pl-0"
+              }`}
+            >
               <Outlet />
             </main>
             <Toaster position="top-right" richColors />
