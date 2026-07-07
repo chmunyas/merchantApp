@@ -62,17 +62,18 @@ describe("PesaSwap webhook — signature + envelope", () => {
     expect(res!.status).toBe(200);
   });
 
-  it("does NOT process a tampered body (bad signature) — acknowledges without side effects", async () => {
+  it("does NOT process a tampered body (bad signature) — fast-ACKs without side effects", async () => {
     // A bad signature no longer hard-rejects (401 would cause CallToMerchantFailed if
     // the dashboard key is not yet synced). With no api-key to verify-by-callback, we
-    // acknowledge (200) but never treat the unverified payload as trusted.
+    // fast-ACK (200) but never treat the unverified payload as trusted. Verification +
+    // processing run AFTER the response, so the ACK body is always { received: true }.
     const sig = await hmacHex(liveBody, SECRET, "SHA-512");
     const res = await handlePaymentRoute(
       webhookRequest(liveBody + " ", { "x-webhook-signature-512": sig }),
       { PESASWAP_WEBHOOK_SECRET: SECRET },
     );
     expect(res!.status).toBe(200);
-    expect(await res!.json()).toEqual({ received: true, verified: false });
+    expect(await res!.json()).toEqual({ received: true });
   });
 
   it("does NOT trust a signature made with the wrong secret", async () => {
@@ -82,12 +83,12 @@ describe("PesaSwap webhook — signature + envelope", () => {
       { PESASWAP_WEBHOOK_SECRET: SECRET },
     );
     expect(res!.status).toBe(200);
-    expect(await res!.json()).toEqual({ received: true, verified: false });
+    expect(await res!.json()).toEqual({ received: true });
   });
 
-  it("acknowledges (200) without side effects when unverifiable (no secret, no api-key)", async () => {
+  it("fast-ACKs (200) without side effects when unverifiable (no secret, no api-key)", async () => {
     // With neither a shared secret nor an api-key to verify-by-callback, we cannot
-    // trust the payload, so we acknowledge to stop PesaSwap's retries (avoiding
+    // trust the payload, so we ACK to stop PesaSwap's retries (avoiding
     // CallToMerchantFailed) but never act on the unverified data.
     const sig = await hmacHex(liveBody, SECRET, "SHA-512");
     const res = await handlePaymentRoute(
@@ -95,16 +96,16 @@ describe("PesaSwap webhook — signature + envelope", () => {
       {},
     );
     expect(res!.status).toBe(200);
-    expect(await res!.json()).toEqual({ received: true, verified: false });
+    expect(await res!.json()).toEqual({ received: true });
   });
 
-  it("acknowledges (200) a webhook with no signature header when it cannot verify-by-callback", async () => {
+  it("fast-ACKs (200) a webhook with no signature header when it cannot verify-by-callback", async () => {
     const res = await handlePaymentRoute(
       webhookRequest(liveBody, {}),
       { PESASWAP_WEBHOOK_SECRET: SECRET },
     );
     expect(res!.status).toBe(200);
-    expect(await res!.json()).toEqual({ received: true, verified: false });
+    expect(await res!.json()).toEqual({ received: true });
   });
 
   it("still accepts the legacy simulator shape via x-webhook-signature-256", async () => {
@@ -159,10 +160,10 @@ describe("PesaSwap webhook — signature + envelope", () => {
     expect(await res!.json()).toEqual({ received: true });
   });
 
-  it("acknowledges (200) the top-level shape when unverifiable (no secret/api-key)", async () => {
+  it("fast-ACKs (200) the top-level shape when unverifiable (no secret/api-key)", async () => {
     const res = await handlePaymentRoute(webhookRequest(topLevelBody, {}), {});
     expect(res!.status).toBe(200);
-    expect(await res!.json()).toEqual({ received: true, verified: false });
+    expect(await res!.json()).toEqual({ received: true });
   });
 
   it("acknowledges (200) even on a malformed body (never CallToMerchantFailed)", async () => {

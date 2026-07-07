@@ -38,20 +38,30 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
 - `POST /api/refunds` — **public**, rate-limited; over-refund guarded.
 - `POST /api/payments/:id/capture` — **gated**; captures a `capture:false`
   (manual-capture / card pre-auth hold) payment. Simulated in test mode.
-- `POST /api/webhooks/pesaswap` — provider webhook. Verifies HMAC-SHA512 in
-  `x-webhook-signature-512` (fallback `-256`) over the raw body; **fail-closed**.
-  On `payment_succeeded`/`payment_captured` (Hyperswitch envelope `{ event_type,
-  content:{ object } }`) it confirms the ledger (`recordLedger`, idempotent) and
-  **persists tokenised card/wallet saved methods** (SAQ-A: only the token id, brand,
-  last4) to `customer_payment_methods`.
+- `POST /api/webhooks/pesaswap` — provider webhook. **Always fast-ACKs 200** (a
+  non-2xx trips PesaSwap's `CallToMerchantFailed` + 24h of retries). Trust is a
+  **local HMAC check only** (`x-webhook-signature-512`, fallback `-256`, over the raw
+  body) — we do **NOT** verify-by-callback in the handler because that ~1s round-trip
+  tripped PesaSwap's aggressive delivery timeout. A signature-verified payload is
+  processed inline (confirms the ledger via `recordLedger`, persists tokenised
+  card/wallet saved methods SAQ-A, and records any `refunds[]`); anything unsigned is
+  ACKed and reconciled by the **pull paths** below (which re-fetch with our api-key,
+  so a forged webhook can never be booked).
+- `POST /api/payments/sync` — **gated (manager+)** Force Sync: pulls the authoritative
+  state from PesaSwap now — recent **refunds** (`POST /refunds/list`) + any stuck
+  `processing` payments — so a merchant can resync on demand. Powers the "Force sync"
+  button on `/dashboard/payments`. Returns `{ refundsSynced, paymentsSynced }`.
 - `GET /api/payment-methods` — **gated (manager+)** merchant view: all saved
   customer methods joined to contacts (name/tier) + M-Pesa/card/wallet counts.
   Renders at `/dashboard/payment-methods`.
 - `GET /api/payments/list` — **gated (manager+)** DB-backed ledger: every real
   attempt (any status) for the venue, with the M-Pesa receipt (`provider_ref` =
   `connector_transaction_id`, e.g. `UG75TAWWYH`), decline reason, tip + initiator.
-  Powers the "Live payments" panel on `/dashboard/payments` (localStorage demo
-  data alone never showed real sales).
+  Each row also carries `refundedAmount` (minor units refunded on it) and, for a
+  refund row, `refundOf` + `refundReason`. **Reconciles refunds inline on every call**
+  (`reconcileRefunds`, bounded/best-effort) so dashboard-initiated refunds appear
+  even when the outgoing webhook fails. Powers the "Live payments" panel on
+  `/dashboard/payments` (localStorage demo data alone never showed real sales).
 - `POST /api/payments/:id/retry` — **gated (manager+)** re-request: re-fires a
   fresh STK for a failed/processing payment from its stored phone + amount (409 if
   already succeeded). Replays through `handleCreatePayment`, so a split re-clamps
@@ -87,6 +97,16 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
   for live payments.
 - **Never** log or store a PAN. Keep the SAQ-A posture (see `SECURITY.md`).
 - Ledger writes are best-effort (`recordLedger`) — they must never block a payment.
+- **Refunds are pull-reconciled + double-booked.** A refund raised from the PesaSwap
+  dashboard reaches us via `reconcileRefunds` (pulls `POST /refunds/list`) — invoked
+  on `/api/payments/list`, on the client `/status` poll, and on `/api/payments/sync`.
+  Each refund is written as its own `payments` row (`kind='refund'`, `status='refunded'`,
+  `metadata.refund_of` = parent id) via `recordLedger` (which posts `postRefundEntry`),
+  and `updateParentRefundStatus` flips the parent to `refunded` / `partially_refunded`
+  from the sum of settled refunds. `recordRefundRow` is **idempotent on the refund id**,
+  so learning about the same refund from webhook AND pull never double-posts. Because
+  PesaSwap keeps the payment `status='succeeded'` and puts the money-back only in
+  `refunds[]`, always derive refund state from that array, not the top-level status.
 
 ## Common tasks
 - **Resolve a short pay link:** `pay.tsx` reads `?i=INV-XXX` (invoices) or

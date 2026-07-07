@@ -67,7 +67,9 @@ loyalty/order settlement run without `PESASWAP_WEBHOOK_SECRET`). `connector=dara
 ## Core API surface (see /llms.txt for every page)
 - **Payments**: Create, Update, Confirm, Capture, Cancel, Retrieve, List,
   Session-token, Incremental-authorization, 3DS.
-- **Refunds**: create/list/retrieve (map to `/api/refunds`).
+- **Refunds**: create (`/api/refunds`), **list (`POST /refunds/list`)**, retrieve.
+  `/refunds/list` (POST `{ limit }`) is the reconcile source — `reconcileRefunds`
+  pulls it to sync dashboard-initiated refunds that never arrive as webhooks.
 - **Customers** + **Payment Methods**: create/list/retrieve/update/delete, set
   default — for saved-card / one-tap reuse.
 - **Mandates**: create via Payments/Create `mandate_object` → recurring billing.
@@ -78,8 +80,10 @@ loyalty/order settlement run without `PESASWAP_WEBHOOK_SECRET`). `connector=dara
 - `src/api/payments.ts` — `getEnv(runtimeEnv)` reads `PESASWAP_API_KEY` /
   `PESASWAP_WEBHOOK_SECRET` / `PESASWAP_URL` from the **Worker `env` binding**
   (not `process.env` — secrets land on `env`). `handleCreatePayment` →
-  `POST ${PESASWAP_URL}/payments`; `handleRefund` → `/refunds`; `handleWebhook`
-  verifies the HMAC signature and is **fail-closed** (503 when the secret is unset).
+  `POST ${PESASWAP_URL}/payments`; `handleRefund` → `/refunds`; `reconcileRefunds`
+  → `POST /refunds/list`; `handleWebhook` **always fast-ACKs 200** (no synchronous
+  network call) and processes only signature-verified payloads inline — everything
+  else is reconciled by the pull paths.
 - `src/lib/pesaswap-payments.ts` — client SDK helpers (`executePayment`,
   `loadHyperLoader`, `buildPaymentMetadata`) + `VITE_PESASWAP_PUBLISHABLE_KEY`.
 - `src/routes/pay.tsx` — hosted checkout (`/pay?i=INV-XXX`, QR `?tapgo=`).
@@ -92,24 +96,39 @@ loyalty/order settlement run without `PESASWAP_WEBHOOK_SECRET`). `connector=dara
   `/dashboard/payment-methods` (`GET /api/payment-methods`, manager+). This is the
   Customers + Payment Methods API surface, wired to the customer's **phone**.
 
-## Webhooks — payload & signature (verified against docs.pesaswap.io)
-- **Envelope** (Hyperswitch-derived): `{ event_type, event_id, content: { object } }`.
-  Event names are **underscored**: `payment_succeeded`, `payment_failed`,
-  `payment_captured`, `payment_cancelled`, `refund_succeeded`, `dispute_opened`, …
-  (NOT dotted `payment.succeeded`). `handleWebhook` reads `body.event_type ?? body.type`
-  and the resource from `body.content.object ?? body.data`, so it accepts both the live
-  shape and our simulator.
-- **Signature**: HMAC over the **raw body** with the business-profile
-  `payments_response_hash_key` (= `PESASWAP_WEBHOOK_SECRET`). Preferred header
-  `x-webhook-signature-512` (**HMAC-SHA512**), fallback `x-webhook-signature-256`
-  (HMAC-SHA256); hex digest, compared case-insensitively + constant-time.
-  **Fail-closed**: 503 if the secret is unset, 401 on a bad/missing signature.
-- **Idempotent by design**: PesaSwap may deliver a webhook more than once.
-  `recordLedger` gates loyalty accrual + saved-method writes on `firstSuccess`
-  (prior-status check) and every write is `ON CONFLICT … DO UPDATE`, so a duplicate
-  `payment_succeeded` never double-awards points (no `event_id` store needed).
-- Register the destination `https://<app>/api/webhooks/pesaswap` in the dashboard
-  (Developer → Payment Settings → Webhook Setup) with the same secret.
+## Webhooks — payload, signature & delivery (verified against docs.pesaswap.io)
+- **Envelope** (Hyperswitch-derived): `{ event_type, event_id, content: { object } }`,
+  **OR the payment object at the TOP LEVEL** (live M-Pesa sends `{ payment_id, status,
+  amount, amount_received, refunds[], … }` with no wrapper). Event names are
+  **underscored**: `payment_succeeded`, `payment_failed`, `payment_captured`,
+  `payment_cancelled`, `refund_succeeded`, `dispute_opened`, … (NOT dotted).
+  `processWebhook` reads `body.event_type ?? body.type` and the resource from
+  `content.object ?? content ?? data ?? (top-level)`, so it accepts every shape.
+- **Always fast-ACK 200 — never block on I/O.** PesaSwap/Hyperswitch uses an
+  **aggressive delivery timeout**: a ~1.4s response (an inline verify-by-callback
+  `GET /payments/{id}`) trips **`CallToMerchantFailed`** + 24h of retries. So the
+  handler does **NO synchronous network call** — it responds in ~300ms.
+- **Trust = local HMAC only.** When `PESASWAP_WEBHOOK_SECRET` (=
+  business-profile `payments_response_hash_key`) is set and the signature
+  (`x-webhook-signature-512` HMAC-SHA512, fallback `-256`) matches the **raw body**
+  (hex, case-insensitive), the payload is processed inline. Otherwise we still
+  **ACK 200** (never 401/503 — those cause `CallToMerchantFailed`) and let the
+  **pull reconcile** establish the authoritative state.
+- **Pull reconcile is the durable path.** The webhook is best-effort; authoritative
+  sync comes from re-fetching with our api-key: `handleGetPaymentStatus` (client
+  `/status` poll), `reconcileRefunds` (`POST /refunds/list`) on `/api/payments/list`,
+  and `POST /api/payments/sync` (Force Sync). A forged webhook can never be booked
+  because state is confirmed against PesaSwap, not the webhook body.
+- **Refunds**: PesaSwap keeps the payment `status='succeeded'` and records the money-back
+  **only in `refunds[]`** (`{ refund_id, amount (minor), status, connector_refund_id,
+  refund_arn, reason }`). `recordRefundRow` books each as a `kind='refund'` ledger row
+  (idempotent on `refund_id`) + flips the parent to `refunded`/`partially_refunded`.
+- **Idempotent by design**: `recordLedger` gates loyalty accrual + saved-method writes
+  on `firstSuccess`, every write is `ON CONFLICT … DO UPDATE`, and `recordRefundRow`
+  short-circuits on an existing refund id — so a duplicate delivery never double-posts.
+- Register `https://<app>/api/webhooks/pesaswap` in the dashboard (Developer → Payment
+  Settings → Webhook Setup); pasting `PESASWAP_WEBHOOK_SECRET` enables inline processing,
+  but sync works without it via the pull paths.
 
 ## Saving a card/wallet (setup_future_usage)
 A card/wallet is only tokenised (and therefore only surfaces on a webhook to persist)
@@ -128,8 +147,9 @@ saved methods provider-side with `GET /customers/{customer_id}/payment_methods`.
    `wrangler.toml [vars]` or as a secret; **not** `app.pesaswap.io`.
 4. Set `VITE_PESASWAP_PUBLISHABLE_KEY` in the build env (CI) so the client SDK loads.
 5. Register the webhook URL `https://<app>/api/webhooks/pesaswap` in the dashboard
-   with the same `PESASWAP_WEBHOOK_SECRET`. Verify a test event is accepted (200)
-   and a bad-signature event is rejected (401).
+   (pasting `PESASWAP_WEBHOOK_SECRET` enables inline processing). Verify a delivery is
+   accepted (**200 in ~300ms** — never `CallToMerchantFailed`); unsigned/forged events
+   are ACKed but only booked after the pull reconcile confirms them with our api-key.
 6. Confirm the flow end-to-end in **sandbox** first: Create → Confirm → webhook →
    ledger row → dashboard notification.
 

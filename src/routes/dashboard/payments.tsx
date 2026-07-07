@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { format, isSameDay, subDays } from "date-fns";
-import { Download, RotateCcw, Search, Send } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Download, RefreshCw, RotateCcw, Search, Send } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,9 @@ type LivePayment = {
   customerName: string | null;
   flowType: string | null;
   errorMessage: string | null;
+  refundedAmount: number; // minor units refunded on this payment
+  refundOf: string | null; // for a refund row: the payment it reverses
+  refundReason: string | null;
   createdAt: string;
 };
 
@@ -79,28 +82,27 @@ function DashboardPaymentsPage() {
 
   // Real transactions from the durable ledger (every attempt, any status) — live
   // PesaSwap / M-Pesa sales that don't live in the localStorage demo snapshot.
-  useEffect(() => {
-    let active = true;
-    async function loadLive() {
-      try {
-        const res = await authFetch("/api/payments/list?limit=100");
-        if (res.ok && active) {
-          const data = (await res.json()) as { payments: LivePayment[] };
-          setLivePayments(data.payments ?? []);
-        }
-      } catch {
-        /* ledger unavailable — the demo snapshot below still renders */
-      } finally {
-        if (active) setLiveLoading(false);
+  const refreshLive = useCallback(async () => {
+    try {
+      const res = await authFetch("/api/payments/list?limit=100");
+      if (res.ok) {
+        const data = (await res.json()) as { payments: LivePayment[] };
+        setLivePayments(data.payments ?? []);
       }
+    } catch {
+      /* ledger unavailable — the demo snapshot below still renders */
+    } finally {
+      setLiveLoading(false);
     }
-    void loadLive();
-    const t = setInterval(loadLive, 15000);
+  }, []);
+
+  useEffect(() => {
+    void refreshLive();
+    const t = setInterval(refreshLive, 15000);
     return () => {
-      active = false;
       clearInterval(t);
     };
-  }, []);
+  }, [refreshLive]);
 
   useEffect(() => {
     generateDemoData();
@@ -336,7 +338,11 @@ function DashboardPaymentsPage() {
         </div>
       </div>
 
-      <LivePaymentsPanel payments={livePayments} loading={liveLoading} />
+      <LivePaymentsPanel
+        payments={livePayments}
+        loading={liveLoading}
+        onRefresh={refreshLive}
+      />
 
       <div className="rounded-2xl border border-border bg-card p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -674,26 +680,60 @@ const LIVE_STATUS_STYLE: Record<string, string> = {
   failed: "bg-rose-100 text-rose-700",
   cancelled: "bg-rose-100 text-rose-700",
   refund: "bg-slate-200 text-slate-700",
+  refunded: "bg-slate-200 text-slate-700",
+  partially_refunded: "bg-indigo-100 text-indigo-700",
 };
 
 function LivePaymentsPanel({
   payments,
   loading,
+  onRefresh,
 }: {
   payments: LivePayment[];
   loading: boolean;
+  onRefresh: () => Promise<void>;
 }) {
   const [statusFilter, setStatusFilter] = useState<
-    "all" | "succeeded" | "processing" | "failed"
+    "all" | "succeeded" | "processing" | "failed" | "refunded"
   >("all");
   const [modalTarget, setModalTarget] = useState<LivePayment | null>(null);
   const [requestOpen, setRequestOpen] = useState(false);
   const [detailTarget, setDetailTarget] = useState<LivePayment | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  async function forceSync() {
+    setSyncing(true);
+    try {
+      const res = await authFetch("/api/payments/sync", { method: "POST" });
+      if (res.ok) {
+        const d = (await res.json()) as {
+          refundsSynced?: number;
+          paymentsSynced?: number;
+        };
+        const parts: string[] = [];
+        if (d.refundsSynced) parts.push(`${d.refundsSynced} refund(s)`);
+        if (d.paymentsSynced) parts.push(`${d.paymentsSynced} payment(s)`);
+        toast.success(
+          parts.length ? `Synced ${parts.join(" + ")}` : "Already up to date",
+        );
+      } else {
+        toast.error("Sync failed. Try again.");
+      }
+    } catch {
+      toast.error("Sync failed. Try again.");
+    } finally {
+      await onRefresh();
+      setSyncing(false);
+    }
+  }
 
   const succeeded = payments.filter((p) =>
     ["succeeded", "paid", "captured"].includes(p.status),
   );
+  // Net of refunds: gross settled minus what has been refunded back out.
   const gross = succeeded.reduce((sum, p) => sum + p.amount, 0) / 100;
+  const refundedTotal =
+    payments.reduce((sum, p) => sum + (p.refundedAmount || 0), 0) / 100;
 
   const filtered = payments.filter((p) => {
     if (statusFilter === "all") return true;
@@ -701,6 +741,11 @@ function LivePaymentsPanel({
       return ["succeeded", "paid", "captured"].includes(p.status);
     if (statusFilter === "failed")
       return ["failed", "cancelled"].includes(p.status);
+    if (statusFilter === "refunded")
+      return (
+        ["refunded", "partially_refunded", "refund"].includes(p.status) ||
+        p.refundedAmount > 0
+      );
     return p.status === statusFilter;
   });
 
@@ -722,6 +767,15 @@ function LivePaymentsPanel({
         </div>
         <div className="flex items-center gap-3">
           <button
+            onClick={forceSync}
+            disabled={syncing}
+            title="Pull the latest payments + refunds from PesaSwap now"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-2 text-sm font-semibold hover:bg-muted disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "Syncing…" : "Force sync"}
+          </button>
+          <button
             onClick={() => setRequestOpen(true)}
             className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
           >
@@ -731,7 +785,12 @@ function LivePaymentsPanel({
             value={statusFilter}
             onChange={(e) =>
               setStatusFilter(
-                e.target.value as "all" | "succeeded" | "processing" | "failed",
+                e.target.value as
+                  | "all"
+                  | "succeeded"
+                  | "processing"
+                  | "failed"
+                  | "refunded",
               )
             }
             className="rounded-xl border border-border bg-background px-3 py-2 text-sm"
@@ -740,11 +799,15 @@ function LivePaymentsPanel({
             <option value="succeeded">Succeeded</option>
             <option value="processing">Processing</option>
             <option value="failed">Failed / declined</option>
+            <option value="refunded">Refunded</option>
           </select>
           <div className="text-right">
             <p className="text-2xl font-semibold">{liveCurrency.format(gross)}</p>
             <p className="text-xs text-muted-foreground">
               {succeeded.length} succeeded · {payments.length} total
+              {refundedTotal > 0
+                ? ` · ${liveCurrency.format(refundedTotal)} refunded`
+                : ""}
             </p>
           </div>
         </div>
@@ -797,6 +860,11 @@ function LivePaymentsPanel({
                           (+{liveCurrency.format(p.tipAmount / 100)} tip)
                         </span>
                       ) : null}
+                      {p.refundedAmount > 0 ? (
+                        <span className="ml-1 text-xs font-semibold text-indigo-600">
+                          (−{liveCurrency.format(p.refundedAmount / 100)} refunded)
+                        </span>
+                      ) : null}
                     </td>
                     <td className="py-2 pr-4">
                       <span
@@ -805,7 +873,7 @@ function LivePaymentsPanel({
                           "bg-slate-100 text-slate-700"
                         }`}
                       >
-                        {p.status}
+                        {p.status.replace(/_/g, " ")}
                       </span>
                       {p.errorMessage ? (
                         <span className="ml-2 text-xs text-rose-600">
@@ -887,6 +955,22 @@ function PaymentDetailModal({
       ? ([["Reason", payment.errorMessage]] as Array<[string, string]>)
       : []),
     ["M-Pesa receipt (REF)", payment.providerRef || "—"],
+    ...(payment.refundedAmount > 0
+      ? ([
+          [
+            "Refunded",
+            `${liveCurrency.format(payment.refundedAmount / 100)}${
+              payment.refundedAmount >= payment.amount ? " (full)" : " (partial)"
+            }`,
+          ],
+        ] as Array<[string, string]>)
+      : []),
+    ...(payment.refundOf
+      ? ([["Refund of", payment.refundOf]] as Array<[string, string]>)
+      : []),
+    ...(payment.refundReason
+      ? ([["Refund reason", payment.refundReason]] as Array<[string, string]>)
+      : []),
     ["Customer", payment.customerName || payment.customerPhone || "—"],
     ...(payment.customerName && payment.customerPhone
       ? ([["Phone", payment.customerPhone]] as Array<[string, string]>)
@@ -912,7 +996,7 @@ function PaymentDetailModal({
               LIVE_STATUS_STYLE[payment.status] ?? "bg-slate-100 text-slate-700"
             }`}
           >
-            {payment.status}
+            {payment.status.replace(/_/g, " ")}
           </span>
         </div>
         <div className="divide-y divide-border rounded-2xl border border-border">

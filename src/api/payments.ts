@@ -332,6 +332,148 @@ async function recordLedger(
   }
 }
 
+// Set a parent payment's status to `refunded` (fully) or `partially_refunded`
+// (in part) from the sum of its settled refund rows. Never downgrades an already
+// fully-refunded payment. Best-effort — a bookkeeping status must never throw.
+async function updateParentRefundStatus(
+  runtimeEnv: unknown,
+  paymentId: string,
+): Promise<void> {
+  const sql = getSql(runtimeEnv);
+  if (!sql) return;
+  try {
+    const [row] = await sql`
+      SELECT p.amount::bigint AS amount,
+             COALESCE((SELECT sum(r.amount) FROM payments r
+                       WHERE r.kind = 'refund'
+                         AND r.status = 'refunded'
+                         AND r.metadata->>'refund_of' = ${paymentId}), 0)::bigint AS refunded
+      FROM payments p WHERE p.id = ${paymentId} LIMIT 1`;
+    if (!row) return;
+    const amount = Number((row as { amount?: unknown }).amount) || 0;
+    const refunded = Number((row as { refunded?: unknown }).refunded) || 0;
+    if (refunded <= 0) return;
+    const status = amount > 0 && refunded >= amount ? "refunded" : "partially_refunded";
+    await sql`
+      UPDATE payments SET status = ${status}, updated_at = now()
+      WHERE id = ${paymentId} AND status <> 'refunded'`;
+  } catch {
+    /* best-effort */
+  }
+}
+
+// Record a single PesaSwap refund into the durable ledger and reflect it on the
+// parent payment. Idempotent on the refund id, so learning about the same refund
+// twice (webhook AND the pull-based reconcile) never double-posts money. Returns
+// true only when a NEW refund row was written. Shared by the webhook + reconcile
+// so refunds sync no matter how we hear about them.
+async function recordRefundRow(
+  runtimeEnv: unknown,
+  refund: Record<string, unknown>,
+): Promise<boolean> {
+  const sql = getSql(runtimeEnv);
+  if (!sql) return false;
+  const refundId = String(refund.refund_id || refund.id || "");
+  const paymentId = String(refund.payment_id || refund.refund_of || "");
+  if (!refundId || !paymentId) return false;
+  // Only a SETTLED refund moves money — ignore pending / failed refunds.
+  if (String(refund.status ?? "").toLowerCase() !== "succeeded") return false;
+
+  // Idempotency guard: if we already have this refund row, just make sure the
+  // parent status reflects it (self-heal) and stop — never re-post.
+  try {
+    const [existing] = await sql`SELECT id FROM payments WHERE id = ${refundId}`;
+    if (existing) {
+      await updateParentRefundStatus(runtimeEnv, paymentId);
+      return false;
+    }
+  } catch {
+    /* fall through and attempt the insert */
+  }
+
+  // Attribute the refund to the parent payment's venue + metadata (for accounting
+  // + customer). If the parent never hit our ledger we can't attribute a venue, so
+  // skip — a refund for a payment we never recorded is not ours to book.
+  let parent:
+    | { venue_id?: string | null; reference?: string | null; metadata?: Record<string, unknown> }
+    | undefined;
+  try {
+    const [row] = await sql`
+      SELECT venue_id, reference, metadata FROM payments
+      WHERE id = ${paymentId} LIMIT 1`;
+    parent = row as typeof parent;
+  } catch {
+    /* ignore */
+  }
+  if (!parent || !parent.venue_id) return false;
+
+  const amount = Math.max(0, Math.round(Number(refund.amount) || 0));
+  await recordLedger(runtimeEnv, {
+    id: refundId,
+    kind: "refund",
+    amount,
+    currency: String(refund.currency || "KES"),
+    status: "refunded",
+    venue: parent.venue_id,
+    reference: parent.reference ?? null,
+    providerRef:
+      (refund.connector_refund_id as string) ||
+      (refund.refund_arn as string) ||
+      null,
+    metadata: {
+      ...(parent.metadata ?? {}),
+      refund_of: paymentId,
+      refund_reason: (refund.reason as string) ?? null,
+    },
+  });
+  await updateParentRefundStatus(runtimeEnv, paymentId);
+  return true;
+}
+
+// Pull recent refunds from PesaSwap and sync any we don't yet have. This is the
+// DURABLE refund path: PesaSwap's outgoing webhook can fail (CallToMerchantFailed)
+// and a refund raised from the PesaSwap dashboard never reaches us as an event —
+// so we PULL. Bounded + best-effort; recordRefundRow is idempotent so repeated
+// pulls never double-post. Returns the count of newly-synced refunds.
+async function reconcileRefunds(
+  runtimeEnv: unknown,
+  opts?: { limit?: number },
+): Promise<number> {
+  const env = getEnv(runtimeEnv);
+  if (!env.PESASWAP_API_KEY) return 0;
+  const limit = Math.min(100, Math.max(1, opts?.limit ?? 50));
+  let list: Array<Record<string, unknown>> = [];
+  try {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 6000);
+    const resp = await fetch(`${env.PESASWAP_URL}/refunds/list`, {
+      method: "POST",
+      headers: {
+        "api-key": env.PESASWAP_API_KEY,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ limit }),
+      signal: ac.signal,
+    });
+    clearTimeout(timer);
+    if (!resp.ok) return 0;
+    const data = (await resp.json()) as { data?: Array<Record<string, unknown>> };
+    list = Array.isArray(data.data) ? data.data : [];
+  } catch {
+    return 0;
+  }
+  let synced = 0;
+  for (const refund of list) {
+    try {
+      if (await recordRefundRow(runtimeEnv, refund)) synced++;
+    } catch {
+      /* best-effort per refund */
+    }
+  }
+  return synced;
+}
+
 // --- Route Handler ---
 
 export async function handlePaymentRoute(
@@ -363,6 +505,13 @@ export async function handlePaymentRoute(
   // any status, so the merchant dashboard shows live sales — not just localStorage.
   if (path === "/api/payments/list" && request.method === "GET") {
     return withCors(await handleListPayments(request, env), corsHeaders);
+  }
+
+  // Force Sync (gated manager+): pull the authoritative state from PesaSwap now —
+  // reconcile stuck payments AND dashboard-initiated refunds — so the merchant can
+  // resync on demand without waiting for the (unreliable) outgoing webhook.
+  if (path === "/api/payments/sync" && request.method === "POST") {
+    return withCors(await handleSyncPayments(request, env), corsHeaders);
   }
 
   // Capture a previously authorised (manual-capture / pre-auth hold) payment.
@@ -841,6 +990,11 @@ async function handleListPayments(
   const statusFilter = (url.searchParams.get("status") || "").trim();
 
   try {
+    // Pull dashboard-initiated refunds from PesaSwap FIRST (bounded, best-effort)
+    // so they're reflected in the rows we're about to read. This is the durable
+    // path when the outgoing webhook fails (CallToMerchantFailed).
+    await reconcileRefunds(workerEnv, { limit: 50 });
+
     const rows = statusFilter
       ? await sql`
           SELECT id, amount, currency, status, kind, reference, provider_ref,
@@ -921,11 +1075,33 @@ async function handleListPayments(
       }
     }
 
+    // Per-parent refunded totals (across ALL refund rows, not just this page) so a
+    // refunded payment shows how much came back even if its refund row is older
+    // than the window. Keyed on the parent payment id.
+    const refundMap = new Map<string, number>();
+    try {
+      const agg = await sql`
+        SELECT metadata->>'refund_of' AS parent, sum(amount)::bigint AS refunded
+        FROM payments
+        WHERE venue_id = ${venue} AND kind = 'refund' AND status = 'refunded'
+          AND metadata->>'refund_of' IS NOT NULL
+        GROUP BY metadata->>'refund_of'`;
+      for (const a of agg) {
+        refundMap.set(
+          String((a as { parent: unknown }).parent),
+          Number((a as { refunded: unknown }).refunded) || 0,
+        );
+      }
+    } catch {
+      /* best-effort — refunds still render via the refund rows themselves */
+    }
+
     return jsonResponse({
       payments: rows.map((r) => {
         const meta = (r.metadata ?? {}) as Record<string, unknown>;
+        const id = String(r.id);
         return {
-          id: String(r.id),
+          id,
           amount: Number(r.amount) || 0, // minor units
           currency: String(r.currency ?? "KES"),
           status: String(r.status),
@@ -938,6 +1114,11 @@ async function handleListPayments(
           customerName: (meta.customer_name as string) || null,
           flowType: (meta.flow_type as string) || null,
           errorMessage: (meta.error_message as string) || null,
+          // Refund context: how much has been refunded on this payment (minor
+          // units), and — for a refund row — which payment it reverses + why.
+          refundedAmount: refundMap.get(id) || 0,
+          refundOf: (meta.refund_of as string) || null,
+          refundReason: (meta.refund_reason as string) || null,
           createdAt: r.created_at,
         };
       }),
@@ -947,6 +1128,87 @@ async function handleListPayments(
     console.error("[PesaSwap] List payments error:", err);
     return jsonResponse({ error: { message: "Failed to list payments" } }, 500);
   }
+}
+
+// Force Sync (gated manager+): pull the authoritative state from PesaSwap on demand
+// — reconcile refunds AND any still-"processing" payments — so the merchant can
+// resync without waiting for the (unreliable) outgoing webhook. Mirrors the
+// "Force Sync" action on the PesaSwap dashboard.
+async function handleSyncPayments(
+  request: Request,
+  workerEnv: unknown,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const payload = await requireAuth(request, workerEnv);
+  if (!payload) return jsonResponse({ error: { message: "unauthorized" } }, 401);
+  if (!roleAtLeast(payload, "manager")) {
+    return jsonResponse({ error: { message: "forbidden" } }, 403);
+  }
+  const venue = venueFromPayload(payload, url);
+  const sql = getSql(workerEnv);
+  if (!sql) return jsonResponse({ error: { message: "database not configured" } }, 503);
+  const env = getEnv(workerEnv);
+
+  // 1) Refunds: pull recent refunds and sync any we don't have.
+  const refundsSynced = await reconcileRefunds(workerEnv, { limit: 100 });
+
+  // 2) Stuck payments: re-poll any still-"processing" live payments for this venue
+  // and record their terminal state (idempotent).
+  let paymentsSynced = 0;
+  if (env.PESASWAP_API_KEY) {
+    try {
+      const stale = await sql`
+        SELECT id, amount, currency FROM payments
+        WHERE venue_id = ${venue} AND status = 'processing'
+          AND id LIKE 'pay_%'
+        ORDER BY created_at DESC LIMIT 25`;
+      for (const r of stale) {
+        try {
+          const resp = await fetch(`${env.PESASWAP_URL}/payments/${String(r.id)}`, {
+            headers: { "api-key": env.PESASWAP_API_KEY, Accept: "application/json" },
+          });
+          if (!resp.ok) continue;
+          const p = (await resp.json()) as Record<string, any>;
+          const mapped = mapPesaSwapStatus(p.status);
+          if (mapped === "processing") continue;
+          const meta = (p.metadata ?? {}) as Record<string, unknown>;
+          await recordLedger(workerEnv, {
+            id: String(r.id),
+            amount: settledAmount(p, mapped) || Number(r.amount) || 0,
+            currency: (p.currency as string) || String(r.currency ?? "KES"),
+            status: mapped === "cancelled" ? "failed" : mapped,
+            venue: (meta.venue as string) || (meta.merchant_id as string) || venue,
+            reference: (meta.till as string) || null,
+            providerRef: (p.connector_transaction_id as string) || null,
+            metadata:
+              mapped === "succeeded"
+                ? meta
+                : {
+                    ...meta,
+                    error_code: p.error_code ?? undefined,
+                    error_message: p.error_message ?? undefined,
+                  },
+          });
+          // A payment that PesaSwap now reports with refunds — capture them too.
+          if (Array.isArray(p.refunds)) {
+            for (const rf of p.refunds) {
+              await recordRefundRow(workerEnv, {
+                ...(rf as Record<string, unknown>),
+                payment_id: (rf as { payment_id?: string }).payment_id || String(r.id),
+              });
+            }
+          }
+          paymentsSynced++;
+        } catch {
+          /* best-effort per payment */
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  return jsonResponse({ synced: true, refundsSynced, paymentsSynced });
 }
 
 // --- Get Payment Status ---
@@ -995,6 +1257,20 @@ async function handleGetPaymentStatus(
             });
           } catch {
             /* best-effort ledger */
+          }
+        }
+        // Capture any refunds PesaSwap already has on this payment (a refund raised
+        // from the PesaSwap dashboard arrives here even when the webhook fails).
+        if (Array.isArray(p.refunds)) {
+          for (const rf of p.refunds) {
+            try {
+              await recordRefundRow(workerEnv, {
+                ...(rf as Record<string, unknown>),
+                payment_id: (rf as { payment_id?: string }).payment_id || paymentId,
+              });
+            } catch {
+              /* best-effort refund */
+            }
           }
         }
         const cached = payments.get(paymentId);
@@ -1283,23 +1559,29 @@ async function handleWebhook(
 ): Promise<Response> {
   const env = getEnv(runtimeEnv);
   const rawBody = await request.text();
-  // A malformed body or an internal error must still be ACKNOWLEDGED (200) — a
-  // webhook that returns non-2xx triggers PesaSwap's "CallToMerchantFailed" + 24h of
-  // retries. We reconcile any missed event via the status-poll + list reconcile, so
-  // acknowledging is safe. Only a real bad-signature (secret configured) returns 401.
+  const sig512 = request.headers.get("x-webhook-signature-512") || "";
+  const sig256 =
+    request.headers.get("x-webhook-signature-256") ||
+    request.headers.get("x-pesaswap-signature") ||
+    "";
+  // Always ACK 200 — a non-2xx trips PesaSwap's "CallToMerchantFailed" + 24h of
+  // retries. Processing is fast because we NEVER do a synchronous verify-by-callback
+  // here: that ~1s round-trip to PesaSwap is what pushed our response past
+  // PesaSwap's aggressive delivery timeout. A signature-verified payload is
+  // processed inline; anything else is ACKed and reconciled by the pull paths.
   try {
-    return await processWebhook(request, env, runtimeEnv, rawBody);
+    return await processWebhook(env, runtimeEnv, rawBody, { sig512, sig256 });
   } catch (err) {
     console.error("[PesaSwap] Webhook processing error (acknowledged):", err);
-    return jsonResponse({ received: true, error: "processing_error" });
+    return jsonResponse({ received: true });
   }
 }
 
 async function processWebhook(
-  request: Request,
   env: Env,
   runtimeEnv: unknown,
   rawBody: string,
+  sigs: { sig512: string; sig256: string },
 ): Promise<Response> {
   // PesaSwap sends the payment object in one of two shapes:
   //  - wrapped envelope: { event_type, event_id, content: { object } }
@@ -1307,7 +1589,7 @@ async function processWebhook(
   // Our own simulator uses { type, data }. Accept ALL of them.
   const body = JSON.parse(rawBody) as Record<string, any>;
   const eventType: string = body.event_type || body.type || "";
-  let resource: Record<string, any> =
+  const resource: Record<string, any> =
     body.content?.object ||
     body.content ||
     body.data ||
@@ -1316,71 +1598,48 @@ async function processWebhook(
     resource.payment_id || resource.id || body.payment_id || "";
 
   // --- Establish trust BEFORE acting on the webhook ---
-  // A forged `payment_succeeded` must never be recorded as a real sale. We accept a
-  // webhook as trusted via EITHER:
-  //  (1) a valid HMAC signature (x-webhook-signature-512 / -256) when a shared secret
-  //      (PESASWAP_WEBHOOK_SECRET = the profile `payments_response_hash_key`) is set; OR
-  //  (2) verify-by-callback: with no shared secret, re-fetch the payment from PesaSwap
-  //      with our api-key and act on THAT authoritative record — a forger cannot fake
-  //      it. This keeps the webhook working securely without a shared secret.
-  // If neither is possible we acknowledge (200) so PesaSwap stops retrying, but never
-  // perform any state-changing side effect.
-  const sig512 = request.headers.get("x-webhook-signature-512") || "";
-  const sig256 =
-    request.headers.get("x-webhook-signature-256") ||
-    request.headers.get("x-pesaswap-signature") ||
-    "";
+  // A forged `payment_succeeded` must never be recorded as a real sale. Trust is
+  // established by a valid HMAC signature ONLY — a fast, LOCAL check with no network.
+  // We deliberately do NOT verify-by-callback here: that ~1s round-trip to PesaSwap
+  // is what tripped its delivery timeout → CallToMerchantFailed. An unsigned /
+  // unverifiable webhook is ACKed (200) and its authoritative state is pulled by the
+  // reconcile paths (client status-poll, the refunds/list + processing reconcile on
+  // /api/payments/list, and the on-demand Force Sync) — all of which re-fetch with
+  // our api-key, so a forged webhook can never be recorded as a real transaction.
+  const { sig512, sig256 } = sigs;
   let trusted = false;
-  // Fast path: a valid HMAC signature (when PESASWAP_WEBHOOK_SECRET is configured =
-  // the profile `payments_response_hash_key`). This skips the verify-by-callback
-  // round-trip. A *bad* signature does NOT hard-reject — we fall through to the
-  // callback so a not-yet-synced dashboard key can never cause CallToMerchantFailed.
   if (env.PESASWAP_WEBHOOK_SECRET && (sig512 || sig256)) {
     trusted = sig512
       ? await verifyWebhookSignature(rawBody, sig512, env.PESASWAP_WEBHOOK_SECRET, "SHA-512")
       : await verifyWebhookSignature(rawBody, sig256, env.PESASWAP_WEBHOOK_SECRET, "SHA-256");
   }
-  // Fallback / keyless path: re-fetch the authoritative record with our api-key — a
-  // forger cannot fake it. Bounded by a hard timeout so a slow provider can never
-  // make US slow enough to trip PesaSwap's own webhook-delivery timeout.
-  if (!trusted && env.PESASWAP_API_KEY && paymentId && !paymentId.startsWith("test_")) {
-    try {
-      const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), 4000);
-      const resp = await fetch(`${env.PESASWAP_URL}/payments/${paymentId}`, {
-        headers: { "api-key": env.PESASWAP_API_KEY, Accept: "application/json" },
-        signal: ac.signal,
-      });
-      clearTimeout(timer);
-      if (resp.ok) {
-        resource = (await resp.json()) as Record<string, any>;
-        trusted = true;
-      }
-    } catch {
-      /* timeout / network error → acknowledge below, reconcile via polling */
-    }
-  }
 
   console.info(
-    `[PesaSwap] Webhook: ${eventType || resource.status} ${paymentId}${trusted ? "" : " (unverified)"}`,
+    `[PesaSwap] Webhook: ${eventType || resource.status} ${paymentId}${trusted ? "" : " (unverified — reconciled via pull)"}`,
   );
 
   if (!trusted) {
-    // Cannot verify — acknowledge so PesaSwap stops retrying (avoids the dashboard
-    // "Delivery Failed" / CallToMerchantFailed), but never act on unverified data.
-    return jsonResponse({ received: true, verified: false });
+    // Fast ACK so PesaSwap never records CallToMerchantFailed. The pull reconcile
+    // captures the authoritative state; we never act on unverified data.
+    return jsonResponse({ received: true });
   }
 
-  // Effective status: prefer the authoritative record's status (verify-by-callback
-  // yields the real terminal state), else infer from the event name.
+  // A refund event carries a refund object (refund_id + the refund's own status),
+  // NOT a payment — so it must never be treated as a payment success/failure.
+  const isRefundEvent =
+    Boolean(resource.refund_id) || /refund/i.test(eventType);
+  // Effective status: the record's status maps to the real terminal state, else we
+  // infer from the event name.
   const mappedStatus = resource.status ? mapPesaSwapStatus(resource.status) : "";
   const isSuccess =
-    mappedStatus === "succeeded" ||
-    eventType === "payment_succeeded" ||
-    eventType === "payment_captured" ||
-    eventType === "payment.succeeded" ||
-    eventType === "payment_intent.succeeded";
+    !isRefundEvent &&
+    (mappedStatus === "succeeded" ||
+      eventType === "payment_succeeded" ||
+      eventType === "payment_captured" ||
+      eventType === "payment.succeeded" ||
+      eventType === "payment_intent.succeeded");
   const isFailure =
+    !isRefundEvent &&
     !isSuccess &&
     (mappedStatus === "failed" ||
       mappedStatus === "cancelled" ||
@@ -1514,6 +1773,39 @@ async function processWebhook(
           timestamp: new Date().toISOString(),
         },
       });
+  }
+
+  // Sync refunds carried on this trusted webhook. Two shapes: (a) the payment record
+  // carries a refunds[] array; or (b) the event IS a refund (resource is the refund
+  // object, with a refund_id). Both are idempotent (recordRefundRow short-circuits on
+  // the refund id) so this is safe on every webhook.
+  if (Array.isArray(resource.refunds)) {
+    for (const rf of resource.refunds) {
+      try {
+        await recordRefundRow(runtimeEnv, {
+          ...(rf as Record<string, unknown>),
+          payment_id: (rf as { payment_id?: string }).payment_id || paymentId,
+        });
+      } catch {
+        /* best-effort refund */
+      }
+    }
+  }
+  if (isRefundEvent && resource.refund_id) {
+    try {
+      await recordRefundRow(runtimeEnv, {
+        refund_id: resource.refund_id,
+        payment_id: resource.payment_id || paymentId,
+        amount: resource.amount,
+        currency: resource.currency,
+        status: resource.status || "succeeded",
+        reason: resource.reason,
+        connector_refund_id: resource.connector_refund_id,
+        refund_arn: resource.refund_arn,
+      });
+    } catch {
+      /* best-effort refund */
+    }
   }
 
   return jsonResponse({ received: true });
