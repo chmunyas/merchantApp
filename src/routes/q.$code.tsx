@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Check, Loader2, Minus, Phone, Plus, ShoppingBag } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { loyaltyPointsFor } from "@/lib/loyalty";
@@ -65,6 +65,7 @@ function groupedItems(items: MenuItem[]): Array<[string, MenuItem[]]> {
 
 function UnifiedQrPage() {
   const { code } = Route.useParams();
+  const navigate = useNavigate();
   const [payload, setPayload] = useState<QrPayload | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [phone, setPhone] = useState("");
@@ -227,7 +228,21 @@ function UnifiedQrPage() {
       if (!res.ok || !data.payUrl) {
         throw new Error(data.error ?? "Could not start payment.");
       }
-      window.location.href = data.payUrl;
+      // Seamless in-app transition to pay (no full-page reload) — scan → order →
+      // pay is one continuous flow. Fall back to a hard redirect if parsing fails.
+      let token: string | null = null;
+      try {
+        token = new URL(data.payUrl, window.location.origin).searchParams.get(
+          "o",
+        );
+      } catch {
+        token = null;
+      }
+      if (token) {
+        void navigate({ to: "/pay", search: { o: token } });
+      } else {
+        window.location.href = data.payUrl;
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start payment.");
       setPaying(false);

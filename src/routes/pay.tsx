@@ -23,6 +23,14 @@ import { loyaltyPointsFor } from "@/lib/loyalty";
 import { QRCodeSVG } from "qrcode.react";
 
 export const Route = createFileRoute("/pay")({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { o?: string; i?: string; tapgo?: string; status?: string } => ({
+    o: typeof search.o === "string" ? search.o : undefined,
+    i: typeof search.i === "string" ? search.i : undefined,
+    tapgo: typeof search.tapgo === "string" ? search.tapgo : undefined,
+    status: typeof search.status === "string" ? search.status : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Tap & Go Pay — PesaSwap" },
@@ -79,14 +87,15 @@ function PayPage() {
     loadHyperLoader().catch(() => {});
   }, []);
 
-  // Check URL for tapgo parameter (when scanned from QR)
+  const search = Route.useSearch();
+
+  // Resolve the payment source from the route's typed search params. This runs on a
+  // fresh page load AND on an in-app navigation from the scan flow — so scan → order
+  // → pay is one seamless journey with no full-page reload.
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const tapgo = params.get("tapgo");
-    if (tapgo) {
+    if (search.tapgo) {
       try {
-        const data = decodeTapgoPayload(tapgo);
+        const data = decodeTapgoPayload(search.tapgo);
         setPaymentData(data);
         if (data.phone) setCustomerPhone(data.phone);
         setState("scanned");
@@ -96,24 +105,14 @@ function PayPage() {
       }
     }
     // Short invoice pay link (/pay?i=INV-XXX) — load the amount by number.
-    const invoiceNo = params.get("i");
-    if (invoiceNo) {
-      void loadInvoice(invoiceNo);
-    }
-
+    if (search.i) void loadInvoice(search.i);
     // Server-bound QR order pay link (/pay?o=<token>) — the amount is loaded from
     // the server, never read from the URL, so it cannot be tampered with.
-    const orderToken = params.get("o");
-    if (orderToken) {
-      void loadQrOrder(orderToken);
-    }
-
-    // Check for return from payment redirect
-    const status = params.get("status");
-    if (status === "complete") {
-      setState("success");
-    }
-  }, []);
+    if (search.o) void loadQrOrder(search.o);
+    // Return from a payment redirect.
+    if (search.status === "complete") setState("success");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search.o, search.i, search.tapgo, search.status]);
 
   // Resolve a short pay link to its amount + merchant. Surfaces a loading state
   // while fetching and a clear error (with retry) instead of failing silently.
