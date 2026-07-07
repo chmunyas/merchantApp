@@ -44,6 +44,48 @@ code" insight localized to M-Pesa.
 - Log every scan — that behavioural data is the product.
 - Prefer per-table codes so a scan knows the seat; a venue code still works.
 
+## KE-QR (CBK national standard) — conformance status
+
+> **Status: NOT conformant — by design.** Every QR the app emits today is a
+> **URL to our own web checkout** (closed-loop, phone-camera → our page → PesaSwap
+> STK). Kenya's national **KE-QR** standard (CBK, 2023; based on **EMVCo
+> Merchant-Presented Mode v1.1**) is an **open-loop EMVCo TLV data object** meant
+> to be parsed and routed by *any* licensed bank/DFSP app. These are different
+> paradigms — our QR is invisible to the interoperable QR rail, and no KE-QR data
+> objects are currently produced. Documented here so the gap is explicit; **no
+> KE-QR generator has been built.**
+
+**What our QR encodes today (all URL or proprietary JSON — never EMVCo TLV):**
+- `dashboard/qr.tsx` → `https://…/q/{codeId}` (unified code).
+- `dashboard/invoices.tsx` → invoice `pay_link` URL.
+- `features/TapGoPOS.tsx` → `/pay?tapgo=<base64>` (proprietary JSON fallback).
+- `features/TableServiceView.tsx`, `routes/pay.tsx` → web checkout / portal URL.
+- `MerchantApp.tsx` / `MerchantFlows.tsx` → pay URL / `{type:"fx-engine/invoice"}` JSON.
+- `lib/merchant-dashboard.ts` `createTableQrValue` → `{merchant,till,table,route}` JSON.
+
+**Missing mandatory EMVCo/KE-QR data objects (all of them):** `00` Payload Format
+Indicator (`"01"`), `01` Point of Initiation (`11` static / `12` dynamic), `28`/`29`
+Merchant Account Info with GUID `ke.go.qr`, `52` MCC, `53` Currency (`404`), `54`
+Amount, `58` Country (`KE`), `59` Merchant Name, `60` City, `63` **CRC-16/CCITT**
+(poly `0x1021`, init `0xFFFF`). No TLV structure (2-digit id + 2-digit len + value),
+no CRC integrity check.
+
+**What already aligns (principles, not format):** merchant-presented mode; **no
+customer PII in the code**; static-vs-dynamic concept (`/q/:code` static, pay-token
+dynamic); amount bound server-side; customer authenticates in their own app (PIN);
+DBA merchant name shown.
+
+**Hard dependency (blocks true conformance):** interoperable KE-QR needs a
+**CBK-directory merchant identifier issued to a licensed PSP/DFSP** — tied to
+**PesaSwap's PSP registration / GUID**, not self-issuable by the app. Without it we
+can format a valid TLV but other banks can't route it.
+
+**If/when we implement:** add an EMVCo-TLV generator (with CRC-16) that runs
+*alongside* the existing URL QR (additive, non-breaking) — dynamic (amount-bound)
+and static variants — gated on obtaining the real PSP/merchant identifier from
+PesaSwap. See the CBK KE-QR standard for the full data-object table and the Parts
+A–D printed-sticker layout (acceptance logos, DBA name).
+
 ## Definition of Done — full parity
 A feature is not done until it has **full parity across all three runtime tiers** —
 validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
