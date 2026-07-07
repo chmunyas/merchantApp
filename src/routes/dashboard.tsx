@@ -100,6 +100,7 @@ const navGroups = [
     label: "Sales",
     items: [
       { to: "/dashboard/payments", label: "Payments", icon: CreditCard },
+      { to: "/dashboard/payment-methods", label: "Methods", icon: Wallet },
       { to: "/dashboard/invoices", label: "Invoices", icon: Receipt },
       { to: "/dashboard/reports", label: "Notebook", icon: NotebookPen },
       { to: "/dashboard/settlement", label: "Settlement", icon: Landmark },

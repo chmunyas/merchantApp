@@ -273,7 +273,7 @@ async function recordLedger(
       await sql`
         INSERT INTO customer_payment_methods (venue_id, phone, kind, label)
         VALUES (${rec.venue ?? null}, ${loyaltyPhone}, 'mpesa', ${"M-Pesa •••" + last4})
-        ON CONFLICT (phone, kind)
+        ON CONFLICT (phone, COALESCE(provider_ref, kind))
         DO UPDATE SET last_used_at = now(), venue_id = EXCLUDED.venue_id`;
     } catch {
       /* best-effort saved method */
@@ -796,7 +796,7 @@ async function handleGetCustomerMethods(
     if (sql) {
       try {
         const rows = await sql`
-          SELECT kind, label FROM customer_payment_methods
+          SELECT kind, label, brand, last4 FROM customer_payment_methods
           WHERE phone = ${cleaned}
           ORDER BY is_default DESC, last_used_at DESC
           LIMIT 5`;
@@ -809,6 +809,8 @@ async function handleGetCustomerMethods(
             methods: rows.map((r) => ({
               kind: String(r.kind),
               label: String(r.label ?? ""),
+              brand: r.brand ? String(r.brand) : null,
+              last4: r.last4 ? String(r.last4) : null,
             })),
             default_method: String(rows[0].kind),
           });
@@ -864,7 +866,14 @@ async function handleWebhook(
       id?: string;
       status?: string;
       amount?: number;
+      currency?: string;
       metadata?: Record<string, unknown>;
+      payment_method?: {
+        id?: string;
+        type?: string; // card | apple_pay | google_pay | mpesa
+        card?: { brand?: string; last4?: string };
+        wallet?: { type?: string };
+      };
     };
   };
 
@@ -882,18 +891,51 @@ async function handleWebhook(
       // Award loyalty points
       const metadata = payment?.metadata || event.data.metadata || {};
       const amount = payment?.amount || event.data.amount || 0;
-      const pointsEarned = Math.floor(amount / 1000); // 1 point per KES 10 (in minor units)
-      console.info(`[Loyalty] Awarding ${pointsEarned} points to ${metadata.customer_phone}`);
+      const venue =
+        (metadata.venue as string) || (metadata.merchant_id as string) || null;
 
-      // Save customer payment method for future one-tap
-      if (metadata.customer_phone) {
-        const phone = metadata.customer_phone as string;
-        if (!customerMethods.has(phone)) {
-          customerMethods.set(phone, {
-            customer_id: `cust_${phone}`,
-            methods: [{ id: `pm_mpesa_${phone}`, type: "mpesa", label: `M-Pesa ${phone.slice(-4)}` }],
-            default_method: `pm_mpesa_${phone}`,
-          });
+      // Live payments confirm via the webhook (not the Create call), so persist to
+      // the durable ledger here. recordLedger is idempotent on the payment id and
+      // fires loyalty accrual + the M-Pesa saved-method upsert on first success.
+      try {
+        await recordLedger(runtimeEnv, {
+          id: paymentId,
+          amount: Number(amount) || 0,
+          currency:
+            (payment?.currency as string) ||
+            (event.data.currency as string) ||
+            "KES",
+          status: "succeeded",
+          venue,
+          reference: (metadata.till as string) || null,
+          metadata,
+        });
+      } catch {
+        /* best-effort — the broadcast below still fires */
+      }
+
+      // Persist a tokenised card / wallet (Apple Pay / Google Pay) as a saved method
+      // (SAQ-A: only the token + brand/last4 for display, never a PAN).
+      const pm = event.data.payment_method;
+      const pmPhone = (metadata.customer_phone as string) || "";
+      if (pm?.id && pmPhone && pm.type && pm.type !== "mpesa") {
+        try {
+          const sql = getSql(runtimeEnv);
+          if (sql) {
+            const brand = pm.card?.brand ?? pm.wallet?.type ?? pm.type;
+            const last4 = pm.card?.last4 ?? null;
+            const kind = pm.type === "card" ? "card" : "wallet";
+            const label = last4 ? `${brand} •••${last4}` : brand;
+            await sql`
+              INSERT INTO customer_payment_methods
+                (venue_id, phone, kind, label, provider_ref, brand, last4)
+              VALUES (${venue}, ${pmPhone}, ${kind}, ${label}, ${pm.id}, ${brand}, ${last4})
+              ON CONFLICT (phone, COALESCE(provider_ref, kind))
+              DO UPDATE SET last_used_at = now(), label = EXCLUDED.label,
+                            brand = EXCLUDED.brand, last4 = EXCLUDED.last4`;
+          }
+        } catch {
+          /* best-effort saved card */
         }
       }
 

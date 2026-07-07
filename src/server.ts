@@ -44,6 +44,7 @@ import { handleForecastRoute } from "./api/forecast";
 import { handlePricingRoute } from "./api/pricing";
 import { handleRfmRoute } from "./api/rfm";
 import { handlePromoRoute } from "./api/promo";
+import { handlePaymentMethodsAdminRoute } from "./api/payment-methods-admin";
 
 type ServerEntry = {
   fetch: (
@@ -234,6 +235,10 @@ export default {
           // Promo / offer codes (public validate + manager CRUD)
           const promoResponse = await handlePromoRoute(request, env);
           if (promoResponse) return promoResponse;
+
+          // Merchant view of saved customer payment methods (M-Pesa + cards/wallets)
+          const pmAdminResponse = await handlePaymentMethodsAdminRoute(request, env);
+          if (pmAdminResponse) return pmAdminResponse;
 
           // Reputation: reviews capture (public) + list/stats + AI reply
           const reviewsResponse = await handleReviewsRoute(request, env);

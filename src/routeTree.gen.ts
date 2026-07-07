@@ -50,6 +50,7 @@ import { Route as DashboardQrRouteImport } from './routes/dashboard/qr'
 import { Route as DashboardPromosRouteImport } from './routes/dashboard/promos'
 import { Route as DashboardPricingRouteImport } from './routes/dashboard/pricing'
 import { Route as DashboardPaymentsRouteImport } from './routes/dashboard/payments'
+import { Route as DashboardPaymentMethodsRouteImport } from './routes/dashboard/payment-methods'
 import { Route as DashboardOrdersRouteImport } from './routes/dashboard/orders'
 import { Route as DashboardMenuRouteImport } from './routes/dashboard/menu'
 import { Route as DashboardKnowledgeRouteImport } from './routes/dashboard/knowledge'
@@ -276,6 +277,11 @@ const DashboardPaymentsRoute = DashboardPaymentsRouteImport.update({
   path: '/payments',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardPaymentMethodsRoute = DashboardPaymentMethodsRouteImport.update({
+  id: '/payment-methods',
+  path: '/payment-methods',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardOrdersRoute = DashboardOrdersRouteImport.update({
   id: '/orders',
   path: '/orders',
@@ -416,6 +422,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/knowledge': typeof DashboardKnowledgeRoute
   '/dashboard/menu': typeof DashboardMenuRoute
   '/dashboard/orders': typeof DashboardOrdersRoute
+  '/dashboard/payment-methods': typeof DashboardPaymentMethodsRoute
   '/dashboard/payments': typeof DashboardPaymentsRoute
   '/dashboard/pricing': typeof DashboardPricingRoute
   '/dashboard/promos': typeof DashboardPromosRoute
@@ -477,6 +484,7 @@ export interface FileRoutesByTo {
   '/dashboard/knowledge': typeof DashboardKnowledgeRoute
   '/dashboard/menu': typeof DashboardMenuRoute
   '/dashboard/orders': typeof DashboardOrdersRoute
+  '/dashboard/payment-methods': typeof DashboardPaymentMethodsRoute
   '/dashboard/payments': typeof DashboardPaymentsRoute
   '/dashboard/pricing': typeof DashboardPricingRoute
   '/dashboard/promos': typeof DashboardPromosRoute
@@ -541,6 +549,7 @@ export interface FileRoutesById {
   '/dashboard/knowledge': typeof DashboardKnowledgeRoute
   '/dashboard/menu': typeof DashboardMenuRoute
   '/dashboard/orders': typeof DashboardOrdersRoute
+  '/dashboard/payment-methods': typeof DashboardPaymentMethodsRoute
   '/dashboard/payments': typeof DashboardPaymentsRoute
   '/dashboard/pricing': typeof DashboardPricingRoute
   '/dashboard/promos': typeof DashboardPromosRoute
@@ -606,6 +615,7 @@ export interface FileRouteTypes {
     | '/dashboard/knowledge'
     | '/dashboard/menu'
     | '/dashboard/orders'
+    | '/dashboard/payment-methods'
     | '/dashboard/payments'
     | '/dashboard/pricing'
     | '/dashboard/promos'
@@ -667,6 +677,7 @@ export interface FileRouteTypes {
     | '/dashboard/knowledge'
     | '/dashboard/menu'
     | '/dashboard/orders'
+    | '/dashboard/payment-methods'
     | '/dashboard/payments'
     | '/dashboard/pricing'
     | '/dashboard/promos'
@@ -730,6 +741,7 @@ export interface FileRouteTypes {
     | '/dashboard/knowledge'
     | '/dashboard/menu'
     | '/dashboard/orders'
+    | '/dashboard/payment-methods'
     | '/dashboard/payments'
     | '/dashboard/pricing'
     | '/dashboard/promos'
@@ -1069,6 +1081,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardPaymentsRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/payment-methods': {
+      id: '/dashboard/payment-methods'
+      path: '/payment-methods'
+      fullPath: '/dashboard/payment-methods'
+      preLoaderRoute: typeof DashboardPaymentMethodsRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/orders': {
       id: '/dashboard/orders'
       path: '/orders'
@@ -1245,6 +1264,7 @@ interface DashboardRouteChildren {
   DashboardKnowledgeRoute: typeof DashboardKnowledgeRoute
   DashboardMenuRoute: typeof DashboardMenuRoute
   DashboardOrdersRoute: typeof DashboardOrdersRoute
+  DashboardPaymentMethodsRoute: typeof DashboardPaymentMethodsRoute
   DashboardPaymentsRoute: typeof DashboardPaymentsRoute
   DashboardPricingRoute: typeof DashboardPricingRoute
   DashboardPromosRoute: typeof DashboardPromosRoute
@@ -1282,6 +1302,7 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardKnowledgeRoute: DashboardKnowledgeRoute,
   DashboardMenuRoute: DashboardMenuRoute,
   DashboardOrdersRoute: DashboardOrdersRoute,
+  DashboardPaymentMethodsRoute: DashboardPaymentMethodsRoute,
   DashboardPaymentsRoute: DashboardPaymentsRoute,
   DashboardPricingRoute: DashboardPricingRoute,
   DashboardPromosRoute: DashboardPromosRoute,
