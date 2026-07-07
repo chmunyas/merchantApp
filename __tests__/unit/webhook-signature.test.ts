@@ -80,13 +80,17 @@ describe("PesaSwap webhook — signature + envelope", () => {
     expect(res!.status).toBe(401);
   });
 
-  it("fails closed (503) when the webhook secret is not configured", async () => {
+  it("acknowledges (200) without side effects when unverifiable (no secret, no api-key)", async () => {
+    // With neither a shared secret nor an api-key to verify-by-callback, we cannot
+    // trust the payload, so we acknowledge to stop PesaSwap's retries (avoiding
+    // CallToMerchantFailed) but never act on the unverified data.
     const sig = await hmacHex(liveBody, SECRET, "SHA-512");
     const res = await handlePaymentRoute(
       webhookRequest(liveBody, { "x-webhook-signature-512": sig }),
       {},
     );
-    expect(res!.status).toBe(503);
+    expect(res!.status).toBe(200);
+    expect(await res!.json()).toEqual({ received: true, verified: false });
   });
 
   it("rejects a webhook with no signature header with 401", async () => {

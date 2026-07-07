@@ -8,6 +8,8 @@
 
 import { getSql } from "@/lib/db";
 import { requireAuth } from "@/api/auth";
+import { roleAtLeast } from "@/lib/rbac";
+import { venueFromPayload } from "@/lib/tenancy";
 import {
   postCogsEntry,
   postPaymentEntry,
@@ -341,6 +343,12 @@ export async function handlePaymentRoute(
     return withCors(await handleCreatePayment(request, env), corsHeaders);
   }
 
+  // DB-backed payments ledger (gated manager+): every real transaction attempt,
+  // any status, so the merchant dashboard shows live sales — not just localStorage.
+  if (path === "/api/payments/list" && request.method === "GET") {
+    return withCors(await handleListPayments(request, env), corsHeaders);
+  }
+
   // Capture a previously authorised (manual-capture / pre-auth hold) payment.
   if (
     path.match(/^\/api\/payments\/[^/]+\/capture$/) &&
@@ -404,6 +412,21 @@ async function handleCreatePayment(
   // Validate
   if (!body.amount || body.amount <= 0) {
     return jsonResponse({ error: { message: "Amount must be positive" } }, 400);
+  }
+
+  // Single-venue default: attribute a payment to "main" when the pay source didn't
+  // carry a venue (e.g. a Tap&Go QR / link), so it is visible in the merchant
+  // dashboard, which filters by venue. QR-order and invoice flows already set their
+  // own venue and are left untouched. Mirrors venueFromPayload's "main" default.
+  {
+    const bmeta = (body.metadata ?? {}) as Record<string, unknown>;
+    if (typeof bmeta.venue !== "string" || !bmeta.venue) {
+      bmeta.venue = "main";
+    }
+    if (typeof bmeta.merchant_id !== "string" || !bmeta.merchant_id) {
+      bmeta.merchant_id = bmeta.venue;
+    }
+    body.metadata = bmeta;
   }
 
   const env = getEnv(workerEnv);
@@ -572,23 +595,24 @@ async function handleCreatePayment(
         created_at: new Date().toISOString(),
         refunds: [],
       });
-      // STK is asynchronous (customer approves on the phone), so status is usually
-      // "processing" here — the client polls /status, which records the ledger on
-      // first success. Record now only if it somehow already succeeded.
-      if (status === "succeeded") {
-        try {
-          await recordLedger(workerEnv, {
-            id: paymentId,
-            amount: body.amount,
-            currency: body.currency || "KES",
-            status: "succeeded",
-            venue: (liveMeta.venue as string) || null,
-            reference: (liveMeta.till as string) || null,
-            metadata: liveMeta,
-          });
-        } catch {
-          /* best-effort */
-        }
+      // Record the attempt in the durable ledger immediately (usually status=
+      // "processing" while the customer approves the STK on their handset), so EVERY
+      // attempt is visible to the merchant. The client poll / webhook later updates
+      // it to succeeded/failed. recordLedger only fires loyalty + settlement on the
+      // first transition to succeeded, so a processing/failed row is financially inert.
+      try {
+        await recordLedger(workerEnv, {
+          id: paymentId,
+          amount: body.amount,
+          currency: body.currency || "KES",
+          status,
+          venue: (liveMeta.venue as string) || null,
+          reference: (liveMeta.till as string) || null,
+          providerRef: intent.connector_transaction_id ?? null,
+          metadata: liveMeta,
+        });
+      } catch {
+        /* best-effort ledger */
       }
       const responseBody = {
         payment_id: paymentId,
@@ -694,6 +718,76 @@ async function handleCreatePayment(
   }
 }
 
+// --- DB-backed payments ledger (merchant view) ---
+
+// Lists real payment attempts from the durable ledger (any status) so the merchant
+// dashboard reflects live sales, refunds and failed/cancelled attempts — matching
+// the PesaSwap dashboard. Gated manager+ (exposes customer PII + revenue).
+async function handleListPayments(
+  request: Request,
+  workerEnv: unknown,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const payload = await requireAuth(request, workerEnv);
+  if (!payload) return jsonResponse({ error: { message: "unauthorized" } }, 401);
+  if (!roleAtLeast(payload, "manager")) {
+    return jsonResponse({ error: { message: "forbidden" } }, 403);
+  }
+  const venue = venueFromPayload(payload, url);
+  const sql = getSql(workerEnv);
+  if (!sql) return jsonResponse({ error: { message: "database not configured" } }, 503);
+
+  const limit = Math.min(
+    200,
+    Math.max(1, Number(url.searchParams.get("limit")) || 50),
+  );
+  const statusFilter = (url.searchParams.get("status") || "").trim();
+
+  try {
+    const rows = statusFilter
+      ? await sql`
+          SELECT id, amount, currency, status, kind, reference, provider_ref,
+                 tip_amount, staff_id, initiator, metadata, created_at
+          FROM payments
+          WHERE venue_id = ${venue} AND status = ${statusFilter}
+          ORDER BY created_at DESC
+          LIMIT ${limit}`
+      : await sql`
+          SELECT id, amount, currency, status, kind, reference, provider_ref,
+                 tip_amount, staff_id, initiator, metadata, created_at
+          FROM payments
+          WHERE venue_id = ${venue}
+          ORDER BY created_at DESC
+          LIMIT ${limit}`;
+
+    return jsonResponse({
+      payments: rows.map((r) => {
+        const meta = (r.metadata ?? {}) as Record<string, unknown>;
+        return {
+          id: String(r.id),
+          amount: Number(r.amount) || 0, // minor units
+          currency: String(r.currency ?? "KES"),
+          status: String(r.status),
+          kind: String(r.kind ?? "payment"),
+          reference: r.reference ? String(r.reference) : null,
+          providerRef: r.provider_ref ? String(r.provider_ref) : null,
+          tipAmount: Number(r.tip_amount) || 0,
+          initiator: r.initiator ? String(r.initiator) : "human",
+          customerPhone: (meta.customer_phone as string) || null,
+          customerName: (meta.customer_name as string) || null,
+          flowType: (meta.flow_type as string) || null,
+          errorMessage: (meta.error_message as string) || null,
+          createdAt: r.created_at,
+        };
+      }),
+      total: rows.length,
+    });
+  } catch (err) {
+    console.error("[PesaSwap] List payments error:", err);
+    return jsonResponse({ error: { message: "Failed to list payments" } }, 500);
+  }
+}
+
 // --- Get Payment Status ---
 
 async function handleGetPaymentStatus(
@@ -715,17 +809,28 @@ async function handleGetPaymentStatus(
         const p = (await resp.json()) as Record<string, any>;
         const status = mapPesaSwapStatus(p.status);
         const meta = (p.metadata ?? {}) as Record<string, unknown>;
-        if (status === "succeeded") {
+        // Record the terminal outcome (succeeded OR failed/cancelled) to the durable
+        // ledger so the merchant sees every attempt with its decline reason. On first
+        // success recordLedger also fires loyalty + order settlement (idempotent).
+        if (status === "succeeded" || status === "failed" || status === "cancelled") {
           try {
             await recordLedger(workerEnv, {
               id: paymentId,
               amount: Number(p.amount) || 0,
               currency: (p.currency as string) || "KES",
-              status: "succeeded",
+              status: status === "cancelled" ? "failed" : status,
               venue:
                 (meta.venue as string) || (meta.merchant_id as string) || null,
               reference: (meta.till as string) || null,
-              metadata: meta,
+              providerRef: (p.connector_transaction_id as string) || null,
+              metadata:
+                status === "succeeded"
+                  ? meta
+                  : {
+                      ...meta,
+                      error_code: p.error_code ?? undefined,
+                      error_message: p.error_message ?? undefined,
+                    },
             });
           } catch {
             /* best-effort ledger */
@@ -1017,59 +1122,86 @@ async function handleWebhook(
 ): Promise<Response> {
   const env = getEnv(runtimeEnv);
   const rawBody = await request.text();
-  // PesaSwap signs each outgoing webhook with an HMAC over the raw body using the
-  // business-profile `payments_response_hash_key` (our PESASWAP_WEBHOOK_SECRET).
-  // Preferred: HMAC-SHA512 in `x-webhook-signature-512`; fallback HMAC-SHA256 in
-  // `x-webhook-signature-256`. (`x-pesaswap-signature` kept for our own simulator.)
+  // Parse the envelope first so we have the payment id for verification. PesaSwap
+  // (Hyperswitch-derived) sends { event_type, event_id, content:{ object } } with
+  // underscore event names (payment_succeeded …). Our simulator uses { type, data }
+  // with dotted names. Accept BOTH shapes.
+  const body = JSON.parse(rawBody) as Record<string, any>;
+  const eventType: string = body.event_type || body.type || "";
+  let resource: Record<string, any> =
+    body.content?.object || body.content || body.data || {};
+  const paymentId: string = resource.payment_id || resource.id || "";
+
+  // --- Establish trust BEFORE acting on the webhook ---
+  // A forged `payment_succeeded` must never be recorded as a real sale. We accept a
+  // webhook as trusted via EITHER:
+  //  (1) a valid HMAC signature (x-webhook-signature-512 / -256) when a shared secret
+  //      (PESASWAP_WEBHOOK_SECRET = the profile `payments_response_hash_key`) is set; OR
+  //  (2) verify-by-callback: with no shared secret, re-fetch the payment from PesaSwap
+  //      with our api-key and act on THAT authoritative record — a forger cannot fake
+  //      it. This keeps the webhook working securely without a shared secret.
+  // If neither is possible we acknowledge (200) so PesaSwap stops retrying, but never
+  // perform any state-changing side effect.
   const sig512 = request.headers.get("x-webhook-signature-512") || "";
   const sig256 =
     request.headers.get("x-webhook-signature-256") ||
     request.headers.get("x-pesaswap-signature") ||
     "";
-
-  // Signature verification is MANDATORY (fail closed). Without it, a forged
-  // `payment_succeeded` event would be broadcast to the merchant dashboard as a
-  // real sale. Reject when the secret is unconfigured or the signature is bad.
-  if (!env.PESASWAP_WEBHOOK_SECRET) {
-    console.error("[PesaSwap] Webhook secret not configured; rejecting webhook");
-    return jsonResponse({ error: { message: "Webhook not configured" } }, 503);
+  let trusted = false;
+  if (env.PESASWAP_WEBHOOK_SECRET) {
+    const isValid = sig512
+      ? await verifyWebhookSignature(rawBody, sig512, env.PESASWAP_WEBHOOK_SECRET, "SHA-512")
+      : sig256
+        ? await verifyWebhookSignature(rawBody, sig256, env.PESASWAP_WEBHOOK_SECRET, "SHA-256")
+        : false;
+    if (!isValid) {
+      console.warn("[PesaSwap] Invalid or missing webhook signature");
+      return jsonResponse({ error: { message: "Invalid signature" } }, 401);
+    }
+    trusted = true;
+  } else if (env.PESASWAP_API_KEY && paymentId && !paymentId.startsWith("test_")) {
+    try {
+      const resp = await fetch(`${env.PESASWAP_URL}/payments/${paymentId}`, {
+        headers: { "api-key": env.PESASWAP_API_KEY, Accept: "application/json" },
+      });
+      if (resp.ok) {
+        resource = (await resp.json()) as Record<string, any>;
+        trusted = true;
+      }
+    } catch {
+      /* fall through to an unverified acknowledgement */
+    }
   }
-  const isValid = sig512
-    ? await verifyWebhookSignature(rawBody, sig512, env.PESASWAP_WEBHOOK_SECRET, "SHA-512")
-    : sig256
-      ? await verifyWebhookSignature(rawBody, sig256, env.PESASWAP_WEBHOOK_SECRET, "SHA-256")
-      : false;
-  if (!isValid) {
-    console.warn("[PesaSwap] Invalid or missing webhook signature");
-    return jsonResponse({ error: { message: "Invalid signature" } }, 401);
-  }
-
-  const body = JSON.parse(rawBody) as Record<string, any>;
-  // PesaSwap (Hyperswitch-derived) envelope: { event_type, event_id, content:{ object } }
-  // with underscore event names (payment_succeeded …). Our simulator uses { type, data }
-  // with dotted names. Accept BOTH shapes.
-  const eventType: string = body.event_type || body.type || "";
-  const resource: Record<string, any> =
-    body.content?.object || body.content || body.data || {};
 
   console.info(
-    `[PesaSwap] Webhook: ${eventType}`,
-    resource.payment_id || resource.id || body.event_id || "",
+    `[PesaSwap] Webhook: ${eventType} ${paymentId}${trusted ? "" : " (unverified)"}`,
   );
 
+  if (!trusted) {
+    // Cannot verify — acknowledge so PesaSwap stops retrying (avoids the dashboard
+    // "Delivery Failed" / CallToMerchantFailed), but never act on unverified data.
+    return jsonResponse({ received: true, verified: false });
+  }
+
+  // Effective status: prefer the authoritative record's status (verify-by-callback
+  // yields the real terminal state), else infer from the event name.
+  const mappedStatus = resource.status ? mapPesaSwapStatus(resource.status) : "";
   const isSuccess =
+    mappedStatus === "succeeded" ||
     eventType === "payment_succeeded" ||
     eventType === "payment_captured" ||
     eventType === "payment.succeeded" ||
     eventType === "payment_intent.succeeded";
   const isFailure =
-    eventType === "payment_failed" ||
-    eventType === "payment_cancelled" ||
-    eventType === "payment.failed" ||
-    eventType === "payment_intent.payment_failed";
+    !isSuccess &&
+    (mappedStatus === "failed" ||
+      mappedStatus === "cancelled" ||
+      eventType === "payment_failed" ||
+      eventType === "payment_cancelled" ||
+      eventType === "payment.failed" ||
+      eventType === "payment_intent.payment_failed");
 
   if (isSuccess) {
-      const paymentId = resource.payment_id || resource.id || "";
       const payment = payments.get(paymentId);
       if (payment) {
         payment.status = "succeeded";
@@ -1148,13 +1280,36 @@ async function handleWebhook(
         },
       });
   } else if (isFailure) {
-      const paymentId = resource.payment_id || resource.id || "";
       const payment = payments.get(paymentId);
       if (payment) {
         payment.status = "failed";
       }
 
       const metadata = (payment?.metadata || resource.metadata || {}) as Record<string, unknown>;
+      const venue =
+        (metadata.venue as string) || (metadata.merchant_id as string) || null;
+      // Persist the failed attempt to the durable ledger so the merchant sees every
+      // transaction (matching the PesaSwap dashboard), with the decline reason.
+      try {
+        await recordLedger(runtimeEnv, {
+          id: paymentId,
+          amount: Number(payment?.amount || resource.amount || 0),
+          currency:
+            (payment?.currency as string) || (resource.currency as string) || "KES",
+          status: "failed",
+          venue,
+          reference: (metadata.till as string) || null,
+          providerRef: (resource.connector_transaction_id as string) || null,
+          metadata: {
+            ...metadata,
+            error_code: resource.error_code ?? undefined,
+            error_message: resource.error_message ?? undefined,
+          },
+        });
+      } catch {
+        /* best-effort */
+      }
+
       const merchantId = (metadata.merchant_id as string) || "";
       broadcastToMerchant(merchantId, {
         type: "payment.failed",

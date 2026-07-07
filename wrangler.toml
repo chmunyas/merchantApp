@@ -32,7 +32,7 @@ PUBLIC_BASE_URL = "https://pesaswap-merchant-app.pesaswap.workers.dev"
 # can be tested end-to-end without live credentials. The ledger is still written
 # (loyalty + settlement run). Set to "0" and add a real PESASWAP_API_KEY (secret)
 # to take real M-Pesa payments.
-PAYMENTS_TEST_MODE = "1"
+PAYMENTS_TEST_MODE = "0"
 
 # --- Cloudflare edge capabilities ---
 

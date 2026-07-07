@@ -23,6 +23,24 @@ import {
 } from "@/lib/merchant-dashboard";
 import { getBNPLTransactions, type BNPLTransaction } from "@/lib/coop-bnpl";
 import { pesaswapClient } from "@/lib/pesaswap-payments";
+import { authFetch } from "@/lib/auth";
+
+type LivePayment = {
+  id: string;
+  amount: number; // minor units
+  currency: string;
+  status: string;
+  kind: string;
+  reference: string | null;
+  providerRef: string | null;
+  tipAmount: number;
+  initiator: string;
+  customerPhone: string | null;
+  customerName: string | null;
+  flowType: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+};
 
 export const Route = createFileRoute("/dashboard/payments")({
   component: DashboardPaymentsPage,
@@ -56,6 +74,33 @@ function DashboardPaymentsPage() {
   const [bnplTransactions, setBnplTransactions] = useState<BNPLTransaction[]>(
     [],
   );
+  const [livePayments, setLivePayments] = useState<LivePayment[]>([]);
+  const [liveLoading, setLiveLoading] = useState(true);
+
+  // Real transactions from the durable ledger (every attempt, any status) — live
+  // PesaSwap / M-Pesa sales that don't live in the localStorage demo snapshot.
+  useEffect(() => {
+    let active = true;
+    async function loadLive() {
+      try {
+        const res = await authFetch("/api/payments/list?limit=100");
+        if (res.ok && active) {
+          const data = (await res.json()) as { payments: LivePayment[] };
+          setLivePayments(data.payments ?? []);
+        }
+      } catch {
+        /* ledger unavailable — the demo snapshot below still renders */
+      } finally {
+        if (active) setLiveLoading(false);
+      }
+    }
+    void loadLive();
+    const t = setInterval(loadLive, 15000);
+    return () => {
+      active = false;
+      clearInterval(t);
+    };
+  }, []);
 
   useEffect(() => {
     generateDemoData();
@@ -290,6 +335,8 @@ function DashboardPaymentsPage() {
           </Button>
         </div>
       </div>
+
+      <LivePaymentsPanel payments={livePayments} loading={liveLoading} />
 
       <div className="rounded-2xl border border-border bg-card p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -609,6 +656,132 @@ function DashboardPaymentsPage() {
           ) : null}
         </SheetContent>
       </Sheet>
+    </div>
+  );
+}
+
+const liveCurrency = new Intl.NumberFormat("en-KE", {
+  style: "currency",
+  currency: "KES",
+  maximumFractionDigits: 2,
+});
+
+const LIVE_STATUS_STYLE: Record<string, string> = {
+  succeeded: "bg-emerald-100 text-emerald-700",
+  paid: "bg-emerald-100 text-emerald-700",
+  captured: "bg-emerald-100 text-emerald-700",
+  processing: "bg-amber-100 text-amber-700",
+  failed: "bg-rose-100 text-rose-700",
+  cancelled: "bg-rose-100 text-rose-700",
+  refund: "bg-slate-200 text-slate-700",
+};
+
+function LivePaymentsPanel({
+  payments,
+  loading,
+}: {
+  payments: LivePayment[];
+  loading: boolean;
+}) {
+  const succeeded = payments.filter((p) =>
+    ["succeeded", "paid", "captured"].includes(p.status),
+  );
+  const gross = succeeded.reduce((sum, p) => sum + p.amount, 0) / 100;
+
+  return (
+    <div className="rounded-2xl border border-border bg-card p-6">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="flex items-center gap-2 text-lg font-semibold">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+            </span>
+            Live payments
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Real transactions from the PesaSwap ledger (M-Pesa, cards, wallets) —
+            every attempt, updated automatically.
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-2xl font-semibold">{liveCurrency.format(gross)}</p>
+          <p className="text-xs text-muted-foreground">
+            {succeeded.length} succeeded · {payments.length} total
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 overflow-x-auto">
+        {loading ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            Loading live transactions…
+          </p>
+        ) : payments.length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            No live transactions yet. A real payment will appear here the moment
+            it is attempted.
+          </p>
+        ) : (
+          <table className="w-full min-w-[720px] text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                <th className="py-2 pr-4">Time</th>
+                <th className="py-2 pr-4">Amount</th>
+                <th className="py-2 pr-4">Status</th>
+                <th className="py-2 pr-4">Customer</th>
+                <th className="py-2 pr-4">Flow</th>
+                <th className="py-2 pr-4">Ref</th>
+              </tr>
+            </thead>
+            <tbody>
+              {payments.map((p) => (
+                <tr key={p.id} className="border-b border-border/50">
+                  <td className="py-2 pr-4 whitespace-nowrap text-muted-foreground">
+                    {format(new Date(p.createdAt), "d MMM HH:mm")}
+                  </td>
+                  <td className="py-2 pr-4 font-medium">
+                    {liveCurrency.format(p.amount / 100)}
+                    {p.tipAmount > 0 ? (
+                      <span className="ml-1 text-xs text-muted-foreground">
+                        (+{liveCurrency.format(p.tipAmount / 100)} tip)
+                      </span>
+                    ) : null}
+                  </td>
+                  <td className="py-2 pr-4">
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                        LIVE_STATUS_STYLE[p.status] ?? "bg-slate-100 text-slate-700"
+                      }`}
+                    >
+                      {p.status}
+                    </span>
+                    {p.errorMessage ? (
+                      <span className="ml-2 text-xs text-rose-600">
+                        {p.errorMessage}
+                      </span>
+                    ) : null}
+                  </td>
+                  <td className="py-2 pr-4">
+                    {p.customerName || p.customerPhone || "—"}
+                    {p.initiator === "agent" ? (
+                      <span className="ml-1 rounded bg-purple-100 px-1 text-[10px] font-medium text-purple-700">
+                        agent
+                      </span>
+                    ) : null}
+                  </td>
+                  <td className="py-2 pr-4 text-muted-foreground">
+                    {p.flowType || p.kind}
+                  </td>
+                  <td className="py-2 pr-4 font-mono text-xs text-muted-foreground">
+                    {p.providerRef || "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }
