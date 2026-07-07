@@ -64,6 +64,13 @@ Amounts are **minor units** (cents); currency defaults to `KES` in this app.
   `loadHyperLoader`, `buildPaymentMetadata`) + `VITE_PESASWAP_PUBLISHABLE_KEY`.
 - `src/routes/pay.tsx` — hosted checkout (`/pay?i=INV-XXX`, QR `?tapgo=`).
 - `db/13-payments.sql` — durable `payments` ledger (minor units).
+- **Saved methods / one-tap reuse** — `handleWebhook`'s `payment.succeeded` branch
+  persists tokenised card/wallet methods (token id + brand + last4, **never a PAN**)
+  to `customer_payment_methods` (`db/37` + `db/38`, UNIQUE `(phone, COALESCE(
+  provider_ref, kind))`). Read back per phone via
+  `GET /api/customers/payment-methods?phone=`; merchants review all of them at
+  `/dashboard/payment-methods` (`GET /api/payment-methods`, manager+). This is the
+  Customers + Payment Methods API surface, wired to the customer's **phone**.
 
 ## Go-live checklist
 1. Create a **production API key** in the PesaSwap dashboard (keep sandbox for tests).

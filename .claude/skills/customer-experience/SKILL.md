@@ -61,6 +61,10 @@ The journey (and where each step lives today):
 - `src/api/tips.ts` / `src/lib/tips.ts` — tip capture, attribution, pooling, payout.
 - `src/api/portal.ts` + `src/routes/me.$token.tsx` — receipts + loyalty portal.
 - `src/lib/loyalty.ts` + `db/26-loyalty-portal.sql` — points, tiers, rewards.
+- Saved methods (`customer_payment_methods`, `db/37`+`db/38`) — the guest's M-Pesa
+  number (remembered on pay) + tokenised cards/wallets (persisted by the PesaSwap
+  webhook, brand+last4 only) surface inline on `/q` by **phone**, so a returning
+  guest sees "💳 Visa •••4242 saved" without any re-entry.
 - `dining_tables` + QR `kind` — table vs venue/area identity.
 
 ## Conventions

@@ -31,7 +31,12 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
 - `POST /api/refunds` — **public**, rate-limited; over-refund guarded.
 - `POST /api/payments/:id/capture` — **gated**; captures a `capture:false`
   (manual-capture / card pre-auth hold) payment. Simulated in test mode.
-- `POST /api/webhooks/pesaswap` — provider webhook.
+- `POST /api/webhooks/pesaswap` — provider webhook. On `payment.succeeded` it
+  confirms the ledger (`recordLedger`) and **persists tokenised card/wallet saved
+  methods** (SAQ-A: only the token id, brand, last4) to `customer_payment_methods`.
+- `GET /api/payment-methods` — **gated (manager+)** merchant view: all saved
+  customer methods joined to contacts (name/tier) + M-Pesa/card/wallet counts.
+  Renders at `/dashboard/payment-methods`.
 - `GET /api/invoices/payinfo?number=INV-XXX` — **public** resolver the pay page
   uses to render an amount from a short link (see the invoicing skill).
 
@@ -65,11 +70,16 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
   so a guest can never overpay. Shares are computed in `src/lib/split-bill.ts`; the
   balance is exposed by `GET /api/qr/pay/:token`. QR order amounts are **minor
   units** end-to-end (the QR menu resolver converts whole-KES prices ×100).
-- **Saved payment methods are DB-backed** (`customer_payment_methods`, `db/37`):
-  `recordLedger` remembers the M-Pesa number on a successful payment, and
-  `GET /api/customers/payment-methods?phone=` retrieves it from Postgres (was an
-  in-memory Map). `has_saved` stays false for M-Pesa STK (not a one-tap token), so
-  the flow is unchanged; the `methods` list is for display/prefill.
+- **Saved payment methods are DB-backed** (`customer_payment_methods`, `db/37` +
+  `db/38`): `recordLedger` remembers the **M-Pesa** number on a successful payment;
+  the **webhook** persists tokenised **card/wallet** methods (brand + last4 +
+  provider token — never a PAN). `GET /api/customers/payment-methods?phone=`
+  retrieves them from Postgres (was an in-memory Map) and returns `brand`/`last4`
+  for inline display. The UNIQUE index is `(phone, COALESCE(provider_ref, kind))`,
+  so one phone keeps **1 M-Pesa + many distinct cards/wallets**. `has_saved` stays
+  false for M-Pesa STK (not a one-tap token), so the flow is unchanged; the
+  `methods` list is for display/prefill. Merchants review them at
+  `/dashboard/payment-methods` (`GET /api/payment-methods`).
 - **Add a webhook side effect:** update `handleWebhook` in `payments.ts` and
   persist status changes to the `payments` ledger via `recordLedger`.
 
