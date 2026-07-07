@@ -194,6 +194,9 @@ async function recordLedger(
         tip_amount = EXCLUDED.tip_amount,
         staff_id = COALESCE(EXCLUDED.staff_id, payments.staff_id),
         provider_ref = COALESCE(EXCLUDED.provider_ref, payments.provider_ref),
+        amount = CASE
+          WHEN EXCLUDED.status IN ('succeeded', 'paid', 'captured')
+          THEN EXCLUDED.amount ELSE payments.amount END,
         metadata = EXCLUDED.metadata,
         updated_at = now()`;
   } catch {
@@ -872,9 +875,10 @@ async function handleListPayments(
               const mapped = mapPesaSwapStatus(p.status);
               if (mapped === "processing") return;
               const meta = (p.metadata ?? {}) as Record<string, unknown>;
+              const settled = settledAmount(p, mapped) || Number(r.amount) || 0;
               await recordLedger(workerEnv, {
                 id: String(r.id),
-                amount: Number(p.amount) || Number(r.amount) || 0,
+                amount: settled,
                 currency: (p.currency as string) || String(r.currency ?? "KES"),
                 status: mapped === "cancelled" ? "failed" : mapped,
                 venue:
@@ -893,6 +897,7 @@ async function handleListPayments(
               // Reflect the reconciled state in this response without a re-query.
               (r as Record<string, unknown>).status =
                 mapped === "cancelled" ? "failed" : mapped;
+              (r as Record<string, unknown>).amount = settled;
               if (p.connector_transaction_id) {
                 (r as Record<string, unknown>).provider_ref =
                   p.connector_transaction_id;
@@ -961,7 +966,7 @@ async function handleGetPaymentStatus(
           try {
             await recordLedger(workerEnv, {
               id: paymentId,
-              amount: Number(p.amount) || 0,
+              amount: settledAmount(p, status),
               currency: (p.currency as string) || "KES",
               status: status === "cancelled" ? "failed" : status,
               venue:
@@ -1352,9 +1357,12 @@ async function handleWebhook(
         payment.status = "succeeded";
       }
 
-      // Award loyalty points
+      // Award loyalty points. Capture what ACTUALLY settled (amount_received) for a
+      // succeeded payment — M-Pesa rounds decimals to whole shillings — falling back
+      // to the in-memory/requested amount when the webhook payload lacks it.
       const metadata = (payment?.metadata || resource.metadata || {}) as Record<string, unknown>;
-      const amount = payment?.amount || resource.amount || 0;
+      const amount =
+        settledAmount(resource, "succeeded") || payment?.amount || 0;
       const venue =
         (metadata.venue as string) || (metadata.merchant_id as string) || null;
 
@@ -1670,6 +1678,19 @@ function mapPesaSwapStatus(status: unknown): string {
       // requires_customer_action / processing / requires_confirmation / etc.
       return "processing";
   }
+}
+
+// The amount to CAPTURE for a succeeded payment = what actually settled
+// (`amount_received`), NOT the requested `amount`. M-Pesa/Daraja only moves whole
+// shillings, so a decimal request (e.g. KES 1.01 = 101) settles as KES 1.00 (100);
+// recording amount_received keeps the ledger, loyalty and settlement exact. For a
+// non-succeeded payment there is nothing received, so we keep the requested amount
+// (what was attempted) for visibility.
+export function settledAmount(p: Record<string, any>, mappedStatus: string): number {
+  const requested = Number(p.amount) || 0;
+  if (mappedStatus !== "succeeded") return requested;
+  const received = Number(p.amount_received);
+  return received > 0 ? received : requested;
 }
 
 function jsonResponse(data: unknown, status = 200): Response {

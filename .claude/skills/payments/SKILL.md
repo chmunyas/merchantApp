@@ -57,6 +57,11 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
 - `/api/payments/create` and `/api/refunds` are **public** but rate-limited
   centrally in `server.ts` (see the auth-tenancy skill) — never gate them behind
   `requireAuth`.
+- **UNITS (critical):** amounts are **minor units** (cents) end-to-end in the ledger.
+  For a **succeeded** payment capture PesaSwap's **`amount_received`** (what actually
+  settled), NOT the requested `amount` — M-Pesa/Daraja only moves **whole shillings**
+  and **truncates** decimals (KES 1.99 → KES 1.00). See `settledAmount()`
+  (`src/api/payments.ts`); failed/processing rows keep the requested amount.
 - Provider config comes from `PESASWAP_API_KEY` / `PESASWAP_URL` /
   `PESASWAP_WEBHOOK_SECRET` / `PESASWAP_PROFILE_ID` (env), not the DB.
 - **M-Pesa is server-side** (no publishable key): when live + KES + a phone,
