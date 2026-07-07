@@ -47,6 +47,7 @@ import { Route as DashboardRetailRouteImport } from './routes/dashboard/retail'
 import { Route as DashboardReportsRouteImport } from './routes/dashboard/reports'
 import { Route as DashboardReorderRouteImport } from './routes/dashboard/reorder'
 import { Route as DashboardQrRouteImport } from './routes/dashboard/qr'
+import { Route as DashboardPromosRouteImport } from './routes/dashboard/promos'
 import { Route as DashboardPricingRouteImport } from './routes/dashboard/pricing'
 import { Route as DashboardPaymentsRouteImport } from './routes/dashboard/payments'
 import { Route as DashboardOrdersRouteImport } from './routes/dashboard/orders'
@@ -260,6 +261,11 @@ const DashboardQrRoute = DashboardQrRouteImport.update({
   path: '/qr',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardPromosRoute = DashboardPromosRouteImport.update({
+  id: '/promos',
+  path: '/promos',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardPricingRoute = DashboardPricingRouteImport.update({
   id: '/pricing',
   path: '/pricing',
@@ -412,6 +418,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/orders': typeof DashboardOrdersRoute
   '/dashboard/payments': typeof DashboardPaymentsRoute
   '/dashboard/pricing': typeof DashboardPricingRoute
+  '/dashboard/promos': typeof DashboardPromosRoute
   '/dashboard/qr': typeof DashboardQrRoute
   '/dashboard/reorder': typeof DashboardReorderRoute
   '/dashboard/reports': typeof DashboardReportsRoute
@@ -472,6 +479,7 @@ export interface FileRoutesByTo {
   '/dashboard/orders': typeof DashboardOrdersRoute
   '/dashboard/payments': typeof DashboardPaymentsRoute
   '/dashboard/pricing': typeof DashboardPricingRoute
+  '/dashboard/promos': typeof DashboardPromosRoute
   '/dashboard/qr': typeof DashboardQrRoute
   '/dashboard/reorder': typeof DashboardReorderRoute
   '/dashboard/reports': typeof DashboardReportsRoute
@@ -535,6 +543,7 @@ export interface FileRoutesById {
   '/dashboard/orders': typeof DashboardOrdersRoute
   '/dashboard/payments': typeof DashboardPaymentsRoute
   '/dashboard/pricing': typeof DashboardPricingRoute
+  '/dashboard/promos': typeof DashboardPromosRoute
   '/dashboard/qr': typeof DashboardQrRoute
   '/dashboard/reorder': typeof DashboardReorderRoute
   '/dashboard/reports': typeof DashboardReportsRoute
@@ -599,6 +608,7 @@ export interface FileRouteTypes {
     | '/dashboard/orders'
     | '/dashboard/payments'
     | '/dashboard/pricing'
+    | '/dashboard/promos'
     | '/dashboard/qr'
     | '/dashboard/reorder'
     | '/dashboard/reports'
@@ -659,6 +669,7 @@ export interface FileRouteTypes {
     | '/dashboard/orders'
     | '/dashboard/payments'
     | '/dashboard/pricing'
+    | '/dashboard/promos'
     | '/dashboard/qr'
     | '/dashboard/reorder'
     | '/dashboard/reports'
@@ -721,6 +732,7 @@ export interface FileRouteTypes {
     | '/dashboard/orders'
     | '/dashboard/payments'
     | '/dashboard/pricing'
+    | '/dashboard/promos'
     | '/dashboard/qr'
     | '/dashboard/reorder'
     | '/dashboard/reports'
@@ -1036,6 +1048,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardQrRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/promos': {
+      id: '/dashboard/promos'
+      path: '/promos'
+      fullPath: '/dashboard/promos'
+      preLoaderRoute: typeof DashboardPromosRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/pricing': {
       id: '/dashboard/pricing'
       path: '/pricing'
@@ -1228,6 +1247,7 @@ interface DashboardRouteChildren {
   DashboardOrdersRoute: typeof DashboardOrdersRoute
   DashboardPaymentsRoute: typeof DashboardPaymentsRoute
   DashboardPricingRoute: typeof DashboardPricingRoute
+  DashboardPromosRoute: typeof DashboardPromosRoute
   DashboardQrRoute: typeof DashboardQrRoute
   DashboardReorderRoute: typeof DashboardReorderRoute
   DashboardReportsRoute: typeof DashboardReportsRoute
@@ -1264,6 +1284,7 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardOrdersRoute: DashboardOrdersRoute,
   DashboardPaymentsRoute: DashboardPaymentsRoute,
   DashboardPricingRoute: DashboardPricingRoute,
+  DashboardPromosRoute: DashboardPromosRoute,
   DashboardQrRoute: DashboardQrRoute,
   DashboardReorderRoute: DashboardReorderRoute,
   DashboardReportsRoute: DashboardReportsRoute,

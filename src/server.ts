@@ -43,6 +43,7 @@ import { handleMenuRoute } from "./api/menu";
 import { handleForecastRoute } from "./api/forecast";
 import { handlePricingRoute } from "./api/pricing";
 import { handleRfmRoute } from "./api/rfm";
+import { handlePromoRoute } from "./api/promo";
 
 type ServerEntry = {
   fetch: (
@@ -229,6 +230,10 @@ export default {
           // Customer RFM segmentation + churn / LTV + win-back targets
           const rfmResponse = await handleRfmRoute(request, env);
           if (rfmResponse) return rfmResponse;
+
+          // Promo / offer codes (public validate + manager CRUD)
+          const promoResponse = await handlePromoRoute(request, env);
+          if (promoResponse) return promoResponse;
 
           // Reputation: reviews capture (public) + list/stats + AI reply
           const reviewsResponse = await handleReviewsRoute(request, env);

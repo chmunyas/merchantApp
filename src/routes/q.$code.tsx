@@ -72,6 +72,14 @@ function UnifiedQrPage() {
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loyalty, setLoyalty] = useState<LoyaltyStatus | null>(null);
+  const [promoInput, setPromoInput] = useState("");
+  const [promoResult, setPromoResult] = useState<{
+    valid: boolean;
+    discount: number;
+    finalTotal: number;
+    reason?: string;
+  } | null>(null);
+  const [promoBusy, setPromoBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -103,8 +111,16 @@ function UnifiedQrPage() {
     () => cart.reduce((sum, item) => sum + item.price * item.qty, 0),
     [cart],
   );
-  const estPoints = useMemo(() => loyaltyPointsFor(total), [total]);
+  const discount = promoResult?.valid ? promoResult.discount : 0;
+  const payable = Math.max(0, total - discount);
+  const estPoints = useMemo(() => loyaltyPointsFor(payable), [payable]);
   const venueId = payload?.venue.id;
+
+  // Clear a stale promo when the cart changes; the guest re-applies against the new
+  // subtotal (and the order handler re-validates server-side regardless).
+  useEffect(() => {
+    setPromoResult(null);
+  }, [total]);
 
   // Look up a returning guest's loyalty inline (debounced) so points + tier show
   // while they order — the "earn on this order" nudge. Read-only; never blocks.
@@ -163,6 +179,33 @@ function UnifiedQrPage() {
     });
   }
 
+  async function applyCode() {
+    const codeStr = promoInput.trim();
+    if (!codeStr || !venueId || total <= 0) return;
+    setPromoBusy(true);
+    try {
+      const res = await fetch(
+        `/api/promo/validate?venue=${encodeURIComponent(venueId)}&code=${encodeURIComponent(codeStr)}&subtotal=${total}`,
+      );
+      const d = (await res.json()) as {
+        valid: boolean;
+        discount: number;
+        finalTotal: number;
+        reason?: string;
+      };
+      setPromoResult(d);
+    } catch {
+      setPromoResult({
+        valid: false,
+        discount: 0,
+        finalTotal: total,
+        reason: "Couldn't check that code",
+      });
+    } finally {
+      setPromoBusy(false);
+    }
+  }
+
   async function pay() {
     if (!payload || total <= 0) return;
     setPaying(true);
@@ -174,6 +217,7 @@ function UnifiedQrPage() {
         body: JSON.stringify({
           items: cart.map(({ name, price, qty }) => ({ name, price, qty })),
           phone: phone.trim() || undefined,
+          promoCode: promoResult?.valid ? promoInput.trim() : undefined,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -341,6 +385,33 @@ function UnifiedQrPage() {
               rewards.
             </div>
           ) : null}
+          <div className="flex gap-2">
+            <input
+              value={promoInput}
+              onChange={(event) =>
+                setPromoInput(event.target.value.toUpperCase().slice(0, 24))
+              }
+              placeholder="Promo code"
+              className="min-w-0 flex-1 rounded-2xl border bg-slate-50 px-3 py-2 text-sm uppercase outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => void applyCode()}
+              disabled={!promoInput.trim() || promoBusy || total <= 0}
+              className="rounded-2xl border px-4 py-2 text-sm font-semibold disabled:opacity-40"
+            >
+              {promoBusy ? "…" : "Apply"}
+            </button>
+          </div>
+          {promoResult ? (
+            promoResult.valid ? (
+              <p className="text-xs font-semibold text-emerald-600">
+                🎉 −{formatKes(promoResult.discount)} off applied
+              </p>
+            ) : (
+              <p className="text-xs text-red-600">{promoResult.reason}</p>
+            )
+          ) : null}
           <label className="flex items-center gap-2 rounded-2xl border bg-slate-50 px-3 py-2">
             <Phone className="h-4 w-4 text-slate-500" />
             <input
@@ -362,7 +433,17 @@ function UnifiedQrPage() {
             style={{ background: accent }}
           >
             {paying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-            Pay {formatKes(total)}
+            {discount > 0 ? (
+              <span>
+                Pay{" "}
+                <span className="line-through opacity-60">
+                  {formatKes(total)}
+                </span>{" "}
+                {formatKes(payable)}
+              </span>
+            ) : (
+              <span>Pay {formatKes(total)}</span>
+            )}
           </button>
         </div>
       </section>

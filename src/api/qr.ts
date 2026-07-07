@@ -1,6 +1,8 @@
 import { requireAuth } from "@/api/auth";
 import { getSql } from "@/lib/db";
 import { getMenu } from "@/lib/menu";
+import { applyPromo } from "@/lib/promo";
+import { lookupPromo } from "@/api/promo";
 import { venueFromPayload } from "@/lib/tenancy";
 
 const corsHeaders = {
@@ -112,6 +114,7 @@ export async function handleQrRoute(
     const body = (await request.json().catch(() => ({}))) as {
       items?: OrderItemInput[];
       phone?: string;
+      promoCode?: string;
     };
     const items = (body.items ?? [])
       .map((item) => ({
@@ -122,14 +125,31 @@ export async function handleQrRoute(
       .filter((item) => item.name && item.price > 0);
     if (items.length === 0) return json({ error: "items required" }, 400);
 
-    const amount = items.reduce((sum, item) => sum + item.qty * item.price, 0);
+    const subtotal = items.reduce((sum, item) => sum + item.qty * item.price, 0);
     const phone = body.phone ? String(body.phone).trim() : null;
+
+    // Apply a promo code (server-authoritative): re-validate + compute the discount
+    // with the same logic the public preview uses; never trust a client discount.
+    let discount = 0;
+    let appliedCode: string | null = null;
+    let promoId: string | null = null;
+    if (typeof body.promoCode === "string" && body.promoCode.trim()) {
+      const promo = await lookupPromo(sql, code.venue_id, body.promoCode);
+      const result = applyPromo(promo, subtotal);
+      if (result.valid && promo) {
+        discount = result.discount;
+        appliedCode = promo.code;
+        promoId = promo.id;
+      }
+    }
+    const amount = Math.max(0, subtotal - discount);
     const token = payToken();
     const [created] = await sql.begin(async (tx) => {
       const [order] = await tx`
-        INSERT INTO orders (venue_id, table_id, total, pay_token, pay_expires_at, customer_phone)
-        VALUES (${code.venue_id}, ${code.table_id ?? null}, ${amount}, ${token},
-                now() + interval '15 minutes', ${phone})
+        INSERT INTO orders
+          (venue_id, table_id, total, discount, promo_code, pay_token, pay_expires_at, customer_phone)
+        VALUES (${code.venue_id}, ${code.table_id ?? null}, ${amount}, ${discount},
+                ${appliedCode}, ${token}, now() + interval '15 minutes', ${phone})
         RETURNING id`;
       for (const item of items) {
         await tx`
@@ -139,6 +159,9 @@ export async function handleQrRoute(
       await tx`
         INSERT INTO qr_scans (code_id, venue_id, user_agent, amount)
         VALUES (${code.id}, ${code.venue_id}, ${request.headers.get("user-agent")}, ${amount})`;
+      if (promoId) {
+        await tx`UPDATE promo_codes SET used_count = used_count + 1 WHERE id = ${promoId}`;
+      }
       return tx`SELECT id FROM orders WHERE id = ${order.id} LIMIT 1`;
     });
 
@@ -146,14 +169,24 @@ export async function handleQrRoute(
     // page resolves this opaque, single-use, 15-minute token to the authoritative
     // order total via GET /api/qr/pay/:token.
     const payUrl = `${url.origin}/pay?o=${token}`;
-    return json({ orderId: created.id, amount, payUrl }, 201);
+    return json(
+      {
+        orderId: created.id,
+        amount,
+        subtotal,
+        discount,
+        promoCode: appliedCode,
+        payUrl,
+      },
+      201,
+    );
   }
 
   const payMatch = url.pathname.match(/^\/api\/qr\/pay\/([0-9a-f]+)$/i);
   if (payMatch && request.method === "GET") {
     const token = payMatch[1];
     const [order] = await sql`
-      SELECT o.id, o.venue_id, o.total, o.paid_at, o.pay_expires_at, o.customer_phone,
+      SELECT o.id, o.venue_id, o.total, o.discount, o.promo_code, o.paid_at, o.pay_expires_at, o.customer_phone,
              COALESCE((SELECT sum(p.amount - COALESCE(p.tip_amount, 0)) FROM payments p
                        WHERE p.metadata->>'order_id' = o.id::text
                          AND p.status IN ('succeeded','paid','captured')
@@ -197,6 +230,8 @@ export async function handleQrRoute(
       total: totalMinor / 100,
       paid: paidMinor / 100,
       remaining: remainingMinor / 100,
+      discount: (Number(order.discount) || 0) / 100,
+      promoCode: (order.promo_code as string) ?? null,
       items: orderItems.map((i) => ({
         name: String(i.name),
         qty: Number(i.qty),

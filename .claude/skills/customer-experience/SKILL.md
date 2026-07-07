@@ -104,8 +104,11 @@ The journey (and where each step lives today):
    (`GET /api/loyalty/status`) and shows what this order will earn (shared
    `loyaltyPointsFor`); enrolment completes automatically on payment
    (`recordLedger`). `src/routes/q.$code.tsx`, `src/api/portal.ts`.
-5. **Customer offers / promo codes (MISSING):** redeemable discount codes and
-   offer-based points multipliers in the order/pay flow.
+5. **Customer offers / promo codes (DONE):** guests apply a discount code when they
+   order (percentage or fixed, with min-order / usage-cap / expiry); the server
+   re-validates + applies it to `orders.total` and increments usage. Merchants manage
+   codes at `/dashboard/promos`. `src/lib/promo.ts`, `src/api/promo.ts`,
+   `GET /api/promo/validate`, `db/36`.
 6. **Unify the journey (PARTIAL):** embed pay + receipt into the scan flow so it's
    one page, not a chain of links/tokens.
 
