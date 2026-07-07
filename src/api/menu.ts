@@ -7,6 +7,12 @@ import {
   recommendUpsells,
   type MenuItemLite,
 } from "@/lib/menu-ai";
+import {
+  buildAdvicePrompt,
+  classifyMenu,
+  type MenuStat,
+} from "@/lib/menu-engineering";
+import { roleAtLeast } from "@/lib/rbac";
 import { requireAuth, resolveVenue } from "@/api/auth";
 import { venueFromPayload } from "@/lib/tenancy";
 
@@ -41,6 +47,14 @@ function uuidOrNull(value: unknown): string | null {
   )
     ? id
     : null;
+}
+
+function isoDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function parseDate(value: string | null | undefined, fallback: string): string {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
 }
 
 export async function handleMenuRoute(
@@ -100,6 +114,71 @@ export async function handleMenuRoute(
       description: parsed[i].description || it.description,
     }));
     return json({ lang, translated: true, items: merged });
+  }
+
+  // Menu engineering (Kasavana-Smith): star / plowhorse / puzzle / dog + a
+  // pricing recommendation per item. Gated (owner/manager — it exposes costs +
+  // margins). Powers the revenue-optimisation agent.
+  if (path === "/api/menu/engineering" && request.method === "GET") {
+    const payload = await requireAuth(request, env);
+    if (!payload) return json({ error: "unauthorized" }, 401);
+    if (!roleAtLeast(payload, "manager")) {
+      return json({ error: "forbidden" }, 403);
+    }
+    const venue = venueFromPayload(payload, url);
+    const to = parseDate(url.searchParams.get("to"), isoDate(new Date()));
+    const from = parseDate(
+      url.searchParams.get("from"),
+      isoDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
+    );
+    // price is whole KES; inventory cost is minor units (÷100). Units sold come
+    // from order_items matched by name (as COGS/lost-basket already match).
+    const rows = await sql`
+      SELECT m.name, m.category, m.price::float8 AS price,
+             COALESCE(inv.cost, 0)::float8 AS cost_minor,
+             (inv.cost IS NOT NULL) AS has_cost,
+             COALESCE(s.units, 0)::int AS units_sold
+      FROM menu_items m
+      LEFT JOIN LATERAL (
+        SELECT i.cost FROM inventory_items i
+        WHERE i.venue_id = m.venue_id
+          AND (i.menu_item_id = m.id OR lower(i.name) = lower(m.name))
+        ORDER BY (i.menu_item_id = m.id) DESC NULLS LAST
+        LIMIT 1
+      ) inv ON true
+      LEFT JOIN LATERAL (
+        SELECT SUM(oi.qty)::int AS units
+        FROM order_items oi
+        JOIN orders o ON o.id = oi.order_id
+        WHERE o.venue_id = m.venue_id
+          AND lower(oi.name) = lower(m.name)
+          AND o.status NOT IN ('cancelled', 'void')
+          AND o.created_at::date BETWEEN ${from} AND ${to}
+      ) s ON true
+      WHERE m.venue_id = ${venue} AND m.available = true
+      ORDER BY m.name`;
+    const stats: MenuStat[] = rows.map((r) => ({
+      name: String(r.name),
+      category: String(r.category),
+      price: Number(r.price),
+      cost: Math.round(Number(r.cost_minor)) / 100,
+      hasCost: Boolean(r.has_cost),
+      unitsSold: Number(r.units_sold),
+    }));
+    const engineering = classifyMenu(stats, "KES");
+    // Best-effort AI narrative from the revenue-optimisation advisor; degrade to
+    // the deterministic headline when no AI provider is configured.
+    const advice =
+      stats.length > 0
+        ? await aiChat(buildAdvicePrompt(engineering), env)
+        : null;
+    return json({
+      from,
+      to,
+      ...engineering,
+      advice: advice ?? engineering.headline,
+      aiAdvice: Boolean(advice),
+    });
   }
 
   if (path === "/api/menu/item" && request.method === "POST") {

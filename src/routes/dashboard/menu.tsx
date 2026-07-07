@@ -43,7 +43,7 @@ export const Route = createFileRoute("/dashboard/menu")({
   component: DashboardMenuPage,
 });
 
-type TabKey = "items" | "menus" | "zones" | "schedules";
+type TabKey = "items" | "menus" | "zones" | "schedules" | "engineering";
 
 type ApiMenuItem = {
   id: string;
@@ -54,11 +54,55 @@ type ApiMenuItem = {
   available?: boolean;
 };
 
+type EngItem = {
+  name: string;
+  category: string;
+  price: number;
+  cost: number;
+  hasCost: boolean;
+  unitsSold: number;
+  margin: number;
+  marginPct: number;
+  menuMixPct: number;
+  quadrant: "star" | "plowhorse" | "puzzle" | "dog";
+  recommendation: string;
+};
+
+type MenuEngineeringResp = {
+  currency: string;
+  totalUnits: number;
+  totalRevenue: number;
+  totalContribution: number;
+  avgMarginPerUnit: number;
+  counts: Record<"star" | "plowhorse" | "puzzle" | "dog", number>;
+  headline: string;
+  advice: string;
+  aiAdvice: boolean;
+  from: string;
+  to: string;
+  items: EngItem[];
+};
+
+const QUAD_LABEL = {
+  star: "Star",
+  plowhorse: "Plowhorse",
+  puzzle: "Puzzle",
+  dog: "Dog",
+} as const;
+
+const QUAD_STYLE = {
+  star: "bg-emerald-100 text-emerald-700",
+  plowhorse: "bg-amber-100 text-amber-700",
+  puzzle: "bg-sky-100 text-sky-700",
+  dog: "bg-rose-100 text-rose-700",
+} as const;
+
 const TAB_OPTIONS: Array<{ key: TabKey; label: string }> = [
   { key: "items", label: "Items" },
   { key: "menus", label: "Menus" },
   { key: "zones", label: "Zones" },
   { key: "schedules", label: "Schedules" },
+  { key: "engineering", label: "Engineering" },
 ];
 
 const DIETARY_OPTIONS = [
@@ -267,6 +311,33 @@ function DashboardMenuPage() {
   const [linkedProductSearch, setLinkedProductSearch] = useState("");
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [previewTableNumber, setPreviewTableNumber] = useState(12);
+  const [engineering, setEngineering] = useState<MenuEngineeringResp | null>(
+    null,
+  );
+  const [engLoading, setEngLoading] = useState(false);
+
+  async function loadEngineering() {
+    setEngLoading(true);
+    try {
+      const res = await authFetch("/api/menu/engineering");
+      if (res.ok) {
+        setEngineering((await res.json()) as MenuEngineeringResp);
+      } else {
+        toast.error("Couldn't load menu engineering");
+      }
+    } catch {
+      toast.error("Couldn't load menu engineering");
+    } finally {
+      setEngLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (activeTab === "engineering" && !engineering && !engLoading) {
+      void loadEngineering();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1903,6 +1974,115 @@ function DashboardMenuPage() {
               </Card>
             ))}
           </div>
+        </div>
+      ) : null}
+
+      {activeTab === "engineering" ? (
+        <div className="space-y-6">
+          <Card className="border-slate-200 bg-white/90 shadow-sm">
+            <CardHeader>
+              <CardTitle>Menu engineering</CardTitle>
+              <CardDescription>
+                Every item plotted by popularity × profit (Kasavana-Smith), from
+                the last 30 days of sales. Costs come from linked inventory.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {engLoading ? (
+                <p className="text-sm text-slate-500">Analysing your menu…</p>
+              ) : !engineering ? (
+                <Button type="button" onClick={() => void loadEngineering()}>
+                  Analyse menu
+                </Button>
+              ) : (
+                <>
+                  <div className="grid gap-3 sm:grid-cols-4">
+                    {(["star", "plowhorse", "puzzle", "dog"] as const).map(
+                      (q) => (
+                        <div
+                          key={q}
+                          className="rounded-2xl border border-slate-200 p-3 text-center"
+                        >
+                          <p className="text-2xl font-semibold text-slate-900">
+                            {engineering.counts[q] ?? 0}
+                          </p>
+                          <p className="text-xs uppercase tracking-wide text-slate-500">
+                            {QUAD_LABEL[q]}s
+                          </p>
+                        </div>
+                      ),
+                    )}
+                  </div>
+                  <div className="rounded-2xl bg-slate-50 p-4">
+                    <p className="text-sm font-medium text-slate-800">
+                      {engineering.headline}
+                    </p>
+                    <p className="mt-2 whitespace-pre-line text-sm text-slate-600">
+                      {engineering.advice}
+                    </p>
+                    {engineering.aiAdvice ? (
+                      <Badge
+                        variant="outline"
+                        className="mt-2 border-purple-200 text-purple-600"
+                      >
+                        <Bot className="mr-1 h-3 w-3" /> AI advice
+                      </Badge>
+                    ) : null}
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-xs uppercase text-slate-500">
+                          <th className="py-2 pr-2">Item</th>
+                          <th className="pr-2">Class</th>
+                          <th className="pr-2 text-right">Price</th>
+                          <th className="pr-2 text-right">Margin</th>
+                          <th className="pr-2 text-right">Sold</th>
+                          <th>Recommendation</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {engineering.items.map((it) => (
+                          <tr
+                            key={it.name}
+                            className="border-t border-slate-100 align-top"
+                          >
+                            <td className="py-2 pr-2 font-medium text-slate-800">
+                              {it.name}
+                              {!it.hasCost ? (
+                                <span className="ml-1 text-xs text-amber-600">
+                                  (no cost)
+                                </span>
+                              ) : null}
+                            </td>
+                            <td className="pr-2">
+                              <Badge className={QUAD_STYLE[it.quadrant]}>
+                                {QUAD_LABEL[it.quadrant]}
+                              </Badge>
+                            </td>
+                            <td className="pr-2 text-right tabular-nums">
+                              {engineering.currency}{" "}
+                              {it.price.toLocaleString()}
+                            </td>
+                            <td className="pr-2 text-right tabular-nums">
+                              {engineering.currency}{" "}
+                              {it.margin.toLocaleString()}
+                            </td>
+                            <td className="pr-2 text-right tabular-nums">
+                              {it.unitsSold}
+                            </td>
+                            <td className="max-w-xs text-slate-600">
+                              {it.recommendation}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
         </div>
       ) : null}
 
