@@ -16,7 +16,12 @@ pooling + payout system (Sunday's moat).
 - A payment carries `tip_amount`, `tip_recipient`, `server_name` metadata
   (`src/lib/pesaswap-payments.ts`) → persisted on `payments`
   (`src/api/payments.ts`); `tipSuggestions` in settings.
-- **Missing:** attribution to a `staff_id`, pooling, payout ledger, reporting.
+- **In-flow customer tipping is live:** `/pay` offers tip suggestions
+  (None / 5 / 10 / 15% / custom) on top of the bill and a serving-staff picker
+  (venue's tippable staff from `GET /api/qr/pay/:token`), passing `tip_amount`
+  (minor units) + `staff_id`. The tip is **excluded from the order balance**
+  (`src/lib/tip.ts`, `src/routes/pay.tsx`).
+- **Missing:** pooling, payout ledger, per-server reporting/dashboards.
 
 ## Target model (add, following the `staff` per-row pattern)
 - `payments.staff_id` (+ existing `tip_amount`) — attribute each tip.
@@ -27,7 +32,11 @@ pooling + payout system (Sunday's moat).
 - **Agent (staff scope):** `my_tips_today`; **manager:** run pooling + payout.
 
 ## Guardrails
-- Attribute only to an **authenticated** `staff_id`; never from a request body.
+- Attribute a **staff-initiated** tip only to an **authenticated** `staff_id`; never
+  from a request body. (Exception: a **customer** tip on `/pay` legitimately targets
+  a `staff_id` the guest picked from the venue's public tippable-staff list — that is
+  attribution the guest is entitled to make, and it moves no extra money: the tip is
+  clamped on top of the bill and excluded from the order balance.)
 - Amounts minor units, KES default. Venue-pinned. Payout writes are an
   append-only ledger; best-effort must never block a payment.
 - See `staff-operations`, `payments`, `manager` + SECURITY.md.

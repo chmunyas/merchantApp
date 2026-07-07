@@ -37,10 +37,12 @@ The journey (and where each step lives today):
    pay token closes) only when cumulative payments cover the total. Shares:
    `src/lib/split-bill.ts`; balance in `GET /api/qr/pay/:token`; clamp + settlement
    in `src/api/payments.ts` (`handleCreatePayment` + `recordLedger`).
-5. **Tip** — payments persist `tip_amount` + `staff_id` and attribute the tip to the
-   serving staff (`src/api/payments.ts` recordLedger; tips: `src/api/tips.ts`,
-   `src/lib/tips.ts`). Tipping is wired on the merchant/ledger side; an in-flow
-   "tip your server" step is not yet surfaced in the customer pay/QR pages.
+5. **Tip** — in-flow "tip your server" on `/pay`: suggestions (None / 5 / 10 / 15% /
+   custom) **on top of** the share, attributed to a server the guest picks from the
+   venue's tippable staff (returned by `GET /api/qr/pay/:token`). The tip is passed
+   as `tip_amount` (minor units) + `staff_id`, persisted by `recordLedger` and
+   **excluded from the order balance** (a gratuity never settles the bill). Tips
+   feed attribution/pooling/payout (`src/api/tips.ts`, `src/lib/tips.ts`).
 6. **Loyalty** — points accrue automatically on a succeeded payment, keyed on
    `metadata.customer_phone` (`src/api/payments.ts:250-268`). Rewards live in
    `loyalty_rewards` (`db/26-loyalty-portal.sql`); redemption is via the portal.
@@ -88,8 +90,10 @@ The journey (and where each step lives today):
    server clamps every charge to the remaining balance and settles only when the
    total is covered (`src/lib/split-bill.ts`, `src/api/payments.ts`,
    `GET /api/qr/pay/:token`, `src/routes/pay.tsx`).
-2. **In-flow "tip your server" (PARTIAL):** surface tip suggestions + the serving
-   staff on `/pay` and the QR flow, passing `tip_amount` + `staff_id`.
+2. **In-flow "tip your server" (DONE):** `/pay` shows tip suggestions (None /
+   5 / 10 / 15% / custom) on top of the share and a serving-staff picker; the tip
+   rides on top of the bill (excluded from the order balance) with `tip_amount` +
+   `staff_id` (`src/lib/tip.ts`, `src/routes/pay.tsx`, `GET /api/qr/pay/:token`).
 3. **Seamless receipt + loyalty handoff (PARTIAL):** on payment success, auto-issue
    the portal token and show the receipt + points earned + rewards in one screen —
    no separately requested token.

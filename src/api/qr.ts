@@ -154,7 +154,7 @@ export async function handleQrRoute(
     const token = payMatch[1];
     const [order] = await sql`
       SELECT o.id, o.venue_id, o.total, o.paid_at, o.pay_expires_at, o.customer_phone,
-             COALESCE((SELECT sum(p.amount) FROM payments p
+             COALESCE((SELECT sum(p.amount - COALESCE(p.tip_amount, 0)) FROM payments p
                        WHERE p.metadata->>'order_id' = o.id::text
                          AND p.status IN ('succeeded','paid','captured')
                          AND p.kind <> 'refund'), 0)::bigint AS paid,
@@ -183,6 +183,11 @@ export async function handleQrRoute(
     }
     const orderItems = await sql`
       SELECT name, qty, price FROM order_items WHERE order_id = ${order.id} ORDER BY id`;
+    // Tippable staff for the venue, so the guest can attribute a gratuity to their server.
+    const staff = await sql`
+      SELECT id, name, role FROM staff
+      WHERE venue_id = ${order.venue_id} AND active = true
+      ORDER BY name`;
     return json({
       till: String(order.id),
       orderId: String(order.id),
@@ -196,6 +201,11 @@ export async function handleQrRoute(
         name: String(i.name),
         qty: Number(i.qty),
         price: Number(i.price) / 100,
+      })),
+      staff: staff.map((s) => ({
+        id: String(s.id),
+        name: String(s.name),
+        role: String(s.role),
       })),
       merchant: order.merchant,
       logoUrl: order.logo_url ?? null,

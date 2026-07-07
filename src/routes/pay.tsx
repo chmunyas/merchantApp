@@ -18,6 +18,7 @@ import {
   loadHyperLoader,
   type PaymentStatus,
 } from "../lib/pesaswap-payments";
+import { tipSuggestions } from "@/lib/tip";
 import { QRCodeSVG } from "qrcode.react";
 
 export const Route = createFileRoute("/pay")({
@@ -53,6 +54,7 @@ type PaymentData = {
   paid?: number | null;
   remaining?: number | null;
   items?: OrderLineItem[];
+  staff?: Array<{ id: string; name: string; role: string }>;
 };
 
 function PayPage() {
@@ -66,6 +68,8 @@ function PayPage() {
   const [linkLoading, setLinkLoading] = useState(false);
   const [linkError, setLinkError] = useState(false);
   const [payAmount, setPayAmount] = useState<number | null>(null);
+  const [payTip, setPayTip] = useState(0);
+  const [payStaffId, setPayStaffId] = useState<string | null>(null);
   const startTimeRef = useRef<number>(0);
   const pendingInvoiceRef = useRef<string | null>(null);
 
@@ -144,9 +148,16 @@ function PayPage() {
     }
   }
 
-  function confirmPayment(phone: string, amount?: number) {
+  function confirmPayment(
+    phone: string,
+    opts?: { amount?: number; tip?: number; staffId?: string | null },
+  ) {
     setCustomerPhone(phone);
-    if (typeof amount === "number" && amount > 0) setPayAmount(amount);
+    if (typeof opts?.amount === "number" && opts.amount > 0) {
+      setPayAmount(opts.amount);
+    }
+    setPayTip(opts?.tip ?? 0);
+    setPayStaffId(opts?.staffId ?? null);
     setState("pin");
   }
 
@@ -175,6 +186,7 @@ function PayPage() {
         paid: data.paid ?? null,
         remaining: data.remaining ?? null,
         items: data.items ?? [],
+        staff: data.staff ?? [],
       });
       if (data.phone) setCustomerPhone(data.phone);
       setState("scanned");
@@ -207,9 +219,15 @@ function PayPage() {
       flow: "tapgo",
       customer: { phone },
     });
-    // Attribute the payment + tip to the staff who created the invoice (tips).
-    if (paymentData.staffId) {
-      (metadata as Record<string, unknown>).staff_id = paymentData.staffId;
+    // Attribute the payment + tip to the serving staff: the invoice creator, or the
+    // server the guest picked in the tip flow.
+    const attributedStaff = payStaffId ?? paymentData.staffId ?? null;
+    if (attributedStaff) {
+      (metadata as Record<string, unknown>).staff_id = attributedStaff;
+    }
+    // A gratuity rides on top of the bill; tip_amount is stored in minor units.
+    if (payTip > 0) {
+      (metadata as Record<string, unknown>).tip_amount = Math.round(payTip * 100);
     }
     if (paymentData.venue) {
       (metadata as Record<string, unknown>).venue = paymentData.venue;
@@ -227,7 +245,7 @@ function PayPage() {
     (metadata as Record<string, unknown>).till = paymentData.till;
 
     const result = await executePayment({
-      amount: payAmount ?? paymentData.amount,
+      amount: (payAmount ?? paymentData.amount) + payTip,
       currency: "KES",
       metadata,
       phone,
@@ -252,6 +270,8 @@ function PayPage() {
     setUseBiometric(false);
     setCustomerPhone("");
     setPayAmount(null);
+    setPayTip(0);
+    setPayStaffId(null);
     setPaymentId(null);
     setErrorMsg("");
     if (typeof window !== "undefined") {
@@ -529,7 +549,10 @@ function ScannedState({
   onCancel,
 }: {
   data: PaymentData;
-  onConfirm: (phone: string, amount?: number) => void;
+  onConfirm: (
+    phone: string,
+    opts?: { amount?: number; tip?: number; staffId?: string | null },
+  ) => void;
   onCancel: () => void;
 }) {
   const [phone, setPhone] = useState(() => localMpesaDigits(data.phone));
@@ -544,6 +567,10 @@ function ScannedState({
   const [people, setPeople] = useState(2);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [custom, setCustom] = useState("");
+  const staff = data.staff ?? [];
+  const [tipPct, setTipPct] = useState(0); // 0 = none, -1 = custom, else percent
+  const [customTip, setCustomTip] = useState("");
+  const [tipStaff, setTipStaff] = useState("");
 
   const clamp = (n: number) =>
     Math.max(0, Math.min(remaining, Math.round(n || 0)));
@@ -557,6 +584,13 @@ function ScannedState({
       ),
     );
   else if (mode === "custom") share = clamp(Number(custom) || 0);
+
+  const tip =
+    tipPct === -1
+      ? Math.max(0, Math.round(Number(customTip) || 0))
+      : Math.round((share * tipPct) / 100);
+  const total = share + tip;
+  const tipOpts = tipSuggestions(share);
 
   const toggleItem = (i: number) =>
     setSelected((cur) => {
@@ -710,6 +744,93 @@ function ScannedState({
         </div>
       ) : null}
 
+      {canSplit ? (
+        <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
+          <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+            Add a tip
+          </p>
+          <div className="grid grid-cols-5 gap-2">
+            <button
+              type="button"
+              onClick={() => setTipPct(0)}
+              className={`rounded-xl px-1 py-2 text-[11px] font-semibold ${
+                tipPct === 0
+                  ? "bg-emerald-600 text-white"
+                  : "bg-muted text-muted-foreground"
+              }`}
+            >
+              None
+            </button>
+            {tipOpts.map((o) => (
+              <button
+                key={o.pct}
+                type="button"
+                onClick={() => setTipPct(o.pct)}
+                className={`rounded-xl px-1 py-2 text-[11px] font-semibold ${
+                  tipPct === o.pct
+                    ? "bg-emerald-600 text-white"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                {o.pct}%
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setTipPct(-1)}
+              className={`rounded-xl px-1 py-2 text-[11px] font-semibold ${
+                tipPct === -1
+                  ? "bg-emerald-600 text-white"
+                  : "bg-muted text-muted-foreground"
+              }`}
+            >
+              Custom
+            </button>
+          </div>
+          {tipPct === -1 ? (
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-mono font-bold">KES</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                value={customTip}
+                onChange={(e) => setCustomTip(e.target.value)}
+                placeholder="Tip amount"
+                aria-label="Tip amount"
+                className="flex-1 rounded-xl border border-border bg-background px-4 py-3 text-base font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+          ) : null}
+          {staff.length ? (
+            <div className="space-y-1">
+              <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+                For your server
+              </p>
+              <select
+                value={tipStaff}
+                onChange={(e) => setTipStaff(e.target.value)}
+                aria-label="Tip recipient"
+                className="w-full rounded-xl border border-border bg-background px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="">The whole team</option>
+                {staff.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                    {s.role ? ` · ${s.role}` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+          {tip > 0 ? (
+            <p className="text-xs text-muted-foreground">
+              Tip KES {tip.toLocaleString()} · You pay KES{" "}
+              {total.toLocaleString()}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Phone number input */}
       <div className="rounded-2xl border border-border bg-card p-4 space-y-2">
         <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
@@ -742,12 +863,20 @@ function ScannedState({
       </div>
 
       <button
-        disabled={phone.length < 9 || share <= 0}
-        onClick={() => onConfirm(`0${phone}`, canSplit ? share : undefined)}
+        disabled={phone.length < 9 || total <= 0}
+        onClick={() =>
+          onConfirm(`0${phone}`, {
+            amount: canSplit ? share : undefined,
+            tip,
+            staffId: tipStaff || null,
+          })
+        }
         className="w-full bg-emerald-600 text-white py-4 rounded-2xl text-base font-bold flex items-center justify-center gap-2 disabled:opacity-40"
       >
         <Zap className="size-5" />
-        {mode === "full" ? "Confirm & Pay" : `Pay KES ${share.toLocaleString()}`}
+        {mode === "full" && tip === 0
+          ? "Confirm & Pay"
+          : `Pay KES ${total.toLocaleString()}`}
       </button>
 
       <button

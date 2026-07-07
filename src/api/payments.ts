@@ -279,7 +279,7 @@ async function recordLedger(
       // partial (split) payment never prematurely closes a shared bill.
       const [row] = await sql`
         SELECT o.total::bigint AS total,
-               COALESCE((SELECT sum(p.amount) FROM payments p
+               COALESCE((SELECT sum(p.amount - COALESCE(p.tip_amount, 0)) FROM payments p
                          WHERE p.metadata->>'order_id' = ${paidOrderId}
                            AND p.status IN ('succeeded', 'paid', 'captured')
                            AND p.kind <> 'refund'), 0)::bigint AS paid
@@ -402,7 +402,7 @@ async function handleCreatePayment(
       try {
         const [row] = await guardSql`
           SELECT o.total::bigint AS total,
-                 COALESCE((SELECT sum(p.amount) FROM payments p
+                 COALESCE((SELECT sum(p.amount - COALESCE(p.tip_amount, 0)) FROM payments p
                            WHERE p.metadata->>'order_id' = ${guardOrderId}
                              AND p.status IN ('succeeded', 'paid', 'captured')
                              AND p.kind <> 'refund'), 0)::bigint AS paid
@@ -412,13 +412,21 @@ async function handleCreatePayment(
             0,
             Number(row.total) - Number(row.paid),
           );
-          if (remainingMinor <= 0) {
+          // A tip rides ON TOP of the bill: clamp only the ORDER portion to the
+          // remaining balance, then re-add the tip. A guest can never overpay the
+          // bill, but can still leave a tip (even on an already-settled bill).
+          const tipMinor = Math.max(
+            0,
+            Math.round(Number(guardMeta.tip_amount) || 0),
+          );
+          const orderPortion = Math.max(0, body.amount - tipMinor);
+          body.amount = Math.min(orderPortion, remainingMinor) + tipMinor;
+          if (body.amount <= 0) {
             return jsonResponse(
               { error: { message: "This bill is already paid." } },
               409,
             );
           }
-          if (body.amount > remainingMinor) body.amount = remainingMinor;
         }
       } catch {
         /* best-effort — fall through to a normal charge */
