@@ -131,7 +131,26 @@ export async function handlePortalRoute(
       INSERT INTO portal_tokens (token, venue_id, phone)
       VALUES (${token}, ${venue}, ${phone})
     `;
-    return json({ token, url: `/me/${token}` }, 201);
+    // Return the current loyalty snapshot so the pay-success receipt can show points
+    // + tier immediately, without a second round-trip to the portal.
+    const [contact] = await sql`
+      SELECT name, points, tier FROM contacts
+      WHERE venue_id = ${venue} AND phone = ${phone}
+      ORDER BY created_at DESC
+      LIMIT 1`;
+    const points = Number(contact?.points ?? 0);
+    return json(
+      {
+        token,
+        url: `/me/${token}`,
+        contact: {
+          name: (contact?.name as string) ?? "Guest",
+          points,
+          tier: (contact?.tier as string) ?? "Bronze",
+        },
+      },
+      201,
+    );
   }
 
   const portalMatch = url.pathname.match(/^\/api\/portal\/([^/]+)(?:\/(redeem))?$/);

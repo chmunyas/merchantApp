@@ -14,6 +14,7 @@ import {
   postRefundEntry,
 } from "@/lib/accounting";
 import { recordPayment as recordInvoicePayment } from "@/lib/invoicing";
+import { loyaltyPointsFor } from "@/lib/loyalty";
 import { resolveInitiator } from "@/lib/tx-initiator";
 
 type Env = {
@@ -250,7 +251,7 @@ async function recordLedger(
   // Accrue loyalty points to the contact identified by phone (upsert on the
   // unique venue+phone key). Best-effort — never block the payment.
   if (firstSuccess && loyaltyPhone) {
-    const points = Math.floor(Number(rec.amount) / 1000);
+    const points = loyaltyPointsFor(Number(rec.amount));
     if (points > 0) {
       try {
         await sql`

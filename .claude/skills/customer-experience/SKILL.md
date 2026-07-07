@@ -94,9 +94,11 @@ The journey (and where each step lives today):
    5 / 10 / 15% / custom) on top of the share and a serving-staff picker; the tip
    rides on top of the bill (excluded from the order balance) with `tip_amount` +
    `staff_id` (`src/lib/tip.ts`, `src/routes/pay.tsx`, `GET /api/qr/pay/:token`).
-3. **Seamless receipt + loyalty handoff (PARTIAL):** on payment success, auto-issue
-   the portal token and show the receipt + points earned + rewards in one screen —
-   no separately requested token.
+3. **Seamless receipt + loyalty handoff (DONE):** on payment success `/pay` shows a
+   receipt (bill / tip / amount paid), **points earned this visit + balance + tier**,
+   and an auto-issued portal token (QR + link) in one screen — `POST /api/portal/token`
+   now returns the loyalty snapshot; points use the shared `loyaltyPointsFor`
+   (`src/lib/loyalty.ts`, `src/routes/pay.tsx`).
 4. **Auto-enroll loyalty in the QR flow (PARTIAL):** capture phone once, enrol, and
    show the points balance inline.
 5. **Customer offers / promo codes (MISSING):** redeemable discount codes and

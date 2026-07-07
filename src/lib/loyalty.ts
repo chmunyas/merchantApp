@@ -3,6 +3,13 @@
 // thresholds and "points to next tier" maths.
 export type LoyaltyTier = "Bronze" | "Silver" | "Gold" | "Platinum";
 
+// Points accrued for a payment: ≈1 point per KES 10 spent (floor of the amount in
+// minor units / 1000). Shared by recordLedger (accrual) + the receipt (display) so
+// they never disagree on how many points a payment earned.
+export function loyaltyPointsFor(amountMinor: number): number {
+  return Math.floor(Math.max(0, Number(amountMinor) || 0) / 1000);
+}
+
 export const TIER_LADDER: Array<{ tier: LoyaltyTier; threshold: number }> = [
   { tier: "Bronze", threshold: 0 },
   { tier: "Silver", threshold: 500 },

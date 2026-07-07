@@ -19,6 +19,7 @@ import {
   type PaymentStatus,
 } from "../lib/pesaswap-payments";
 import { tipSuggestions } from "@/lib/tip";
+import { loyaltyPointsFor } from "@/lib/loyalty";
 import { QRCodeSVG } from "qrcode.react";
 
 export const Route = createFileRoute("/pay")({
@@ -346,6 +347,8 @@ function PayPage() {
             data={paymentData}
             phone={customerPhone}
             paymentId={paymentId}
+            amountPaid={(payAmount ?? paymentData.amount) + payTip}
+            tip={payTip}
             elapsedMs={Date.now() - startTimeRef.current}
             onDone={reset}
           />
@@ -1027,17 +1030,26 @@ function SuccessState({
   data,
   phone,
   paymentId,
+  amountPaid,
+  tip,
   elapsedMs,
   onDone,
 }: {
   data: PaymentData;
   phone: string;
   paymentId: string | null;
+  amountPaid: number;
+  tip: number;
   elapsedMs: number;
   onDone: () => void;
 }) {
   const elapsedSec = Math.round(elapsedMs / 1000);
   const [portalUrl, setPortalUrl] = useState<string | null>(null);
+  const [loyalty, setLoyalty] = useState<{
+    points: number;
+    tier: string;
+  } | null>(null);
+  const pointsEarned = loyaltyPointsFor(amountPaid * 100);
 
   useEffect(() => {
     const venue = data.venue;
@@ -1051,9 +1063,15 @@ function SuccessState({
           body: JSON.stringify({ venue, phone }),
         });
         if (!res.ok) return;
-        const d = (await res.json()) as { url?: string };
+        const d = (await res.json()) as {
+          url?: string;
+          contact?: { points: number; tier: string; name: string };
+        };
         if (active && d.url) {
           setPortalUrl(`${window.location.origin}${d.url}`);
+          if (d.contact) {
+            setLoyalty({ points: d.contact.points, tier: d.contact.tier });
+          }
         }
       } catch {
         /* the rewards portal is a bonus — never block the receipt */
@@ -1072,21 +1090,32 @@ function SuccessState({
         </div>
         <div className="text-center">
           <p className="text-lg font-bold text-emerald-700">Payment successful!</p>
-          <p className="text-3xl font-bold font-mono mt-2">KES {data.amount.toLocaleString()}</p>
+          <p className="text-3xl font-bold font-mono mt-2">KES {amountPaid.toLocaleString()}</p>
           <p className="text-sm text-muted-foreground mt-1">{data.merchant}</p>
         </div>
       </div>
 
       <div className="rounded-2xl bg-muted p-4 space-y-2">
-        {[
-          ["Merchant", data.merchant],
-          ["Till", data.till],
-          ["Amount", `KES ${data.amount.toLocaleString()}`],
-          ["Phone", phone ? `${phone.slice(0, 4)}***${phone.slice(-3)}` : "—"],
-          ["Method", "M-Pesa via PesaSwap"],
-          ["Time", new Date().toLocaleTimeString()],
-          ["Reference", paymentId || `TG${Date.now().toString(36).toUpperCase()}`],
-        ].map(([k, v]) => (
+        {(
+          [
+            ["Merchant", data.merchant],
+            ["Till", data.till],
+            ...(tip > 0
+              ? ([
+                  ["Bill", `KES ${(amountPaid - tip).toLocaleString()}`],
+                  ["Tip", `KES ${tip.toLocaleString()}`],
+                ] as Array<[string, string]>)
+              : []),
+            ["Amount paid", `KES ${amountPaid.toLocaleString()}`],
+            ["Phone", phone ? `${phone.slice(0, 4)}***${phone.slice(-3)}` : "—"],
+            ["Method", "M-Pesa via PesaSwap"],
+            ["Time", new Date().toLocaleTimeString()],
+            [
+              "Reference",
+              paymentId || `TG${Date.now().toString(36).toUpperCase()}`,
+            ],
+          ] as Array<[string, string]>
+        ).map(([k, v]) => (
           <div key={k} className="flex justify-between text-[11px]">
             <span className="text-muted-foreground">{k}</span>
             <span className="font-mono font-semibold">{v}</span>
@@ -1103,6 +1132,22 @@ function SuccessState({
           vs. 2 minutes the old way — {Math.max(50, Math.round((120 - elapsedSec) / 1.2))}% faster
         </p>
       </div>
+
+      {pointsEarned > 0 || loyalty ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-center">
+          {pointsEarned > 0 ? (
+            <p className="text-sm font-bold text-amber-700">
+              +{pointsEarned.toLocaleString()} points earned 🎉
+            </p>
+          ) : null}
+          {loyalty ? (
+            <p className="text-[11px] text-amber-600 mt-1">
+              {loyalty.points.toLocaleString()} points ·{" "}
+              <span className="font-semibold">{loyalty.tier}</span> tier
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {portalUrl ? (
         <div className="rounded-2xl border border-emerald-200 bg-white p-4 text-center space-y-3">
