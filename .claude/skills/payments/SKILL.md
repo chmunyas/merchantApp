@@ -49,7 +49,13 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
   centrally in `server.ts` (see the auth-tenancy skill) — never gate them behind
   `requireAuth`.
 - Provider config comes from `PESASWAP_API_KEY` / `PESASWAP_URL` /
-  `PESASWAP_WEBHOOK_SECRET` (env), not the DB.
+  `PESASWAP_WEBHOOK_SECRET` / `PESASWAP_PROFILE_ID` (env), not the DB.
+- **M-Pesa is server-side** (no publishable key): when live + KES + a phone,
+  `handleCreatePayment` fires a Daraja STK (`payment_method=wallet` /
+  `m_pesa_express`, needs `PESASWAP_PROFILE_ID`) returning `status:processing` +
+  `stk:true`; the client polls `/status`, which confirms via PesaSwap and records
+  the ledger on success (no webhook needed for M-Pesa). See the pesaswap-integration
+  skill for the exact body. Verified live (KES 1 STK, receipt returned).
 - **`PAYMENTS_TEST_MODE=1`** simulates a succeeded payment (no provider call) so the
   full journey can be tested end-to-end without live credentials; the ledger is
   still written (loyalty + settlement run). Set `0` + a real `PESASWAP_API_KEY`

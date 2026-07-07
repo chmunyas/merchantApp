@@ -44,6 +44,26 @@ Two journeys (from `POST /payments`):
 
 Amounts are **minor units** (cents); currency defaults to `KES` in this app.
 
+## M-Pesa STK (Daraja) — server-side, no publishable key (VERIFIED LIVE)
+M-Pesa is confirmed **entirely server-side** with the api-key — no publishable key
+/ HyperLoader — which sidesteps any client-SDK/env mismatch. `handleCreatePayment`
+(when live + KES + a phone) sends a **one-shot** create+confirm:
+```jsonc
+POST /payments   // header api-key
+{ "amount": 100, "currency": "KES", "confirm": true, "capture_method": "automatic",
+  "profile_id": "<PESASWAP_PROFILE_ID>",           // REQUIRED on every /payments call
+  "payment_method": "wallet", "payment_method_type": "m_pesa_express",
+  "payment_method_data": { "wallet": { "m_pesa_express": {} } },
+  "customer": { "id": "cus_…", "phone": "7XXXXXXXX", "phone_country_code": "+254" },
+  "billing":  { "phone": { "number": "7XXXXXXXX", "country_code": "+254" }, "address": { "country": "KE" } } }
+```
+Returns `status:processing` + an STK push to the handset. The client then **polls**
+`GET /api/payments/:id/status`, which queries PesaSwap for the terminal status and
+records the ledger on first success (**this replaces the webhook** for M-Pesa —
+loyalty/order settlement run without `PESASWAP_WEBHOOK_SECRET`). `connector=daraja`;
+`connector_transaction_id` is the M-Pesa receipt. Helpers: `normalizeKenyanPhone`,
+`mapPesaSwapStatus` (`src/api/payments.ts`).
+
 ## Core API surface (see /llms.txt for every page)
 - **Payments**: Create, Update, Confirm, Capture, Cancel, Retrieve, List,
   Session-token, Incremental-authorization, 3DS.
