@@ -36,6 +36,8 @@ export const Route = createFileRoute("/pay")({
 
 type PaymentState = "idle" | "scanned" | "confirming" | "pin" | "processing" | "success" | "error";
 
+type OrderLineItem = { name: string; qty: number; price: number };
+
 type PaymentData = {
   till: string;
   amount: number;
@@ -47,6 +49,10 @@ type PaymentData = {
   orderId?: string | null;
   invoiceNumber?: string | null;
   phone?: string | null;
+  total?: number | null;
+  paid?: number | null;
+  remaining?: number | null;
+  items?: OrderLineItem[];
 };
 
 function PayPage() {
@@ -59,6 +65,7 @@ function PayPage() {
   const [errorMsg, setErrorMsg] = useState("");
   const [linkLoading, setLinkLoading] = useState(false);
   const [linkError, setLinkError] = useState(false);
+  const [payAmount, setPayAmount] = useState<number | null>(null);
   const startTimeRef = useRef<number>(0);
   const pendingInvoiceRef = useRef<string | null>(null);
 
@@ -137,8 +144,9 @@ function PayPage() {
     }
   }
 
-  function confirmPayment(phone: string) {
+  function confirmPayment(phone: string, amount?: number) {
     setCustomerPhone(phone);
+    if (typeof amount === "number" && amount > 0) setPayAmount(amount);
     setState("pin");
   }
 
@@ -163,6 +171,10 @@ function PayPage() {
         poweredBy: data.poweredBy ?? null,
         venue: data.venue ?? null,
         orderId: data.orderId ?? null,
+        total: data.total ?? null,
+        paid: data.paid ?? null,
+        remaining: data.remaining ?? null,
+        items: data.items ?? [],
       });
       if (data.phone) setCustomerPhone(data.phone);
       setState("scanned");
@@ -215,7 +227,7 @@ function PayPage() {
     (metadata as Record<string, unknown>).till = paymentData.till;
 
     const result = await executePayment({
-      amount: paymentData.amount,
+      amount: payAmount ?? paymentData.amount,
       currency: "KES",
       metadata,
       phone,
@@ -239,6 +251,7 @@ function PayPage() {
     setPin("");
     setUseBiometric(false);
     setCustomerPhone("");
+    setPayAmount(null);
     setPaymentId(null);
     setErrorMsg("");
     if (typeof window !== "undefined") {
@@ -510,8 +523,55 @@ function IdleState({ onScan }: { onScan: () => void }) {
   );
 }
 
-function ScannedState({ data, onConfirm, onCancel }: { data: PaymentData; onConfirm: (phone: string) => void; onCancel: () => void }) {
+function ScannedState({
+  data,
+  onConfirm,
+  onCancel,
+}: {
+  data: PaymentData;
+  onConfirm: (phone: string, amount?: number) => void;
+  onCancel: () => void;
+}) {
   const [phone, setPhone] = useState(() => localMpesaDigits(data.phone));
+  const remaining =
+    typeof data.remaining === "number" ? data.remaining : data.amount;
+  const canSplit = Boolean(data.orderId) && typeof data.remaining === "number";
+  const items = data.items ?? [];
+  const partiallyPaid = typeof data.paid === "number" && data.paid > 0;
+  const [mode, setMode] = useState<"full" | "equal" | "item" | "custom">(
+    "full",
+  );
+  const [people, setPeople] = useState(2);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [custom, setCustom] = useState("");
+
+  const clamp = (n: number) =>
+    Math.max(0, Math.min(remaining, Math.round(n || 0)));
+  let share = remaining;
+  if (mode === "equal") share = clamp(remaining / Math.max(1, people));
+  else if (mode === "item")
+    share = clamp(
+      items.reduce(
+        (s, it, i) => (selected.has(i) ? s + it.qty * it.price : s),
+        0,
+      ),
+    );
+  else if (mode === "custom") share = clamp(Number(custom) || 0);
+
+  const toggleItem = (i: number) =>
+    setSelected((cur) => {
+      const next = new Set(cur);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+
+  const modes: Array<{ key: typeof mode; label: string }> = [
+    { key: "full", label: "Pay all" },
+    { key: "equal", label: "Split" },
+    { key: "item", label: "By item" },
+    { key: "custom", label: "Custom" },
+  ];
 
   return (
     <div className="space-y-5">
@@ -521,7 +581,7 @@ function ScannedState({ data, onConfirm, onCancel }: { data: PaymentData; onConf
         </div>
         <div>
           <p className="text-[10px] font-mono uppercase tracking-widest opacity-60">Pay to</p>
-          <div className="mt-1 flex items-center gap-2">
+          <div className="mt-1 flex items-center justify-center gap-2">
             {data.logoUrl ? (
               <img
                 src={data.logoUrl}
@@ -539,10 +599,116 @@ function ScannedState({ data, onConfirm, onCancel }: { data: PaymentData; onConf
           ) : null}
         </div>
         <div className="pt-2 border-t border-background/10">
-          <p className="text-[10px] font-mono uppercase tracking-widest opacity-60">Amount</p>
-          <p className="text-4xl font-bold font-mono mt-1">KES {data.amount.toLocaleString()}</p>
+          <p className="text-[10px] font-mono uppercase tracking-widest opacity-60">
+            {mode === "full" ? "Amount" : "Your share"}
+          </p>
+          <p className="text-4xl font-bold font-mono mt-1">
+            KES {share.toLocaleString()}
+          </p>
+          {canSplit && (mode !== "full" || partiallyPaid) ? (
+            <p className="text-[11px] font-mono opacity-60 mt-1">
+              {partiallyPaid
+                ? `KES ${remaining.toLocaleString()} left of ${Number(data.total).toLocaleString()}`
+                : `of KES ${remaining.toLocaleString()}`}
+            </p>
+          ) : null}
         </div>
       </div>
+
+      {canSplit ? (
+        <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
+          <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+            Split the bill
+          </p>
+          <div className="grid grid-cols-4 gap-2">
+            {modes.map((m) => (
+              <button
+                key={m.key}
+                type="button"
+                onClick={() => setMode(m.key)}
+                className={`rounded-xl px-2 py-2 text-[11px] font-semibold ${
+                  mode === m.key
+                    ? "bg-emerald-600 text-white"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          {mode === "equal" ? (
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Split between</span>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPeople((n) => Math.max(1, n - 1))}
+                  className="size-8 rounded-full border border-border text-lg font-bold"
+                  aria-label="Fewer people"
+                >
+                  −
+                </button>
+                <span className="w-6 text-center font-mono font-bold">{people}</span>
+                <button
+                  type="button"
+                  onClick={() => setPeople((n) => Math.min(20, n + 1))}
+                  className="size-8 rounded-full border border-border text-lg font-bold"
+                  aria-label="More people"
+                >
+                  +
+                </button>
+                <span className="text-sm text-muted-foreground">people</span>
+              </div>
+            </div>
+          ) : null}
+
+          {mode === "item" ? (
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {items.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No itemised bill available.
+                </p>
+              ) : (
+                items.map((it, i) => (
+                  <button
+                    key={`${it.name}-${i}`}
+                    type="button"
+                    onClick={() => toggleItem(i)}
+                    className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left text-sm ${
+                      selected.has(i)
+                        ? "border-emerald-500 bg-emerald-50"
+                        : "border-border bg-background"
+                    }`}
+                  >
+                    <span>
+                      {it.qty}× {it.name}
+                    </span>
+                    <span className="font-mono">
+                      KES {(it.qty * it.price).toLocaleString()}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          ) : null}
+
+          {mode === "custom" ? (
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-mono font-bold">KES</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                value={custom}
+                onChange={(e) => setCustom(e.target.value)}
+                placeholder={`Up to ${remaining}`}
+                aria-label="Amount to pay"
+                className="flex-1 rounded-xl border border-border bg-background px-4 py-3 text-base font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* Phone number input */}
       <div className="rounded-2xl border border-border bg-card p-4 space-y-2">
@@ -576,12 +742,12 @@ function ScannedState({ data, onConfirm, onCancel }: { data: PaymentData; onConf
       </div>
 
       <button
-        disabled={phone.length < 9}
-        onClick={() => onConfirm(`0${phone}`)}
+        disabled={phone.length < 9 || share <= 0}
+        onClick={() => onConfirm(`0${phone}`, canSplit ? share : undefined)}
         className="w-full bg-emerald-600 text-white py-4 rounded-2xl text-base font-bold flex items-center justify-center gap-2 disabled:opacity-40"
       >
         <Zap className="size-5" />
-        Confirm & Pay
+        {mode === "full" ? "Confirm & Pay" : `Pay KES ${share.toLocaleString()}`}
       </button>
 
       <button

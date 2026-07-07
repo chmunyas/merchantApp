@@ -54,11 +54,17 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
   `?o=<token>` (QR orders → `/api/qr/pay/:token`) → server-authoritative amount →
   drives the pay flow. **Never trust an amount from the URL.**
 - **`recordLedger` side effects (on a succeeded payment):** accrues loyalty points
-  to the contact by **phone** (unique key), and marks a QR `orders.paid_at`
-  (one-time-use) when `metadata.order_id` is present — both best-effort. It also
-  tags each row with an **`initiator`** (`human` | `agent`) via
-  `resolveInitiator(metadata)` — explicit `metadata.initiator` wins, else an
+  to the contact by **phone** (unique key), and settles a QR `orders.paid_at` when
+  the **cumulative** succeeded payments for that `metadata.order_id` cover the order
+  total — so **split / partial payments** don't prematurely close a shared bill.
+  Both best-effort. It also tags each row with an **`initiator`** (`human` | `agent`)
+  via `resolveInitiator(metadata)` — explicit `metadata.initiator` wins, else an
   `agent_id`/`agentRef` or an A2A `flow_type`/`channel` marks it `agent` (`db/35`).
+- **Split-pay is server-authoritative:** `handleCreatePayment` clamps a charge with
+  `metadata.order_id` to the order's remaining balance (rejecting a settled bill),
+  so a guest can never overpay. Shares are computed in `src/lib/split-bill.ts`; the
+  balance is exposed by `GET /api/qr/pay/:token`. QR order amounts are **minor
+  units** end-to-end (the QR menu resolver converts whole-KES prices ×100).
 - **Add a webhook side effect:** update `handleWebhook` in `payments.ts` and
   persist status changes to the `payments` ledger via `recordLedger`.
 

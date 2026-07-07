@@ -30,10 +30,13 @@ The journey (and where each step lives today):
    `/pay?i=INV-XXX` (invoice → `/api/invoices/payinfo`). Charge via
    `POST /api/payments/create` (M-Pesa STK today). The unified `usePayment` hook
    (`src/lib/use-payment.ts`) already carries `split` and `tip` metadata.
-4. **Split** — `usePayment` models `split: { type: "full" | "equal" | "custom" |
-   "by_item", totalParties, index }` (`src/lib/use-payment.ts:37-45,162-177`).
-   Today this is **metadata plumbing only** — there is no customer self-service
-   split-pay flow that tracks a shared order's remaining balance.
+4. **Split** — self-service split-pay on `/pay`: **Pay all / Split evenly (N) /
+   By item / Custom**. Each guest pays a share against the same order; the server
+   tracks the balance and **clamps every charge to the remaining balance**
+   (server-authoritative — a guest can never overpay). The order settles (and its
+   pay token closes) only when cumulative payments cover the total. Shares:
+   `src/lib/split-bill.ts`; balance in `GET /api/qr/pay/:token`; clamp + settlement
+   in `src/api/payments.ts` (`handleCreatePayment` + `recordLedger`).
 5. **Tip** — payments persist `tip_amount` + `staff_id` and attribute the tip to the
    serving staff (`src/api/payments.ts` recordLedger; tips: `src/api/tips.ts`,
    `src/lib/tips.ts`). Tipping is wired on the merchant/ledger side; an in-flow
@@ -80,10 +83,11 @@ The journey (and where each step lives today):
   earned before charging.
 
 ## Current gaps → roadmap (build these to close the seamless loop)
-1. **Self-service split-pay (MISSING):** let each guest pay their share (equal /
-   by-item / custom) against one shared order while the server tracks the remaining
-   balance to zero. The `usePayment` `split` type is the scaffold; needs an order
-   balance + partial-payment endpoint and a `/pay` split UI.
+1. **Self-service split-pay (DONE):** guests split a bill on `/pay` (evenly /
+   by-item / custom) and each pays their share against one order balance; the
+   server clamps every charge to the remaining balance and settles only when the
+   total is covered (`src/lib/split-bill.ts`, `src/api/payments.ts`,
+   `GET /api/qr/pay/:token`, `src/routes/pay.tsx`).
 2. **In-flow "tip your server" (PARTIAL):** surface tip suggestions + the serving
    staff on `/pay` and the QR flow, passing `tip_amount` + `staff_id`.
 3. **Seamless receipt + loyalty handoff (PARTIAL):** on payment success, auto-issue

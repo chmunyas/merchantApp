@@ -275,7 +275,18 @@ async function recordLedger(
       : null;
   if (SUCCEEDED.includes(rec.status) && paidOrderId) {
     try {
-      await sql`UPDATE orders SET paid_at = COALESCE(paid_at, now()) WHERE id = ${paidOrderId}`;
+      // Settle only once cumulative succeeded payments cover the order total, so a
+      // partial (split) payment never prematurely closes a shared bill.
+      const [row] = await sql`
+        SELECT o.total::bigint AS total,
+               COALESCE((SELECT sum(p.amount) FROM payments p
+                         WHERE p.metadata->>'order_id' = ${paidOrderId}
+                           AND p.status IN ('succeeded', 'paid', 'captured')
+                           AND p.kind <> 'refund'), 0)::bigint AS paid
+        FROM orders o WHERE o.id = ${paidOrderId} LIMIT 1`;
+      if (row && Number(row.paid) >= Number(row.total)) {
+        await sql`UPDATE orders SET paid_at = COALESCE(paid_at, now()) WHERE id = ${paidOrderId}`;
+      }
     } catch {
       /* best-effort */
     }
@@ -375,6 +386,45 @@ async function handleCreatePayment(
   }
 
   const env = getEnv(workerEnv);
+
+  // Split-pay guard: when charging against a shared order, never let a guest pay
+  // more than the outstanding balance (server-authoritative). Clamp the share to the
+  // remaining balance and reject if the bill is already settled.
+  const guardMeta = (body.metadata ?? {}) as Record<string, unknown>;
+  const guardOrderId =
+    typeof guardMeta.order_id === "string" &&
+    /^[0-9a-f-]{36}$/i.test(guardMeta.order_id)
+      ? guardMeta.order_id
+      : null;
+  if (guardOrderId) {
+    const guardSql = getSql(workerEnv);
+    if (guardSql) {
+      try {
+        const [row] = await guardSql`
+          SELECT o.total::bigint AS total,
+                 COALESCE((SELECT sum(p.amount) FROM payments p
+                           WHERE p.metadata->>'order_id' = ${guardOrderId}
+                             AND p.status IN ('succeeded', 'paid', 'captured')
+                             AND p.kind <> 'refund'), 0)::bigint AS paid
+          FROM orders o WHERE o.id = ${guardOrderId} LIMIT 1`;
+        if (row) {
+          const remainingMinor = Math.max(
+            0,
+            Number(row.total) - Number(row.paid),
+          );
+          if (remainingMinor <= 0) {
+            return jsonResponse(
+              { error: { message: "This bill is already paid." } },
+              409,
+            );
+          }
+          if (body.amount > remainingMinor) body.amount = remainingMinor;
+        }
+      } catch {
+        /* best-effort — fall through to a normal charge */
+      }
+    }
+  }
 
   // Test mode: simulate a successful payment WITHOUT calling the provider, so the
   // full journey (QR -> order -> pay -> success -> loyalty -> receipt portal) works

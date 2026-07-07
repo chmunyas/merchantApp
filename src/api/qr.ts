@@ -154,6 +154,10 @@ export async function handleQrRoute(
     const token = payMatch[1];
     const [order] = await sql`
       SELECT o.id, o.venue_id, o.total, o.paid_at, o.pay_expires_at, o.customer_phone,
+             COALESCE((SELECT sum(p.amount) FROM payments p
+                       WHERE p.metadata->>'order_id' = o.id::text
+                         AND p.status IN ('succeeded','paid','captured')
+                         AND p.kind <> 'refund'), 0)::bigint AS paid,
              COALESCE(vb.business_name, v.name, 'PesaSwap') AS merchant,
              vb.logo_url, org.name AS org_name, org.branding AS org_branding
       FROM orders o
@@ -163,8 +167,13 @@ export async function handleQrRoute(
       WHERE o.pay_token = ${token}
       LIMIT 1`;
     if (!order) return json({ error: "not found" }, 404);
-    // One-time-use: a paid order returns a paid status (the page shows success).
-    if (order.paid_at) return json({ orderId: order.id, status: "paid" });
+    const totalMinor = Number(order.total) || 0;
+    const paidMinor = Number(order.paid) || 0;
+    const remainingMinor = Math.max(0, totalMinor - paidMinor);
+    // One-time-use: a fully-paid order returns a paid status (the page shows success).
+    if (order.paid_at || remainingMinor <= 0) {
+      return json({ orderId: order.id, status: "paid" });
+    }
     // Expiry: a stale token cannot be paid — the customer re-scans for a fresh one.
     if (
       order.pay_expires_at &&
@@ -172,11 +181,22 @@ export async function handleQrRoute(
     ) {
       return json({ error: "expired" }, 410);
     }
+    const orderItems = await sql`
+      SELECT name, qty, price FROM order_items WHERE order_id = ${order.id} ORDER BY id`;
     return json({
       till: String(order.id),
       orderId: String(order.id),
       venue: order.venue_id,
-      amount: Number(order.total) / 100,
+      // amount defaults to the outstanding balance so "pay in full" pays what's left.
+      amount: remainingMinor / 100,
+      total: totalMinor / 100,
+      paid: paidMinor / 100,
+      remaining: remainingMinor / 100,
+      items: orderItems.map((i) => ({
+        name: String(i.name),
+        qty: Number(i.qty),
+        price: Number(i.price) / 100,
+      })),
       merchant: order.merchant,
       logoUrl: order.logo_url ?? null,
       poweredBy: poweredBy(order.org_name ?? null, order.org_branding),
@@ -205,7 +225,11 @@ export async function handleQrRoute(
     await sql`
       INSERT INTO qr_scans (code_id, venue_id, user_agent)
       VALUES (${code.id}, ${code.venue_id}, ${request.headers.get("user-agent")})`;
-    const items = await getMenu(sql, code.venue_id);
+    // Menu prices are whole KES in the DB, but the entire QR/pay/ledger chain works
+    // in MINOR units (formatKes + the pay resolver divide by 100). Convert here so a
+    // guest is charged the real amount, not 1/100 of it.
+    const menu = await getMenu(sql, code.venue_id);
+    const items = menu.map((m) => ({ ...m, price: m.price * 100 }));
     return json({
       venue: {
         id: code.venue_id,
