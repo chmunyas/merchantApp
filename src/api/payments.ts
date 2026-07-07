@@ -1320,20 +1320,19 @@ async function processWebhook(
     request.headers.get("x-pesaswap-signature") ||
     "";
   let trusted = false;
-  if (env.PESASWAP_WEBHOOK_SECRET) {
-    const isValid = sig512
+  // Fast path: a valid HMAC signature (when PESASWAP_WEBHOOK_SECRET is configured =
+  // the profile `payments_response_hash_key`). This skips the verify-by-callback
+  // round-trip. A *bad* signature does NOT hard-reject — we fall through to the
+  // callback so a not-yet-synced dashboard key can never cause CallToMerchantFailed.
+  if (env.PESASWAP_WEBHOOK_SECRET && (sig512 || sig256)) {
+    trusted = sig512
       ? await verifyWebhookSignature(rawBody, sig512, env.PESASWAP_WEBHOOK_SECRET, "SHA-512")
-      : sig256
-        ? await verifyWebhookSignature(rawBody, sig256, env.PESASWAP_WEBHOOK_SECRET, "SHA-256")
-        : false;
-    if (!isValid) {
-      console.warn("[PesaSwap] Invalid or missing webhook signature");
-      return jsonResponse({ error: { message: "Invalid signature" } }, 401);
-    }
-    trusted = true;
-  } else if (env.PESASWAP_API_KEY && paymentId && !paymentId.startsWith("test_")) {
-    // Re-fetch the authoritative record — but with a hard timeout so a slow provider
-    // can never make US slow enough to trip PesaSwap's webhook-delivery timeout.
+      : await verifyWebhookSignature(rawBody, sig256, env.PESASWAP_WEBHOOK_SECRET, "SHA-256");
+  }
+  // Fallback / keyless path: re-fetch the authoritative record with our api-key — a
+  // forger cannot fake it. Bounded by a hard timeout so a slow provider can never
+  // make US slow enough to trip PesaSwap's own webhook-delivery timeout.
+  if (!trusted && env.PESASWAP_API_KEY && paymentId && !paymentId.startsWith("test_")) {
     try {
       const ac = new AbortController();
       const timer = setTimeout(() => ac.abort(), 4000);

@@ -62,22 +62,27 @@ describe("PesaSwap webhook — signature + envelope", () => {
     expect(res!.status).toBe(200);
   });
 
-  it("rejects a tampered body (bad SHA-512 signature) with 401", async () => {
+  it("does NOT process a tampered body (bad signature) — acknowledges without side effects", async () => {
+    // A bad signature no longer hard-rejects (401 would cause CallToMerchantFailed if
+    // the dashboard key is not yet synced). With no api-key to verify-by-callback, we
+    // acknowledge (200) but never treat the unverified payload as trusted.
     const sig = await hmacHex(liveBody, SECRET, "SHA-512");
     const res = await handlePaymentRoute(
       webhookRequest(liveBody + " ", { "x-webhook-signature-512": sig }),
       { PESASWAP_WEBHOOK_SECRET: SECRET },
     );
-    expect(res!.status).toBe(401);
+    expect(res!.status).toBe(200);
+    expect(await res!.json()).toEqual({ received: true, verified: false });
   });
 
-  it("rejects a signature made with the wrong secret with 401", async () => {
+  it("does NOT trust a signature made with the wrong secret", async () => {
     const sig = await hmacHex(liveBody, "the-wrong-secret", "SHA-512");
     const res = await handlePaymentRoute(
       webhookRequest(liveBody, { "x-webhook-signature-512": sig }),
       { PESASWAP_WEBHOOK_SECRET: SECRET },
     );
-    expect(res!.status).toBe(401);
+    expect(res!.status).toBe(200);
+    expect(await res!.json()).toEqual({ received: true, verified: false });
   });
 
   it("acknowledges (200) without side effects when unverifiable (no secret, no api-key)", async () => {
@@ -93,12 +98,13 @@ describe("PesaSwap webhook — signature + envelope", () => {
     expect(await res!.json()).toEqual({ received: true, verified: false });
   });
 
-  it("rejects a webhook with no signature header with 401", async () => {
+  it("acknowledges (200) a webhook with no signature header when it cannot verify-by-callback", async () => {
     const res = await handlePaymentRoute(
       webhookRequest(liveBody, {}),
       { PESASWAP_WEBHOOK_SECRET: SECRET },
     );
-    expect(res!.status).toBe(401);
+    expect(res!.status).toBe(200);
+    expect(await res!.json()).toEqual({ received: true, verified: false });
   });
 
   it("still accepts the legacy simulator shape via x-webhook-signature-256", async () => {
