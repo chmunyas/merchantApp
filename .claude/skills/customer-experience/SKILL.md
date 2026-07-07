@@ -109,8 +109,10 @@ The journey (and where each step lives today):
    re-validates + applies it to `orders.total` and increments usage. Merchants manage
    codes at `/dashboard/promos`. `src/lib/promo.ts`, `src/api/promo.ts`,
    `GET /api/promo/validate`, `db/36`.
-6. **Unify the journey (PARTIAL):** embed pay + receipt into the scan flow so it's
-   one page, not a chain of links/tokens.
+6. **Unify the journey (DONE):** `/pay` reads its source from typed route search
+   params (`validateSearch` + `Route.useSearch`) and the scan flow navigates in-app
+   (no full-page reload), so scan → order → pay → tip → loyalty → receipt is one
+   continuous SPA journey (`src/routes/q.$code.tsx`, `src/routes/pay.tsx`).
 
 ## Related skills
 `unified-qr` (scan → order + pay + enrol + receipt), `orders-kitchen`, `payments`,
