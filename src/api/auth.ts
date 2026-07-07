@@ -76,9 +76,30 @@ export async function requireAuth(
   const header = request.headers.get("authorization") ?? "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
   if (!token) return null;
+  const secret = await getAuthSecret(env);
+  if (!secret) return null;
+  return verifyJwt(token, secret);
+}
+
+// The JWT secret is cached in-isolate so a warm worker verifies tokens WITHOUT a
+// per-request `app_settings` round-trip to Neon — this shaves a full DB hop off
+// every authenticated request (the dashboard polls several gated endpoints, so it
+// dominated perceived latency). The secret is stable, so a 60s cache is safe.
+let authSecretCache: { secret: string; expires: number } | null = null;
+const AUTH_SECRET_TTL_MS = 60_000;
+
+async function getAuthSecret(env: unknown): Promise<string | null> {
+  // An explicit env override always wins and needs neither DB nor cache.
+  const envSecret = envVar(env, "JWT_SECRET");
+  if (envSecret) return envSecret;
+  const now = Date.now();
+  if (authSecretCache && authSecretCache.expires > now) {
+    return authSecretCache.secret;
+  }
   const cfg = await getAuthConfig(env);
-  if (!cfg) return null;
-  return verifyJwt(token, cfg.secret);
+  if (!cfg?.secret) return null;
+  authSecretCache = { secret: cfg.secret, expires: now + AUTH_SECRET_TTL_MS };
+  return cfg.secret;
 }
 
 // Tenant isolation + plan-limit helpers live in lib/tenancy (pure, testable);

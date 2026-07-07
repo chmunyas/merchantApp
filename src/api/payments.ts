@@ -433,15 +433,20 @@ async function recordRefundRow(
 // Pull recent refunds from PesaSwap and sync any we don't yet have. This is the
 // DURABLE refund path: PesaSwap's outgoing webhook can fail (CallToMerchantFailed)
 // and a refund raised from the PesaSwap dashboard never reaches us as an event —
-// so we PULL. Bounded + best-effort; recordRefundRow is idempotent so repeated
-// pulls never double-post. Returns the count of newly-synced refunds.
+// so we PULL. **Batched** so the steady state (nothing new) costs ONE network call
+// + TWO SELECTs — never a query per refund. Idempotent, best-effort. Returns the
+// count of newly-synced refunds.
 async function reconcileRefunds(
   runtimeEnv: unknown,
   opts?: { limit?: number },
 ): Promise<number> {
   const env = getEnv(runtimeEnv);
   if (!env.PESASWAP_API_KEY) return 0;
+  const sql = getSql(runtimeEnv);
+  if (!sql) return 0;
   const limit = Math.min(100, Math.max(1, opts?.limit ?? 50));
+
+  // 1) Pull recent refunds (ONE network call).
   let list: Array<Record<string, unknown>> = [];
   try {
     const ac = new AbortController();
@@ -463,15 +468,80 @@ async function reconcileRefunds(
   } catch {
     return 0;
   }
-  let synced = 0;
-  for (const refund of list) {
+
+  // Keep only settled refunds that carry both ids.
+  const settled = list.filter(
+    (r) =>
+      String(r.status ?? "").toLowerCase() === "succeeded" &&
+      (r.refund_id || r.id) &&
+      r.payment_id,
+  );
+  if (!settled.length) return 0;
+  const refundIds = settled.map((r) => String(r.refund_id || r.id));
+  const parentIds = [...new Set(settled.map((r) => String(r.payment_id)))];
+
+  // 2) ONE query: which of these refunds do we already have?
+  let have = new Set<string>();
+  try {
+    const existing = await sql`SELECT id FROM payments WHERE id = ANY(${refundIds})`;
+    have = new Set(existing.map((e) => String((e as { id: unknown }).id)));
+  } catch {
+    /* proceed — recordLedger's ON CONFLICT still guards against a double-insert */
+  }
+
+  // 3) ONE query: the parent payments (venue + metadata) for attribution.
+  const parentMap = new Map<
+    string,
+    { venue_id?: string | null; reference?: string | null; metadata?: Record<string, unknown> }
+  >();
+  try {
+    const parents = await sql`
+      SELECT id, venue_id, reference, metadata FROM payments
+      WHERE id = ANY(${parentIds})`;
+    for (const p of parents) {
+      parentMap.set(String((p as { id: unknown }).id), p as never);
+    }
+  } catch {
+    /* ignore — nothing to attribute to */
+  }
+
+  // 4) Insert ONLY the new refunds whose parent we actually hold.
+  const toInsert = settled.filter((r) => {
+    const rid = String(r.refund_id || r.id);
+    const parent = parentMap.get(String(r.payment_id));
+    return !have.has(rid) && parent?.venue_id;
+  });
+  for (const r of toInsert) {
+    const parentId = String(r.payment_id);
+    const parent = parentMap.get(parentId)!;
     try {
-      if (await recordRefundRow(runtimeEnv, refund)) synced++;
+      await recordLedger(runtimeEnv, {
+        id: String(r.refund_id || r.id),
+        kind: "refund",
+        amount: Math.max(0, Math.round(Number(r.amount) || 0)),
+        currency: String(r.currency || "KES"),
+        status: "refunded",
+        venue: parent.venue_id ?? null,
+        reference: parent.reference ?? null,
+        providerRef:
+          (r.connector_refund_id as string) || (r.refund_arn as string) || null,
+        metadata: {
+          ...(parent.metadata ?? {}),
+          refund_of: parentId,
+          refund_reason: (r.reason as string) ?? null,
+        },
+      });
     } catch {
       /* best-effort per refund */
     }
   }
-  return synced;
+
+  // 5) Update parent status ONLY for parents that received a new refund.
+  const affected = [...new Set(toInsert.map((r) => String(r.payment_id)))];
+  for (const pid of affected) {
+    await updateParentRefundStatus(runtimeEnv, pid);
+  }
+  return toInsert.length;
 }
 
 // --- Route Handler ---
@@ -990,118 +1060,50 @@ async function handleListPayments(
   const statusFilter = (url.searchParams.get("status") || "").trim();
 
   try {
-    // Pull dashboard-initiated refunds from PesaSwap FIRST (bounded, best-effort)
-    // so they're reflected in the rows we're about to read. This is the durable
-    // path when the outgoing webhook fails (CallToMerchantFailed).
-    await reconcileRefunds(workerEnv, { limit: 50 });
-
+    // PURE DB READ, ONE round-trip — no PesaSwap call on this hot path, so the panel
+    // loads at DB speed. Authoritative sync (refunds + stuck payments) runs OFF this
+    // path via POST /api/payments/sync (client background sync, Force Sync button,
+    // client /status poll). The page of rows + each row's refunded total come back in
+    // a single query: a LEFT JOIN onto the per-parent refund totals.
     const rows = statusFilter
       ? await sql`
-          SELECT id, amount, currency, status, kind, reference, provider_ref,
-                 tip_amount, staff_id, initiator, metadata, created_at
-          FROM payments
-          WHERE venue_id = ${venue} AND status = ${statusFilter}
-          ORDER BY created_at DESC
+          WITH refunds AS (
+            SELECT metadata->>'refund_of' AS parent, sum(amount)::bigint AS refunded
+            FROM payments
+            WHERE venue_id = ${venue} AND kind = 'refund' AND status = 'refunded'
+              AND metadata->>'refund_of' IS NOT NULL
+            GROUP BY metadata->>'refund_of'
+          )
+          SELECT p.id, p.amount, p.currency, p.status, p.kind, p.reference,
+                 p.provider_ref, p.tip_amount, p.staff_id, p.initiator, p.metadata,
+                 p.created_at, COALESCE(r.refunded, 0)::bigint AS refunded_amount
+          FROM payments p
+          LEFT JOIN refunds r ON r.parent = p.id
+          WHERE p.venue_id = ${venue} AND p.status = ${statusFilter}
+          ORDER BY p.created_at DESC
           LIMIT ${limit}`
       : await sql`
-          SELECT id, amount, currency, status, kind, reference, provider_ref,
-                 tip_amount, staff_id, initiator, metadata, created_at
-          FROM payments
-          WHERE venue_id = ${venue}
-          ORDER BY created_at DESC
+          WITH refunds AS (
+            SELECT metadata->>'refund_of' AS parent, sum(amount)::bigint AS refunded
+            FROM payments
+            WHERE venue_id = ${venue} AND kind = 'refund' AND status = 'refunded'
+              AND metadata->>'refund_of' IS NOT NULL
+            GROUP BY metadata->>'refund_of'
+          )
+          SELECT p.id, p.amount, p.currency, p.status, p.kind, p.reference,
+                 p.provider_ref, p.tip_amount, p.staff_id, p.initiator, p.metadata,
+                 p.created_at, COALESCE(r.refunded, 0)::bigint AS refunded_amount
+          FROM payments p
+          LEFT JOIN refunds r ON r.parent = p.id
+          WHERE p.venue_id = ${venue}
+          ORDER BY p.created_at DESC
           LIMIT ${limit}`;
-
-    // Capture all: reconcile any still-"processing" live payments against PesaSwap
-    // so the ledger reflects the terminal state even if the customer closed the tab
-    // before the client finished polling. Bounded (only pay_ ids older than 45s,
-    // capped) so the list stays fast; recordLedger is idempotent.
-    const env = getEnv(workerEnv);
-    if (env.PESASWAP_API_KEY) {
-      const stale = rows
-        .filter(
-          (r) =>
-            String(r.status) === "processing" &&
-            String(r.id).startsWith("pay_") &&
-            Date.now() - new Date(r.created_at as string).getTime() > 45_000,
-        )
-        .slice(0, 10);
-      if (stale.length) {
-        await Promise.all(
-          stale.map(async (r) => {
-            try {
-              const resp = await fetch(`${env.PESASWAP_URL}/payments/${r.id}`, {
-                headers: {
-                  "api-key": env.PESASWAP_API_KEY,
-                  Accept: "application/json",
-                },
-              });
-              if (!resp.ok) return;
-              const p = (await resp.json()) as Record<string, any>;
-              const mapped = mapPesaSwapStatus(p.status);
-              if (mapped === "processing") return;
-              const meta = (p.metadata ?? {}) as Record<string, unknown>;
-              const settled = settledAmount(p, mapped) || Number(r.amount) || 0;
-              await recordLedger(workerEnv, {
-                id: String(r.id),
-                amount: settled,
-                currency: (p.currency as string) || String(r.currency ?? "KES"),
-                status: mapped === "cancelled" ? "failed" : mapped,
-                venue:
-                  (meta.venue as string) || (meta.merchant_id as string) || venue,
-                reference: (meta.till as string) || null,
-                providerRef: (p.connector_transaction_id as string) || null,
-                metadata:
-                  mapped === "succeeded"
-                    ? meta
-                    : {
-                        ...meta,
-                        error_code: p.error_code ?? undefined,
-                        error_message: p.error_message ?? undefined,
-                      },
-              });
-              // Reflect the reconciled state in this response without a re-query.
-              (r as Record<string, unknown>).status =
-                mapped === "cancelled" ? "failed" : mapped;
-              (r as Record<string, unknown>).amount = settled;
-              if (p.connector_transaction_id) {
-                (r as Record<string, unknown>).provider_ref =
-                  p.connector_transaction_id;
-              }
-            } catch {
-              /* best-effort reconcile */
-            }
-          }),
-        );
-      }
-    }
-
-    // Per-parent refunded totals (across ALL refund rows, not just this page) so a
-    // refunded payment shows how much came back even if its refund row is older
-    // than the window. Keyed on the parent payment id.
-    const refundMap = new Map<string, number>();
-    try {
-      const agg = await sql`
-        SELECT metadata->>'refund_of' AS parent, sum(amount)::bigint AS refunded
-        FROM payments
-        WHERE venue_id = ${venue} AND kind = 'refund' AND status = 'refunded'
-          AND metadata->>'refund_of' IS NOT NULL
-        GROUP BY metadata->>'refund_of'`;
-      for (const a of agg) {
-        refundMap.set(
-          String((a as { parent: unknown }).parent),
-          Number((a as { refunded: unknown }).refunded) || 0,
-        );
-      }
-    } catch {
-      /* best-effort — refunds still render via the refund rows themselves */
-    }
 
     return jsonResponse({
       payments: rows.map((r) => {
         const meta = (r.metadata ?? {}) as Record<string, unknown>;
-        const id = String(r.id);
         return {
-          id,
+          id: String(r.id),
           amount: Number(r.amount) || 0, // minor units
           currency: String(r.currency ?? "KES"),
           status: String(r.status),
@@ -1116,7 +1118,7 @@ async function handleListPayments(
           errorMessage: (meta.error_message as string) || null,
           // Refund context: how much has been refunded on this payment (minor
           // units), and — for a refund row — which payment it reverses + why.
-          refundedAmount: refundMap.get(id) || 0,
+          refundedAmount: Number(r.refunded_amount) || 0,
           refundOf: (meta.refund_of as string) || null,
           refundReason: (meta.refund_reason as string) || null,
           createdAt: r.created_at,

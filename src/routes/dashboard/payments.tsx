@@ -82,6 +82,9 @@ function DashboardPaymentsPage() {
 
   // Real transactions from the durable ledger (every attempt, any status) — live
   // PesaSwap / M-Pesa sales that don't live in the localStorage demo snapshot.
+  // This read is a PURE DB query (no PesaSwap round-trip) so the panel renders at
+  // DB speed. The authoritative PesaSwap reconcile runs OFF this path via a silent
+  // background sync (below), so the UI never blocks on the network.
   const refreshLive = useCallback(async () => {
     try {
       const res = await authFetch("/api/payments/list?limit=100");
@@ -96,13 +99,29 @@ function DashboardPaymentsPage() {
     }
   }, []);
 
-  useEffect(() => {
-    void refreshLive();
-    const t = setInterval(refreshLive, 15000);
-    return () => {
-      clearInterval(t);
-    };
+  // Silent background reconcile: pull refunds + stuck payments from PesaSwap into the
+  // DB, then re-read (fast). Fire-and-forget so it NEVER blocks a render.
+  const backgroundSync = useCallback(async () => {
+    try {
+      const res = await authFetch("/api/payments/sync", { method: "POST" });
+      if (res.ok) await refreshLive();
+    } catch {
+      /* best-effort — the DB read still shows the latest known state */
+    }
   }, [refreshLive]);
+
+  useEffect(() => {
+    // Instant DB read first, then a background reconcile — so the panel paints
+    // immediately and self-updates once PesaSwap has been polled.
+    void refreshLive();
+    void backgroundSync();
+    const dbPoll = setInterval(refreshLive, 15000); // fast DB refresh
+    const syncPoll = setInterval(backgroundSync, 60000); // slower network reconcile
+    return () => {
+      clearInterval(dbPoll);
+      clearInterval(syncPoll);
+    };
+  }, [refreshLive, backgroundSync]);
 
   useEffect(() => {
     generateDemoData();
