@@ -100,6 +100,7 @@ export type CreatePaymentResponse = {
   status: PaymentStatus;
   amount: number;
   currency: string;
+  stk?: boolean; // server-side M-Pesa STK already initiated; client should poll
 };
 
 export type RefundRequest = {
@@ -520,6 +521,24 @@ export async function executePayment(params: {
         success: true,
         status: "succeeded",
         payment_id: payment.payment_id,
+      };
+    }
+
+    // Server-side M-Pesa STK: create+confirm already fired the STK push to the
+    // customer's handset (no publishable key / HyperLoader needed). Just poll until
+    // they approve on the phone — approval can take up to ~90s.
+    if (payment.stk || payment.status === "processing") {
+      onStatusChange?.("processing");
+      const verified = await pollPaymentStatus(client, payment.payment_id, 90000);
+      onStatusChange?.(verified.status);
+      return {
+        success: verified.status === "succeeded",
+        status: verified.status,
+        payment_id: payment.payment_id,
+        error:
+          verified.status !== "succeeded"
+            ? "Payment not confirmed. Please approve the M-Pesa prompt and try again."
+            : undefined,
       };
     }
 

@@ -12,6 +12,10 @@ directory = "dist/client"
 # NOT app.pesaswap.io (dashboard). Use https://api.sandbox.pesaswap.io for tests.
 PESASWAP_URL = "https://api.pesaswap.io"
 
+# PesaSwap business profile id — required on every /payments call (server-side
+# M-Pesa STK). From the merchant account (GET /payments shows it on any payment).
+PESASWAP_PROFILE_ID = "pro_4TgkuteoiYO8M9hvtNCa"
+
 # Auth posture (config-as-code so it is version-controlled, not a floating
 # secret). "0"/unset = open, scoped, NON-admin pilot session — demo login works
 # and the back office can call protected endpoints. Set to "1" to force a real

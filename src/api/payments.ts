@@ -21,6 +21,7 @@ type Env = {
   PESASWAP_API_KEY: string;
   PESASWAP_WEBHOOK_SECRET: string;
   PESASWAP_URL: string; // https://sandbox.Pesaswap.io or https://api.Pesaswap.io
+  PESASWAP_PROFILE_ID: string; // business profile id (required by /payments)
   PAYMENTS_TEST_MODE: string;
 };
 
@@ -40,6 +41,7 @@ function getEnv(runtimeEnv?: unknown): Env {
     PESASWAP_API_KEY: pick("PESASWAP_API_KEY"),
     PESASWAP_WEBHOOK_SECRET: pick("PESASWAP_WEBHOOK_SECRET"),
     PESASWAP_URL: pick("PESASWAP_URL") || "https://api.sandbox.pesaswap.io",
+    PESASWAP_PROFILE_ID: pick("PESASWAP_PROFILE_ID"),
     PAYMENTS_TEST_MODE: pick("PAYMENTS_TEST_MODE"),
   };
 }
@@ -350,7 +352,7 @@ export async function handlePaymentRoute(
 
   if (path.match(/^\/api\/payments\/[^/]+\/status$/) && request.method === "GET") {
     const paymentId = path.split("/")[3];
-    return withCors(handleGetPaymentStatus(paymentId), corsHeaders);
+    return withCors(await handleGetPaymentStatus(paymentId, env), corsHeaders);
   }
 
   // --- Refund Routes ---
@@ -500,6 +502,115 @@ async function handleCreatePayment(
     return jsonResponse(responseBody, 201);
   }
 
+  // --- Live server-side M-Pesa STK (Daraja / m_pesa_express) ---
+  // Unlike cards, M-Pesa is confirmed entirely server-side: create + confirm =>
+  // an STK push lands on the customer's handset. This needs only the api-key — no
+  // publishable key / HyperLoader. The client then polls /status until the customer
+  // approves on their phone. Verified shape: payment_method=wallet, type=
+  // m_pesa_express, payment_method_data.wallet.m_pesa_express={}, customer+billing
+  // phone required, amount in minor units.
+  const liveMeta = (body.metadata ?? {}) as Record<string, unknown>;
+  const mpesaPhone = normalizeKenyanPhone((liveMeta.customer_phone as string) || "");
+  const wantsMpesa =
+    (body.currency || "KES").toUpperCase() === "KES" &&
+    !!mpesaPhone &&
+    (!body.payment_method ||
+      ["mpesa", "mobile_payment", "wallet", "m_pesa_express"].includes(
+        body.payment_method,
+      ));
+  if (env.PESASWAP_PROFILE_ID && env.PESASWAP_API_KEY && mpesaPhone && wantsMpesa) {
+    try {
+      const apiResponse = await fetch(`${env.PESASWAP_URL}/payments`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "api-key": env.PESASWAP_API_KEY,
+        },
+        body: JSON.stringify({
+          amount: body.amount,
+          currency: body.currency || "KES",
+          confirm: true,
+          capture_method: "automatic",
+          profile_id: env.PESASWAP_PROFILE_ID,
+          payment_method: "wallet",
+          payment_method_type: "m_pesa_express",
+          payment_method_data: { wallet: { m_pesa_express: {} } },
+          customer: {
+            id: `cus_kp${mpesaPhone.number}`,
+            phone: mpesaPhone.number,
+            phone_country_code: mpesaPhone.country_code,
+            name: (liveMeta.customer_name as string) || undefined,
+          },
+          billing: {
+            phone: {
+              number: mpesaPhone.number,
+              country_code: mpesaPhone.country_code,
+            },
+            address: { country: "KE" },
+          },
+          description: body.description,
+          metadata: body.metadata,
+        }),
+      });
+      const intent = (await apiResponse.json()) as Record<string, any>;
+      if (!apiResponse.ok || intent.error) {
+        console.error("[PesaSwap] M-Pesa STK error:", JSON.stringify(intent.error));
+        return jsonResponse(
+          { error: intent.error || { message: "M-Pesa STK failed" } },
+          apiResponse.status || 502,
+        );
+      }
+      const paymentId = intent.payment_id || intent.id;
+      const status = mapPesaSwapStatus(intent.status);
+      payments.set(paymentId, {
+        id: paymentId,
+        amount: body.amount,
+        currency: body.currency || "KES",
+        status,
+        metadata: liveMeta,
+        created_at: new Date().toISOString(),
+        refunds: [],
+      });
+      // STK is asynchronous (customer approves on the phone), so status is usually
+      // "processing" here — the client polls /status, which records the ledger on
+      // first success. Record now only if it somehow already succeeded.
+      if (status === "succeeded") {
+        try {
+          await recordLedger(workerEnv, {
+            id: paymentId,
+            amount: body.amount,
+            currency: body.currency || "KES",
+            status: "succeeded",
+            venue: (liveMeta.venue as string) || null,
+            reference: (liveMeta.till as string) || null,
+            metadata: liveMeta,
+          });
+        } catch {
+          /* best-effort */
+        }
+      }
+      const responseBody = {
+        payment_id: paymentId,
+        client_secret: intent.client_secret ?? null,
+        status,
+        amount: body.amount,
+        currency: body.currency || "KES",
+        stk: true,
+      };
+      if (idempotencyKey) {
+        idempotencyCache.set(idempotencyKey, {
+          response: responseBody,
+          expires: Date.now() + 3_600_000,
+        });
+      }
+      return jsonResponse(responseBody, 201);
+    } catch (err) {
+      console.error("[PesaSwap] M-Pesa STK exception:", err);
+      return jsonResponse({ error: { message: "M-Pesa STK failed" } }, 502);
+    }
+  }
+
   try {
     // Call PesaSwap API
     const apiResponse = await fetch(`${env.PESASWAP_URL}/payments`, {
@@ -585,7 +696,57 @@ async function handleCreatePayment(
 
 // --- Get Payment Status ---
 
-function handleGetPaymentStatus(paymentId: string): Response {
+async function handleGetPaymentStatus(
+  paymentId: string,
+  workerEnv: unknown,
+): Promise<Response> {
+  const env = getEnv(workerEnv);
+  // Live payments (real provider ids, api-key present): query PesaSwap for the
+  // authoritative status. STK payments confirm asynchronously on the handset, so
+  // this poll is how the app learns the outcome. On first success we record the
+  // ledger here (idempotent) so loyalty + order settlement run even without a
+  // webhook. Simulated `test_` payments stay in the in-memory map below.
+  if (env.PESASWAP_API_KEY && !paymentId.startsWith("test_")) {
+    try {
+      const resp = await fetch(`${env.PESASWAP_URL}/payments/${paymentId}`, {
+        headers: { "api-key": env.PESASWAP_API_KEY, Accept: "application/json" },
+      });
+      if (resp.ok) {
+        const p = (await resp.json()) as Record<string, any>;
+        const status = mapPesaSwapStatus(p.status);
+        const meta = (p.metadata ?? {}) as Record<string, unknown>;
+        if (status === "succeeded") {
+          try {
+            await recordLedger(workerEnv, {
+              id: paymentId,
+              amount: Number(p.amount) || 0,
+              currency: (p.currency as string) || "KES",
+              status: "succeeded",
+              venue:
+                (meta.venue as string) || (meta.merchant_id as string) || null,
+              reference: (meta.till as string) || null,
+              metadata: meta,
+            });
+          } catch {
+            /* best-effort ledger */
+          }
+        }
+        const cached = payments.get(paymentId);
+        if (cached) cached.status = status;
+        return jsonResponse({
+          payment_id: paymentId,
+          status,
+          amount: p.amount,
+          currency: p.currency,
+          metadata: meta,
+          error_message: p.error_message ?? undefined,
+        });
+      }
+    } catch {
+      /* fall through to the in-memory record */
+    }
+  }
+
   const payment = payments.get(paymentId);
   if (!payment) {
     return jsonResponse({ error: { message: "Payment not found" } }, 404);
@@ -1174,6 +1335,41 @@ function extractSavedMethod(resource: Record<string, any>): {
 }
 
 // --- Utilities ---
+
+// Normalise a Kenyan MSISDN to the PesaSwap/Daraja shape: a 9-digit subscriber
+// number (no leading 0, no country code) + a "+254" country code. Returns null if
+// the input isn't a plausible Kenyan mobile number.
+function normalizeKenyanPhone(
+  phone: string,
+): { number: string; country_code: string } | null {
+  const digits = (phone || "").replace(/\D/g, "");
+  let local = "";
+  if (digits.startsWith("254")) local = digits.slice(3);
+  else if (digits.startsWith("0")) local = digits.slice(1);
+  else local = digits;
+  // Kenyan mobile numbers are 9 digits starting 7 or 1 (e.g. 7XXXXXXXX / 1XXXXXXXX).
+  if (!/^[71]\d{8}$/.test(local)) return null;
+  return { number: local, country_code: "+254" };
+}
+
+// Map a PesaSwap (Hyperswitch) payment status to the app's PaymentStatus vocabulary.
+function mapPesaSwapStatus(status: unknown): string {
+  switch (String(status)) {
+    case "succeeded":
+    case "partially_captured":
+    case "partially_captured_and_capturable":
+      return "succeeded";
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return "cancelled";
+    case "requires_capture":
+      return "requires_capture";
+    default:
+      // requires_customer_action / processing / requires_confirmation / etc.
+      return "processing";
+  }
+}
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
