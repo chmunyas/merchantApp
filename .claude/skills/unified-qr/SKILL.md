@@ -17,6 +17,8 @@ code" insight localized to M-Pesa.
 
 ## Key files
 - `src/api/qr.ts` — resolve/create codes, log scans, build an order + pay URL.
+- `src/lib/ke-qr.ts` — **CBK KE-QR** EMVCo-TLV generator (CRC-16, static/dynamic).
+- `src/components/pay/PaymentQr.tsx` — shared KE-QR + camera-URL QR renderer.
 - `src/routes/q.$code.tsx` — the public, branded, mobile-first unified page.
 - `src/routes/dashboard/qr.tsx` — generate + print codes.
 - `db/23-qr.sql` — `qr_codes`, `qr_scans`.
@@ -44,47 +46,50 @@ code" insight localized to M-Pesa.
 - Log every scan — that behavioural data is the product.
 - Prefer per-table codes so a scan knows the seat; a venue code still works.
 
-## KE-QR (CBK national standard) — conformance status
+## KE-QR (CBK national standard) — conformant
 
-> **Status: NOT conformant — by design.** Every QR the app emits today is a
-> **URL to our own web checkout** (closed-loop, phone-camera → our page → PesaSwap
-> STK). Kenya's national **KE-QR** standard (CBK, 2023; based on **EMVCo
-> Merchant-Presented Mode v1.1**) is an **open-loop EMVCo TLV data object** meant
-> to be parsed and routed by *any* licensed bank/DFSP app. These are different
-> paradigms — our QR is invisible to the interoperable QR rail, and no KE-QR data
-> objects are currently produced. Documented here so the gap is explicit; **no
-> KE-QR generator has been built.**
+> **Status: conformant TLV generator shipped.** The app now produces
+> **CBK KE-QR** payloads (EMVCo Merchant-Presented Mode v1.1 TLV) on every
+> merchant-presented **KES** payment surface, alongside the existing closed-loop
+> "scan with your phone camera" URL QR. A payer can now scan the same sticker in
+> **any licensed bank / M-Pesa app**, verify merchant name + amount, and authorise
+> with their own PIN. **Remaining dependency:** a real CBK-directory PSP/merchant
+> identifier (via PesaSwap's PSP registration) — until issued we encode the till
+> under the `ke.go.qr` scheme with a placeholder account; interoperable routing by
+> other banks activates once the real id is set.
 
-**What our QR encodes today (all URL or proprietary JSON — never EMVCo TLV):**
-- `dashboard/qr.tsx` → `https://…/q/{codeId}` (unified code).
-- `dashboard/invoices.tsx` → invoice `pay_link` URL.
-- `features/TapGoPOS.tsx` → `/pay?tapgo=<base64>` (proprietary JSON fallback).
-- `features/TableServiceView.tsx`, `routes/pay.tsx` → web checkout / portal URL.
-- `MerchantApp.tsx` / `MerchantFlows.tsx` → pay URL / `{type:"fx-engine/invoice"}` JSON.
-- `lib/merchant-dashboard.ts` `createTableQrValue` → `{merchant,till,table,route}` JSON.
+**Core:** `src/lib/ke-qr.ts` — pure, isomorphic TLV builder.
+- `buildKeQr(merchant, options)` emits the full payload: `00` Payload Format
+  Indicator `"01"`, `01` POI (`11` static / `12` dynamic), `28` Merchant Account
+  Info (GUID `ke.go.qr` + till), `52` MCC, `53` Currency `404`, `54` Amount (KES,
+  no decimals — minor→whole shillings), `58` Country `KE`, `59` Merchant Name
+  (DBA, ≤25), `60` City, `61` Postal, `62` Additional Data (reference/store/bill,
+  no PII), `63` **CRC-16/CCITT-FALSE** (poly `0x1021`, init `0xFFFF`).
+- `crc16ccitt`, `formatKeQrAmount`, `resolveKeQrMerchant`, `parseKeQr`,
+  `validateKeQr` helpers. Unit-tested (`__tests__/unit/ke-qr.test.ts`, 16 tests)
+  including the canonical CRC check value `crc16ccitt("123456789") === 0x29B1`.
 
-**Missing mandatory EMVCo/KE-QR data objects (all of them):** `00` Payload Format
-Indicator (`"01"`), `01` Point of Initiation (`11` static / `12` dynamic), `28`/`29`
-Merchant Account Info with GUID `ke.go.qr`, `52` MCC, `53` Currency (`404`), `54`
-Amount, `58` Country (`KE`), `59` Merchant Name, `60` City, `63` **CRC-16/CCITT**
-(poly `0x1021`, init `0xFFFF`). No TLV structure (2-digit id + 2-digit len + value),
-no CRC integrity check.
+**Component:** `src/components/pay/PaymentQr.tsx` — renders the KE-QR with a
+"Scan in any bank or M-Pesa app" caption (merchant name + amount) and an optional
+"Phone camera" toggle for the closed-loop URL. `keqr={false}` on non-KES surfaces
+(KE-QR is a KES-only domestic standard).
 
-**What already aligns (principles, not format):** merchant-presented mode; **no
-customer PII in the code**; static-vs-dynamic concept (`/q/:code` static, pay-token
-dynamic); amount bound server-side; customer authenticates in their own app (PIN);
-DBA merchant name shown.
+**Wired surfaces (merchant-presented, KES):**
+- `features/TapGoPOS.tsx` — dynamic (amount-bound) KE-QR + camera toggle.
+- `features/TableServiceView.tsx` — table sticker, static KE-QR + camera.
+- `routes/dashboard/qr.tsx` — printable unified sticker, camera-primary + KE-QR toggle.
+- `routes/dashboard/settings.tsx` — per-table asset stickers now encode static KE-QR
+  (PNG/PDF export preserved).
+- `routes/dashboard/invoices.tsx` + `MerchantApp.tsx` invoice detail — dynamic KE-QR
+  **only when `currency === "KES"`**, else the pay URL.
 
-**Hard dependency (blocks true conformance):** interoperable KE-QR needs a
-**CBK-directory merchant identifier issued to a licensed PSP/DFSP** — tied to
-**PesaSwap's PSP registration / GUID**, not self-issuable by the app. Without it we
-can format a valid TLV but other banks can't route it.
+**Out of scope:** the payer-side `/pay` checkout (they authenticate via STK, not by
+scanning) and `MerchantFlows.tsx` (an international **FX** demo, non-KES).
 
-**If/when we implement:** add an EMVCo-TLV generator (with CRC-16) that runs
-*alongside* the existing URL QR (additive, non-breaking) — dynamic (amount-bound)
-and static variants — gated on obtaining the real PSP/merchant identifier from
-PesaSwap. See the CBK KE-QR standard for the full data-object table and the Parts
-A–D printed-sticker layout (acceptance logos, DBA name).
+**Config:** national defaults (`KE_QR_DEFAULTS`: guid `ke.go.qr`, MCC `5812`, city
+`Nairobi`, country `KE`, postal `00`) fill everything except the merchant name +
+till, which come from branding/settings. Set the real PSP id (`pspId`) once PesaSwap
+is registered in the CBK directory.
 
 ## Definition of Done — full parity
 A feature is not done until it has **full parity across all three runtime tiers** —

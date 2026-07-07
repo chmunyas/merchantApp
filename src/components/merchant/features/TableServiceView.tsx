@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { QRCodeSVG } from "qrcode.react";
+import { PaymentQr } from "@/components/pay/PaymentQr";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -1224,7 +1224,14 @@ export function TableServiceView() {
         </div>
         <div className="flex justify-center py-4">
           <div className="bg-white p-4 rounded-2xl shadow-lg">
-            <QRCodeSVG value={qrUrl} size={200} level="H" />
+            <PaymentQr
+              merchantName={MERCHANT_NAME}
+              till={TILL_NUMBER}
+              reference={`Table ${selectedTable.tableNumber}`}
+              cameraUrl={qrUrl}
+              defaultMode="camera"
+              size={200}
+            />
           </div>
         </div>
         <div className="rounded-2xl bg-muted p-3 space-y-1">

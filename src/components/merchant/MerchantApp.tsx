@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import { realtime } from "../../lib/realtime";
 import { authFetch } from "@/lib/auth";
+import { PaymentQr } from "@/components/pay/PaymentQr";
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -53,6 +53,7 @@ import {
   smsLink,
   timeAgo,
   timelineFor,
+  TILL_NUMBER,
   totalPaid,
   whatsAppLink,
 } from "./features/utils";
@@ -958,12 +959,17 @@ function InvoiceDetailSheet({
         </div>
 
         <div className="rounded-2xl border border-border bg-background p-5 flex flex-col items-center gap-3">
-          <QRCodeSVG
-            value={link}
+          <PaymentQr
+            merchantName={MERCHANT_NAME}
+            till={TILL_NUMBER}
+            amountMinor={Math.round(
+              (remaining > 0 ? remaining : Number(invoice.amount)) * 100,
+            )}
+            reference={invoice.id}
+            cameraUrl={link}
+            keqr={invoice.currency === "KES"}
+            defaultMode="keqr"
             size={180}
-            level="M"
-            bgColor="transparent"
-            fgColor="oklch(0.22 0 0)"
           />
           <p className="text-[10px] font-mono text-muted-foreground text-center break-all px-4">
             {link}

@@ -23,7 +23,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { getCurrentVenueId } from "@/lib/merchant-dashboard";
+import { buildKeQr, resolveKeQrMerchant } from "@/lib/ke-qr";
+import {
+  getCurrentVenueId,
+  MERCHANT_NAME,
+  TILL_NUMBER,
+} from "@/lib/merchant-dashboard";
 import { authFetch } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
@@ -504,7 +509,22 @@ function InvoicesPage() {
                       {invoice.pay_link && (
                         <div className="rounded-lg bg-white p-1.5 ring-1 ring-slate-100">
                           <QRCodeSVG
-                            value={absoluteLink(invoice.pay_link)}
+                            value={
+                              invoice.currency === "KES"
+                                ? buildKeQr(
+                                    resolveKeQrMerchant({
+                                      name: MERCHANT_NAME,
+                                      merchantId: TILL_NUMBER,
+                                    }),
+                                    {
+                                      amountMinor: Math.round(
+                                        Number(invoice.amount) * 100,
+                                      ),
+                                      reference: invoice.number,
+                                    },
+                                  )
+                                : absoluteLink(invoice.pay_link)
+                            }
                             size={56}
                           />
                         </div>

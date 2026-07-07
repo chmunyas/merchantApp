@@ -46,19 +46,6 @@ export function QRInvoicingFlow() {
     () => `https://pay.fxengine.app/i/${invoiceId.toLowerCase()}`,
     [invoiceId],
   );
-  const payload = useMemo(
-    () =>
-      JSON.stringify({
-        type: "fx-engine/invoice",
-        id: invoiceId,
-        amount: Number(amount) || 0,
-        currency,
-        customer,
-        reference,
-        link,
-      }),
-    [invoiceId, amount, currency, customer, reference, link],
-  );
 
   const canContinue = Number(amount) > 0 && customer.trim().length > 0;
 
@@ -162,7 +149,7 @@ export function QRInvoicingFlow() {
               </span>
             </div>
             <div className="bg-background rounded-xl p-4 flex justify-center">
-              <QRCodeSVG value={payload} size={160} level="M" />
+              <QRCodeSVG value={link} size={160} level="M" />
             </div>
             <div className="text-center">
               <p className="text-[9px] font-mono uppercase tracking-widest opacity-60">

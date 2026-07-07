@@ -7,11 +7,13 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { authFetch, useAuth } from "@/lib/auth";
+import { buildKeQr, resolveKeQrMerchant } from "@/lib/ke-qr";
 import {
-  createTableQrValue,
   ensureMerchantDemoData,
   loadMerchantSnapshot,
+  MERCHANT_NAME,
   saveMerchantSettings,
+  TILL_NUMBER,
   type MerchantSnapshot,
   type MerchantUser,
 } from "@/lib/merchant-dashboard";
@@ -501,7 +503,14 @@ function DashboardSettingsPage() {
               className="rounded-2xl border border-border bg-slate-50 p-4 text-center"
             >
               <QRCodeCanvas
-                value={createTableQrValue(table.tableNumber, snapshot.settings)}
+                value={buildKeQr(
+                  resolveKeQrMerchant({
+                    name: snapshot.settings.businessProfile?.name || MERCHANT_NAME,
+                    merchantId:
+                      snapshot.settings.businessProfile?.tillNumber || TILL_NUMBER,
+                  }),
+                  { storeLabel: `Table ${table.tableNumber}` },
+                )}
                 size={160}
                 includeMargin
                 ref={(node) => {

@@ -4,6 +4,8 @@ import { QRCodeSVG } from "qrcode.react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { PaymentQr } from "@/components/pay/PaymentQr";
+import { MERCHANT_NAME, TILL_NUMBER } from "@/components/merchant/features/utils";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -192,7 +194,14 @@ function DashboardQrPage() {
           </CardHeader>
           <CardContent className="flex flex-col items-center gap-4">
             <div className="rounded-3xl bg-white p-4 shadow-sm">
-              <QRCodeSVG value={latestUrl} size={220} level="M" />
+              <PaymentQr
+                merchantName={MERCHANT_NAME}
+                till={TILL_NUMBER}
+                reference={codes[0]?.label ?? "Venue QR"}
+                cameraUrl={latestUrl}
+                defaultMode="camera"
+                size={220}
+              />
             </div>
             <p className="break-all text-center font-mono text-xs text-muted-foreground">
               {latestUrl}

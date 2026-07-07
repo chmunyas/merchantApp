@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import { CheckCircle2, Clock3, QrCode, Send, Share2, X, Zap } from "lucide-react";
 
@@ -8,6 +7,7 @@ import {
   pesaswapClient,
 } from "../../../lib/pesaswap-payments";
 import { authFetch } from "@/lib/auth";
+import { PaymentQr } from "@/components/pay/PaymentQr";
 import { OmniShare } from "../OmniShare";
 import type { TapGoTransaction } from "./types";
 import { MERCHANT_NAME, TILL_NUMBER } from "./utils";
@@ -22,15 +22,6 @@ export function TapGoPOS() {
   const [customerNumber, setCustomerNumber] = useState("");
   const [shareLink, setShareLink] = useState<string | null>(null);
   const [minting, setMinting] = useState(false);
-
-  const qrPayload = JSON.stringify({
-    type: "pesaswap/tapgo",
-    till: TILL_NUMBER,
-    merchant: MERCHANT_NAME,
-    amount: Number(amount),
-    ref: `TG-${Date.now().toString(36).toUpperCase()}`,
-    ts: Date.now(),
-  });
 
   const payUrl =
     typeof window !== "undefined"
@@ -220,16 +211,14 @@ export function TapGoPOS() {
           <p className="text-[9px] font-mono uppercase tracking-widest text-muted-foreground">
             Option 1 · Customer scans QR
           </p>
-          <QRCodeSVG
-            value={payUrl || qrPayload}
+          <PaymentQr
+            merchantName={MERCHANT_NAME}
+            till={TILL_NUMBER}
+            amountMinor={Math.round(Number(amount) * 100)}
+            cameraUrl={payUrl || null}
+            defaultMode="keqr"
             size={160}
-            level="M"
-            bgColor="transparent"
-            fgColor="oklch(0.22 0 0)"
           />
-          <p className="text-[9px] font-mono text-muted-foreground text-center">
-            Scan with camera or PesaSwap app
-          </p>
         </div>
 
         <div className="flex items-center gap-3">
