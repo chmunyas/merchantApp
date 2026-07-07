@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { CalendarDays, Check, Layers, MapPin, Users } from "lucide-react";
+import { CalendarDays, Check, Layers, MapPin, Send, Users } from "lucide-react";
 import { useMemo, useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { OmniShare } from "@/components/merchant/OmniShare";
 import type {
   Area,
   Reservation,
@@ -18,6 +19,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { authFetch } from "@/lib/auth";
 import {
   ensureMerchantDemoData,
   getAvailableCombinationsForParty,
@@ -80,6 +82,7 @@ function DashboardBookingsPage() {
     null,
   );
   const [bookingTab, setBookingTab] = useState<"planner" | "new">("planner");
+  const [depositTarget, setDepositTarget] = useState<Reservation | null>(null);
   const [plannerDate, setPlannerDate] = useState(todayISO());
   const [areas, setAreas] = useState<Area[]>([]);
 
@@ -611,7 +614,23 @@ function DashboardBookingsPage() {
                     >
                       {reservationAssignmentLabel(reservation)}
                     </Badge>
+                    {reservation.depositStatus === "paid" ? (
+                      <Badge className="bg-emerald-100 text-emerald-700">
+                        Deposit paid
+                      </Badge>
+                    ) : null}
                   </div>
+                  {reservation.status !== "cancelled" &&
+                  reservation.depositStatus !== "paid" &&
+                  reservation.phone ? (
+                    <button
+                      type="button"
+                      onClick={() => setDepositTarget(reservation)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                    >
+                      <Send className="h-3.5 w-3.5" /> Request deposit
+                    </button>
+                  ) : null}
                   {reservation.status === "confirmed" ||
                   reservation.status === "seated" ? (
                     <div className="flex justify-end gap-2">
@@ -643,6 +662,121 @@ function DashboardBookingsPage() {
         </div>
       </div>
       ) : null}
+      {depositTarget ? (
+        <DepositRequestModal
+          reservation={depositTarget}
+          onClose={() => setDepositTarget(null)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+// Collect a booking deposit as a shareable server-bound pay-link (kind=deposit,
+// referenced to the reservation), then send it over WhatsApp/Telegram/SMS.
+function DepositRequestModal({
+  reservation,
+  onClose,
+}: {
+  reservation: Reservation;
+  onClose: () => void;
+}) {
+  const [amountKes, setAmountKes] = useState(
+    String(reservation.depositAmount || 500),
+  );
+  const [busy, setBusy] = useState(false);
+  const [link, setLink] = useState<string | null>(null);
+  const amount = Math.max(0, Math.round(Number(amountKes) || 0));
+
+  async function mint() {
+    if (amount <= 0) {
+      toast.error("Enter a deposit amount.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await authFetch("/api/pay-links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amountKes: amount,
+          kind: "deposit",
+          reference: reservation.id,
+          description: `Booking deposit — ${reservation.date} ${reservation.time} (${reservation.covers} covers)`,
+          phone: reservation.phone,
+          name: reservation.customerName,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        url?: string;
+        error?: string;
+      };
+      if (!res.ok || !data.url) {
+        toast.error(data.error || "Couldn't create the deposit link");
+        return;
+      }
+      setLink(data.url);
+    } catch {
+      toast.error("Couldn't create the deposit link");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-base font-bold">Request deposit</h3>
+        <p className="mb-4 text-xs text-slate-500">
+          {reservation.customerName} · {reservation.date} {reservation.time}
+        </p>
+        <label className="mb-1 block text-[10px] font-mono uppercase tracking-widest text-slate-400">
+          Deposit amount
+        </label>
+        <div className="mb-4 flex items-center rounded-xl border border-slate-200 px-3">
+          <span className="text-sm font-mono font-bold text-slate-400">KES</span>
+          <input
+            type="tel"
+            inputMode="numeric"
+            value={amountKes}
+            onChange={(e) => setAmountKes(e.target.value.replace(/[^0-9]/g, ""))}
+            className="w-full bg-transparent px-2 py-3 text-center text-2xl font-bold font-mono focus:outline-none"
+          />
+        </div>
+        {link ? (
+          <OmniShare
+            open={!!link}
+            onClose={onClose}
+            title={`Send KES ${amount.toLocaleString()} deposit link`}
+            message={`Please secure your booking for ${reservation.date} at ${reservation.time} with a KES ${amount.toLocaleString()} deposit. Tap to pay 👇`}
+            link={link}
+            defaultPhone={reservation.phone}
+          />
+        ) : (
+          <>
+            <button
+              onClick={mint}
+              disabled={busy || amount <= 0}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 py-3.5 text-sm font-bold text-white disabled:opacity-40"
+            >
+              <Send className="size-4" />
+              {busy ? "Creating…" : "Create deposit link"}
+            </button>
+            <button
+              onClick={onClose}
+              className="mt-2 w-full rounded-2xl py-2.5 text-sm text-slate-500"
+            >
+              Cancel
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
