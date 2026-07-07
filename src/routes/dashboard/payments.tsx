@@ -687,6 +687,8 @@ function LivePaymentsPanel({
     "all" | "succeeded" | "processing" | "failed"
   >("all");
   const [modalTarget, setModalTarget] = useState<LivePayment | null>(null);
+  const [requestOpen, setRequestOpen] = useState(false);
+  const [detailTarget, setDetailTarget] = useState<LivePayment | null>(null);
 
   const succeeded = payments.filter((p) =>
     ["succeeded", "paid", "captured"].includes(p.status),
@@ -719,6 +721,12 @@ function LivePaymentsPanel({
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setRequestOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+          >
+            <Send className="h-4 w-4" /> Request payment
+          </button>
           <select
             value={statusFilter}
             onChange={(e) =>
@@ -741,6 +749,9 @@ function LivePaymentsPanel({
           </div>
         </div>
       </div>
+      {requestOpen ? (
+        <RequestPaymentModal onClose={() => setRequestOpen(false)} />
+      ) : null}
 
       <div className="mt-4 overflow-x-auto">
         {loading ? (
@@ -771,7 +782,11 @@ function LivePaymentsPanel({
                 const isFailed = ["failed", "cancelled"].includes(p.status);
                 const canRetry = isFailed || p.status === "processing";
                 return (
-                  <tr key={p.id} className="border-b border-border/50">
+                  <tr
+                    key={p.id}
+                    onClick={() => setDetailTarget(p)}
+                    className="cursor-pointer border-b border-border/50 hover:bg-muted/40"
+                  >
                     <td className="py-2 pr-4 whitespace-nowrap text-muted-foreground">
                       {format(new Date(p.createdAt), "d MMM HH:mm")}
                     </td>
@@ -815,7 +830,10 @@ function LivePaymentsPanel({
                     <td className="py-2 pr-4 text-right">
                       {canRetry && p.customerPhone ? (
                         <button
-                          onClick={() => setModalTarget(p)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setModalTarget(p);
+                          }}
                           className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
                         >
                           <RotateCcw className="h-3 w-3" />
@@ -837,11 +855,270 @@ function LivePaymentsPanel({
           onClose={() => setModalTarget(null)}
         />
       ) : null}
+      {detailTarget ? (
+        <PaymentDetailModal
+          payment={detailTarget}
+          onClose={() => setDetailTarget(null)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+// Per-transaction detail — the full trail so the merchant can trace any payment:
+// amount + tip, status + decline reason, M-Pesa receipt (REF), customer, flow,
+// initiator (human/agent) and the internal payment id.
+function PaymentDetailModal({
+  payment,
+  onClose,
+}: {
+  payment: LivePayment;
+  onClose: () => void;
+}) {
+  const rows: Array<[string, string]> = [
+    ["Amount", liveCurrency.format(payment.amount / 100)],
+    ...(payment.tipAmount > 0
+      ? ([["Tip", liveCurrency.format(payment.tipAmount / 100)]] as Array<
+          [string, string]
+        >)
+      : []),
+    ["Status", payment.status],
+    ...(payment.errorMessage
+      ? ([["Reason", payment.errorMessage]] as Array<[string, string]>)
+      : []),
+    ["M-Pesa receipt (REF)", payment.providerRef || "—"],
+    ["Customer", payment.customerName || payment.customerPhone || "—"],
+    ...(payment.customerName && payment.customerPhone
+      ? ([["Phone", payment.customerPhone]] as Array<[string, string]>)
+      : []),
+    ["Flow", payment.flowType || payment.kind],
+    ["Initiator", payment.initiator],
+    ["Time", format(new Date(payment.createdAt), "d MMM yyyy, HH:mm:ss")],
+    ["Payment ID", payment.id],
+  ];
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-3xl bg-card p-6 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-base font-bold">Transaction detail</h3>
+          <span
+            className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+              LIVE_STATUS_STYLE[payment.status] ?? "bg-slate-100 text-slate-700"
+            }`}
+          >
+            {payment.status}
+          </span>
+        </div>
+        <div className="divide-y divide-border rounded-2xl border border-border">
+          {rows.map(([k, v]) => (
+            <div key={k} className="flex items-start justify-between gap-4 px-4 py-2.5">
+              <span className="text-xs text-muted-foreground">{k}</span>
+              <span className="max-w-[60%] break-all text-right font-mono text-xs font-medium">
+                {v}
+              </span>
+            </div>
+          ))}
+        </div>
+        <button
+          onClick={onClose}
+          className="mt-4 w-full rounded-2xl border border-border py-2.5 text-sm font-semibold"
+        >
+          Close
+        </button>
+      </div>
     </div>
   );
 }
 
 // Merchant re-request modal — edit the amount + phone, then re-send the M-Pesa STK.
+// Merchant "Request payment" — mint a server-bound pay link for any amount and send
+// it to a customer over WhatsApp / Telegram / SMS (or copy it), in one step.
+function RequestPaymentModal({ onClose }: { onClose: () => void }) {
+  const [amountKes, setAmountKes] = useState("");
+  const [phone, setPhone] = useState("");
+  const [description, setDescription] = useState("");
+  const [channel, setChannel] = useState<"whatsapp" | "telegram" | "sms">(
+    "whatsapp",
+  );
+  const [busy, setBusy] = useState(false);
+  const [link, setLink] = useState<string | null>(null);
+  const amount = Math.max(0, Math.round(Number(amountKes) || 0));
+
+  async function mintAndSend() {
+    if (amount <= 0) {
+      toast.error("Enter an amount.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await authFetch("/api/pay-links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amountKes: amount,
+          description: description || undefined,
+          kind: "request",
+          phone: phone || undefined,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        url?: string;
+        error?: string;
+      };
+      if (!res.ok || !data.url) {
+        toast.error(data.error || "Couldn't create the pay link");
+        return;
+      }
+      setLink(data.url);
+      const message = `Here's your secure payment link for KES ${amount.toLocaleString()}${
+        description ? ` (${description})` : ""
+      }. Tap to pay 👇`;
+      if (phone.trim()) {
+        const shareRes = await authFetch("/api/share", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            channel,
+            to: phone,
+            text: message,
+            link: data.url,
+            kind: "pay-request",
+          }),
+        });
+        const sd = (await shareRes.json().catch(() => ({}))) as {
+          delivery?: string;
+        };
+        if (sd.delivery === "sent") {
+          toast.success(`Payment link sent on ${channel}.`);
+        } else if (sd.delivery === "suppressed") {
+          toast.error("This customer has opted out.");
+        } else {
+          toast.info("Link created — copy it below to send.");
+        }
+      } else {
+        toast.success("Payment link created — copy it below.");
+      }
+    } catch {
+      toast.error("Couldn't create the pay link");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm rounded-3xl bg-card p-6 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex size-11 items-center justify-center rounded-2xl bg-emerald-100">
+            <Send className="size-5 text-emerald-600" />
+          </div>
+          <div>
+            <h3 className="text-base font-bold">Request payment</h3>
+            <p className="text-xs text-muted-foreground">
+              Send a secure pay link over any channel
+            </p>
+          </div>
+        </div>
+
+        <label className="mb-1 block text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+          Amount
+        </label>
+        <div className="mb-3 flex items-center rounded-xl border border-border bg-background px-3">
+          <span className="text-sm font-mono font-bold text-muted-foreground">
+            KES
+          </span>
+          <input
+            type="tel"
+            inputMode="numeric"
+            value={amountKes}
+            onChange={(e) => setAmountKes(e.target.value.replace(/[^0-9]/g, ""))}
+            placeholder="0"
+            className="w-full bg-transparent px-2 py-3 text-center text-2xl font-bold font-mono focus:outline-none"
+          />
+        </div>
+
+        <input
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="What's it for? (optional)"
+          className="mb-3 w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        />
+
+        <div className="mb-3 grid grid-cols-3 gap-2">
+          {(["whatsapp", "telegram", "sms"] as const).map((c) => (
+            <button
+              key={c}
+              onClick={() => setChannel(c)}
+              className={`rounded-xl border py-2 text-xs font-medium capitalize ${
+                channel === c
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-border text-muted-foreground"
+              }`}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+        <input
+          type="tel"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          placeholder="Customer phone (optional — or just copy the link)"
+          className="mb-4 w-full rounded-xl border border-border bg-background px-4 py-2.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        />
+
+        {link ? (
+          <div className="mb-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-2">
+            <span className="flex-1 truncate font-mono text-xs text-emerald-800">
+              {link}
+            </span>
+            <button
+              onClick={() => {
+                void navigator.clipboard?.writeText(link);
+                toast.success("Copied");
+              }}
+              className="rounded-lg bg-emerald-600 px-2 py-1 text-xs font-semibold text-white"
+            >
+              Copy
+            </button>
+          </div>
+        ) : null}
+
+        <button
+          onClick={mintAndSend}
+          disabled={busy || amount <= 0}
+          className="flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 py-3.5 text-sm font-bold text-white disabled:opacity-40"
+        >
+          <Send className="size-4" />
+          {busy
+            ? "Working…"
+            : phone.trim()
+              ? `Send link · KES ${amount.toLocaleString()}`
+              : `Create link · KES ${amount.toLocaleString()}`}
+        </button>
+        <button
+          onClick={onClose}
+          className="mt-2 w-full rounded-2xl py-2.5 text-sm text-muted-foreground"
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ReRequestModal({
   payment,
   onClose,

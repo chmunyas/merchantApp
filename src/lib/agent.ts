@@ -1,8 +1,10 @@
 import { aiChat } from "@/lib/ai-providers";
+import { getAdapter } from "@/lib/channels";
 import { getSql } from "@/lib/db";
 import { createInvoice } from "@/lib/invoices";
 import { searchKb } from "@/lib/kb";
 import { findMenuItem, formatMenu, getMenu } from "@/lib/menu";
+import { createPayLink } from "@/lib/pay-links";
 
 export type AgentRole = "customer" | "staff" | "admin";
 
@@ -197,6 +199,69 @@ export async function runAgent(
 
     // Staff / admin CRM tools (allowlisted numbers only).
     if (ctx.role !== "customer") {
+      // Ad-hoc payment request — mint a server-bound pay link (Tap&Go / deposit /
+      // split / any amount) and send it to the customer on their channel. Lighter
+      // than a full invoice; the amount is bound to the server, not the URL.
+      if (/(request payment|pay ?link|payment link)/.test(t)) {
+        const phoneMatch = text.match(/\+?\d{9,15}/);
+        const phoneRaw = phoneMatch ? phoneMatch[0].replace(/[\s-]/g, "") : null;
+        const phone = phoneRaw
+          ? phoneRaw.startsWith("+")
+            ? phoneRaw
+            : `+${phoneRaw}`
+          : null;
+        const withoutPhone = phoneMatch
+          ? text.replace(phoneMatch[0], " ")
+          : text;
+        const amountMatch = withoutPhone.match(/([\d,]{2,})/);
+        const amount = amountMatch
+          ? parseInt(amountMatch[1].replace(/,/g, ""), 10)
+          : 0;
+        const descMatch = text.match(/for (.+)$/i);
+        if (amount > 0) {
+          const link = await createPayLink(env, venue, {
+            amount: amount * 100, // whole KES → minor units
+            description: descMatch ? descMatch[1].trim() : null,
+            kind: "request",
+            phone,
+            createdBy: "agent",
+          });
+          if ("error" in link) {
+            return {
+              reply: `Couldn't create the pay link: ${link.error}`,
+              tool: "request_payment",
+            };
+          }
+          const msg = `Here's your secure payment link for KES ${amount.toLocaleString()}${
+            descMatch ? ` (${descMatch[1].trim()})` : ""
+          }. Tap to pay 👇\n${link.url}`;
+          let sent = false;
+          if (phone) {
+            try {
+              const out = await getAdapter("whatsapp").send(phone, msg, env);
+              sent = out.delivery === "sent";
+            } catch {
+              /* best-effort send */
+            }
+          }
+          return {
+            reply: `Payment request for KES ${amount.toLocaleString()} created${
+              phone
+                ? sent
+                  ? ` and sent to ${phone}`
+                  : ` (couldn't auto-send to ${phone} — share the link below)`
+                : ""
+            }.\n\nPay link 👇\n${link.url}`,
+            tool: "request_payment",
+            data: link,
+          };
+        }
+        return {
+          reply:
+            "Sure — how much should I request, and which customer phone should I send the pay link to?",
+          tool: "collect_payment_request",
+        };
+      }
       if (/invoice|bill/.test(t) && !/billboard/.test(t)) {
         const phoneMatch = text.match(/\+?\d{9,15}/);
         const phoneRaw = phoneMatch ? phoneMatch[0].replace(/[\s-]/g, "") : null;

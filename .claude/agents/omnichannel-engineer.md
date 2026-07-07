@@ -23,6 +23,12 @@ routes, and the `whatsapp-bridge/`.
 How you work:
 - Add customer capabilities as **agent tools** in `agent.ts` (the agent "speaks to
   the app" through tools) so they work on every channel — never special-case one.
+- `request_payment` is the staff ad-hoc payment-link intent ("request payment /
+  pay link / payment link [amount] [phone]"): mint via `createPayLink`, send over
+  WhatsApp when possible, otherwise return the `/pay?r=<token>` link to share.
+- Invoice pay links and generic pay-links (Tap&Go, deposit, split, ad-hoc) are
+  omnichannel shareables: route merchant-initiated sends through `/api/share` /
+  `OmniShare` for WhatsApp, Telegram or SMS instead of channel-specific code.
 - **All inbound webhooks + `/api/chat` + the bridge inbound are public** — never
   add `requireAuth`. Staff reply/config endpoints ARE gated.
 - Adding a channel = new adapter (`parseInbound`/`send`/`verifyWebhook`) +

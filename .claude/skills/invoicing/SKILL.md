@@ -44,6 +44,8 @@ page.
   breaks every invoice link + QR; keep it on the tier's reachable origin (deployed
   = the Worker URL; local = localhost). A link/QR is only payable if the invoice
   lives in that tier's database.
+- Invoices remain the durable A/R document; the generic pay-links primitive
+  (`/pay?r=<token>`, payments skill) is for lightweight ad-hoc payment requests.
 - Reminders + recurring generation run via the `invoicing/run` sweep (bridge).
 
 ## Common tasks

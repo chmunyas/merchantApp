@@ -27,7 +27,9 @@ The journey (and where each step lives today):
    server-side from validated items, never trusted from the client.
 3. **Pay** — `/pay` (`src/routes/pay.tsx`). Short, server-bound links:
    `/pay?o=<token>` (QR order → `GET /api/qr/pay/:token`, `src/api/qr.ts:152`) and
-   `/pay?i=INV-XXX` (invoice → `/api/invoices/payinfo`). Charge via
+   `/pay?i=INV-XXX` (invoice → `/api/invoices/payinfo`) and `/pay?r=<token>`
+   (pay-link → `/api/pay-links/:token`). Tap&Go, split and booking-deposit flows
+   can now be sent as shareable server-bound links, not only scanned. Charge via
    `POST /api/payments/create` (M-Pesa STK today). The unified `usePayment` hook
    (`src/lib/use-payment.ts`) already carries `split` and `tip` metadata.
 4. **Split** — self-service split-pay on `/pay`: **Pay all / Split evenly (N) /
@@ -73,7 +75,8 @@ The journey (and where each step lives today):
 
 ## Conventions
 - **Amounts are always server-authoritative.** The client never sets the price to
-  charge; `/pay` resolves it from `?o=`/`?i=` server-side. Never trust a URL amount.
+  charge; `/pay` resolves it from `?o=`/`?i=`/`?r=` server-side. Never trust a URL
+  amount.
 - **Frictionless auth:** the customer is identified by **phone** (the loyalty key)
   and reaches history via a **portal token** (`/me/:token`) — no password/app.
 - **Loyalty is phone-keyed and automatic** on first success (idempotent; never

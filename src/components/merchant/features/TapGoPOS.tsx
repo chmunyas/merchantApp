@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
-import { CheckCircle2, Clock3, QrCode, Send, X, Zap } from "lucide-react";
+import { CheckCircle2, Clock3, QrCode, Send, Share2, X, Zap } from "lucide-react";
 
 import {
   buildPaymentMetadata,
   pesaswapClient,
 } from "../../../lib/pesaswap-payments";
+import { authFetch } from "@/lib/auth";
+import { OmniShare } from "../OmniShare";
 import type { TapGoTransaction } from "./types";
 import { MERCHANT_NAME, TILL_NUMBER } from "./utils";
 
@@ -18,6 +20,8 @@ export function TapGoPOS() {
   const [transactions, setTransactions] = useState<TapGoTransaction[]>([]);
   const [currentTx, setCurrentTx] = useState<TapGoTransaction | null>(null);
   const [customerNumber, setCustomerNumber] = useState("");
+  const [shareLink, setShareLink] = useState<string | null>(null);
+  const [minting, setMinting] = useState(false);
 
   const qrPayload = JSON.stringify({
     type: "pesaswap/tapgo",
@@ -92,6 +96,35 @@ export function TapGoPOS() {
           (err instanceof Error ? err.message : "Unknown error"),
       );
       setMode("keypad");
+    }
+  }
+
+  async function mintPayLink() {
+    if (!amount || Number(amount) <= 0) return;
+    setMinting(true);
+    try {
+      const res = await authFetch("/api/pay-links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amountKes: Number(amount),
+          kind: "tapgo",
+          description: `Tap&Go payment to ${MERCHANT_NAME}`,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        url?: string;
+        error?: string;
+      };
+      if (!res.ok || !data.url) {
+        toast.error(data.error || "Couldn't create the pay link");
+        return;
+      }
+      setShareLink(data.url);
+    } catch {
+      toast.error("Couldn't create the pay link");
+    } finally {
+      setMinting(false);
     }
   }
 
@@ -250,6 +283,35 @@ export function TapGoPOS() {
           <Zap className="size-3.5" />
           Simulate payment received (demo)
         </button>
+
+        <div className="flex items-center gap-3">
+          <div className="flex-1 h-px bg-border" />
+          <span className="text-[9px] font-mono uppercase text-muted-foreground">
+            or send a link
+          </span>
+          <div className="flex-1 h-px bg-border" />
+        </div>
+
+        {/* Option 3: Send a server-bound pay link over WhatsApp / Telegram / SMS */}
+        <button
+          onClick={mintPayLink}
+          disabled={minting}
+          className="w-full bg-emerald-600 text-white py-3 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
+        >
+          <Share2 className="size-4" />
+          {minting ? "Creating link…" : "Send pay link (WhatsApp/Telegram/SMS)"}
+        </button>
+
+        {shareLink ? (
+          <OmniShare
+            open={!!shareLink}
+            onClose={() => setShareLink(null)}
+            title={`Send KES ${Number(amount).toLocaleString()} pay link`}
+            message={`Here's your secure payment link for KES ${Number(amount).toLocaleString()}. Tap to pay 👇`}
+            link={shareLink}
+            defaultPhone={customerNumber ? `+254${customerNumber}` : ""}
+          />
+        ) : null}
       </div>
     );
   }

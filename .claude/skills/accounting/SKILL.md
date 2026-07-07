@@ -56,6 +56,8 @@ Fiscal periods can be closed (locked) once reported.
 - Entries are append-only + immutable; corrections are reversing entries.
 - Posting hooks are best-effort and must never block the source payment/refund or
   settlement transaction.
+- Pay-link payments are normal payments tagged with `pay_link_id`; they flow into
+  ledger/settlement/accounting like any other payment and need no special posting.
 
 ## Guidelines
 - Keep every posting rule balanced: payment Dr 1000 / Cr 4000 + 2000; refund Dr

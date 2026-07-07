@@ -30,6 +30,8 @@ get paid".
 
 ## Conventions
 - Amounts minor units, KES; succeeded = `('succeeded','paid','captured')`.
+- Pay-link payments are normal ledger payments tagged with `pay_link_id`; settlement
+  and reconciliation treat them like any other succeeded payment.
 - `FEE_RATE` (default 1.5%) is an **estimate** — real fees come from the provider
   webhook/statement when live. `net = gross - fees`.
 - `run` stamps `payments.settlement_id`; reconciled = has a settlement_id.

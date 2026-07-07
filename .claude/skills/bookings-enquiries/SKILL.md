@@ -31,6 +31,8 @@ back office.
   overwrite a local status change.
 - Reservations/tables/floorplan currently live in the merchant localStorage store
   (synced to Postgres via `merchant_state`); enquiries are Postgres-authoritative.
+- Booking deposits can be collected through a shareable pay-link (`kind='deposit'`,
+  `/pay?r=<token>`) in addition to the inline `/book` M-Pesa flow.
 
 ## Guidelines
 - Validate `customerName`; default covers/date/time server-side.

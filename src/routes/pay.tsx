@@ -27,9 +27,10 @@ import { QRCodeSVG } from "qrcode.react";
 export const Route = createFileRoute("/pay")({
   validateSearch: (
     search: Record<string, unknown>,
-  ): { o?: string; i?: string; tapgo?: string; status?: string } => ({
+  ): { o?: string; i?: string; r?: string; tapgo?: string; status?: string } => ({
     o: typeof search.o === "string" ? search.o : undefined,
     i: typeof search.i === "string" ? search.i : undefined,
+    r: typeof search.r === "string" ? search.r : undefined,
     tapgo: typeof search.tapgo === "string" ? search.tapgo : undefined,
     status: typeof search.status === "string" ? search.status : undefined,
   }),
@@ -60,6 +61,7 @@ type PaymentData = {
   venue?: string | null;
   orderId?: string | null;
   invoiceNumber?: string | null;
+  payLinkId?: string | null;
   phone?: string | null;
   total?: number | null;
   paid?: number | null;
@@ -115,10 +117,13 @@ function PayPage() {
     // Server-bound QR order pay link (/pay?o=<token>) — the amount is loaded from
     // the server, never read from the URL, so it cannot be tampered with.
     if (search.o) void loadQrOrder(search.o);
+    // Server-bound payment request (/pay?r=<token>) — Tap&Go / deposit / split /
+    // ad-hoc link sent over a channel; amount resolved server-side.
+    if (search.r) void loadPayLink(search.r);
     // Return from a payment redirect.
     if (search.status === "complete") setState("success");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search.o, search.i, search.tapgo, search.status]);
+  }, [search.o, search.i, search.r, search.tapgo, search.status]);
 
   // Resolve a short pay link to its amount + merchant. Surfaces a loading state
   // while fetching and a clear error (with retry) instead of failing silently.
@@ -204,6 +209,41 @@ function PayPage() {
     }
   }
 
+  // Resolve a server-bound payment request (/pay?r=<token>) — Tap&Go / deposit /
+  // split / ad-hoc link sent over a channel. The amount is authoritative (server).
+  async function loadPayLink(token: string) {
+    setLinkError(false);
+    setLinkLoading(true);
+    try {
+      const res = await fetch(`/api/pay-links/${encodeURIComponent(token)}`);
+      if (!res.ok) throw new Error("invalid");
+      const data = (await res.json()) as PaymentData & {
+        status?: string;
+        payLinkId?: string;
+      };
+      if (data.status === "paid") {
+        setState("success");
+        return;
+      }
+      setPaymentData({
+        till: data.till,
+        amount: data.amount,
+        merchant: data.merchant,
+        logoUrl: data.logoUrl ?? null,
+        poweredBy: data.poweredBy ?? null,
+        venue: data.venue ?? null,
+        payLinkId: data.payLinkId ?? null,
+      });
+      if (data.phone) setCustomerPhone(data.phone);
+      setState("scanned");
+      startTimeRef.current = Date.now();
+    } catch {
+      setLinkError(true);
+    } finally {
+      setLinkLoading(false);
+    }
+  }
+
   async function submitPin() {
     if (pin.length < 4 || !paymentData) return;
     await processRealPayment(customerPhone);
@@ -247,6 +287,10 @@ function PayPage() {
     if (paymentData.invoiceNumber) {
       (metadata as Record<string, unknown>).invoice_number =
         paymentData.invoiceNumber;
+    }
+    // Server-bound payment request: tag it so the ledger marks the pay-link paid.
+    if (paymentData.payLinkId) {
+      (metadata as Record<string, unknown>).pay_link_id = paymentData.payLinkId;
     }
     (metadata as Record<string, unknown>).till = paymentData.till;
 

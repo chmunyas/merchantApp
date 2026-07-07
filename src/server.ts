@@ -45,6 +45,7 @@ import { handlePricingRoute } from "./api/pricing";
 import { handleRfmRoute } from "./api/rfm";
 import { handlePromoRoute } from "./api/promo";
 import { handlePaymentMethodsAdminRoute } from "./api/payment-methods-admin";
+import { handlePayLinkRoute } from "./api/pay-links";
 
 type ServerEntry = {
   fetch: (
@@ -239,6 +240,10 @@ export default {
           // Merchant view of saved customer payment methods (M-Pesa + cards/wallets)
           const pmAdminResponse = await handlePaymentMethodsAdminRoute(request, env);
           if (pmAdminResponse) return pmAdminResponse;
+
+          // Server-bound payment requests (Tap&Go / deposit / split / ad-hoc links)
+          const payLinkResponse = await handlePayLinkRoute(request, env);
+          if (payLinkResponse) return payLinkResponse;
 
           // Reputation: reviews capture (public) + list/stats + AI reply
           const reviewsResponse = await handleReviewsRoute(request, env);

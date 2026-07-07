@@ -20,9 +20,16 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
 - `src/lib/pesaswap-payments.ts` — client SDK helpers (`executePayment`,
   `loadHyperLoader`, `buildPaymentMetadata`).
 - `src/routes/pay.tsx` — the customer pay page. Resolves **server-bound** tokens:
-  `/pay?i=INV-XXX` (invoices) and `/pay?o=<token>` (QR orders) — the amount always
-  comes from the server, never the URL.
+  `/pay?i=INV-XXX` (invoices), `/pay?o=<token>` (QR orders), and `/pay?r=<token>`
+  (pay-links) — the amount always comes from the server, never the URL.
+- `src/lib/pay-links.ts` — `createPayLink`, `resolvePayLink`, `markPayLinkPaid`.
+  Tokens resolve to `/pay?r=<token>` with server-bound amount + merchant branding.
+- `src/lib/links.ts` — `payRequestLink(base, token)` → `${base}/pay?r=<token>`.
 - `db/13-payments.sql` — the durable `payments` ledger (amounts in minor units).
+- `db/39-pay-links.sql` — `pay_links` table: `token`, `venue_id`, minor-unit
+  `amount`, `currency`, `description`, `kind` (`request`/`tapgo`/`deposit`/
+  `split`/`booking`), `reference`, customer fields, status, creator/payment ids,
+  timestamps; indexed by venue/date, venue/status, and customer phone.
 
 ## Endpoints
 - `POST /api/payments/create` — **public**, rate-limited 10/min. Creates a
@@ -51,6 +58,10 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
   to the remaining balance.
 - `GET /api/invoices/payinfo?number=INV-XXX` — **public** resolver the pay page
   uses to render an amount from a short link (see the invoicing skill).
+- `POST /api/pay-links` — **gated staff+**; mints a pay-link from minor-unit
+  `amount` or whole-KES `amountKes`.
+- `GET /api/pay-links/:token` — **public** resolver for `/pay?r=<token>`.
+- `GET /api/pay-links` — **gated**; lists recent venue pay-links.
 
 ## Conventions
 - Amounts are **minor units** (cents). Currency defaults to `KES`.
@@ -79,8 +90,9 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
 
 ## Common tasks
 - **Resolve a short pay link:** `pay.tsx` reads `?i=INV-XXX` (invoices) or
-  `?o=<token>` (QR orders → `/api/qr/pay/:token`) → server-authoritative amount →
-  drives the pay flow. **Never trust an amount from the URL.**
+  `?o=<token>` (QR orders → `/api/qr/pay/:token`) or `?r=<token>` (pay-links →
+  `/api/pay-links/:token`) → server-authoritative amount → drives the pay flow.
+  **Never trust an amount from the URL.**
 - **`recordLedger` side effects (on a succeeded payment):** accrues loyalty points
   to the contact by **phone** (unique key), and settles a QR `orders.paid_at` when
   the **cumulative** succeeded payments for that `metadata.order_id` cover the order
@@ -88,6 +100,14 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
   Both best-effort. It also tags each row with an **`initiator`** (`human` | `agent`)
   via `resolveInitiator(metadata)` — explicit `metadata.initiator` wins, else an
   `agent_id`/`agentRef` or an A2A `flow_type`/`channel` marks it `agent` (`db/35`).
+- **Pay-links settle like normal payments:** `/pay?r=` sets `metadata.pay_link_id`;
+  on success `recordLedger` calls `markPayLinkPaid(sql, payLinkId, paymentId)`
+  alongside QR-order settlement, so paid/expired/cancelled status stays server-side.
+- **Dashboard live payments:** `/dashboard/payments` has a "Request payment" modal
+  that mints pay-links for any amount + optional description/phone and shares via
+  `/api/share` (WhatsApp/Telegram/SMS) or copy; clickable rows open a transaction
+  detail drawer with amount, tip, status/decline, M-Pesa REF, customer, flow,
+  initiator and payment id.
 - **Split-pay is server-authoritative:** `handleCreatePayment` clamps a charge with
   `metadata.order_id` to the order's remaining balance (rejecting a settled bill),
   so a guest can never overpay. Shares are computed in `src/lib/split-bill.ts`; the

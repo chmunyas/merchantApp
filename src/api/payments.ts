@@ -17,6 +17,7 @@ import {
 } from "@/lib/accounting";
 import { recordPayment as recordInvoicePayment } from "@/lib/invoicing";
 import { loyaltyPointsFor } from "@/lib/loyalty";
+import { markPayLinkPaid } from "@/lib/pay-links";
 import { resolveInitiator } from "@/lib/tx-initiator";
 
 type Env = {
@@ -318,6 +319,16 @@ async function recordLedger(
     } catch {
       /* best-effort */
     }
+  }
+
+  // Mark a server-bound payment request (pay-link) paid once it succeeds, so its
+  // link closes and shows in the pay-links log as settled. Best-effort.
+  const payLinkId =
+    typeof meta.pay_link_id === "string" && /^[0-9a-f-]{36}$/i.test(meta.pay_link_id)
+      ? meta.pay_link_id
+      : null;
+  if (SUCCEEDED.includes(rec.status) && payLinkId) {
+    await markPayLinkPaid(sql, payLinkId, rec.id);
   }
 }
 

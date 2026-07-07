@@ -37,11 +37,12 @@ back-office Inbox. This file is the hub; **deep per-channel detail lives in
 ## Speaking to the application (tools)
 The agent doesn't guess — it calls real app functions and returns their result:
 `get_menu` (menu skill), `create_enquiry` / `check_availability` (bookings),
-`create_invoice` + `pay_link` (invoicing/payments), `search_kb` (knowledge base),
-`get_todays_bookings` / `count_enquiries` / `search_contacts` (CRM/analytics),
-`escalate_to_human` (handoff). Tools are venue-scoped and reuse the same libs the
-dashboard uses, so protecting the HTTP routes never breaks the agent. Add new
-capabilities as tools, not prompt text.
+`create_invoice` + `pay_link` (invoicing/payments), `request_payment` (ad-hoc
+server-bound pay-link), `search_kb` (knowledge base), `get_todays_bookings` /
+`count_enquiries` / `search_contacts` (CRM/analytics), `escalate_to_human`
+(handoff). Tools are venue-scoped and reuse the same libs the dashboard uses, so
+protecting the HTTP routes never breaks the agent. Add new capabilities as tools,
+not prompt text.
 
 ## Channel matrix
 Each channel has a reference in `channels/` with API mechanics, message types,
@@ -98,6 +99,12 @@ retained per policy, and erasable. Framework + per-channel duties in
 - **All inbound webhooks are public** — never add `requireAuth`; staff reply/config
   endpoints ARE gated (see auth-tenancy skill).
 - Everything flows through `processInbound`; capabilities are agent tools.
+- Staff intent `request_payment` ("request payment / pay link / payment link
+  [amount] [phone]") mints an ad-hoc pay-link via `createPayLink` and sends it to
+  the customer on WhatsApp, falling back to returning the link for manual sharing.
+- Pay links can be invoice links or generic `/pay?r=<token>` ad-hoc links for
+  Tap&Go, deposits, split-pay or one-off requests; share them via `/api/share` /
+  `OmniShare` over WhatsApp, Telegram or SMS.
 - Channel config in `app_settings` (`whatsapp_cloud`, `telegram`, …).
 - Always 200 the provider fast; never block the webhook on slow work.
 

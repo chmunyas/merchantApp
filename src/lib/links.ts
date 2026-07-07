@@ -32,6 +32,13 @@ export function bookLink(base: string, businessId = "main"): string {
   return `${base}/book/${businessId}`;
 }
 
+// A short, server-bound payment-request link: <base>/pay?r=<token>. The pay page
+// resolves the token to the authoritative amount, so the amount is NEVER trusted
+// from the URL (unlike a raw Tap&Go base64 link).
+export function payRequestLink(base: string, token: string): string {
+  return `${base}/pay?r=${encodeURIComponent(token)}`;
+}
+
 export function enquireLink(base: string): string {
   return `${base}/enquire`;
 }
