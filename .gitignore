@@ -26,3 +26,6 @@ Thumbs.db
 /playwright/.cache/
 dev-server.log
 
+
+# Copyrighted CBK reference (kept locally, not in VCS)
+KenyaQuickResponseCodeStandard.pdf
