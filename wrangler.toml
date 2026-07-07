@@ -8,9 +8,9 @@ compatibility_flags = ["nodejs_compat"]
 directory = "dist/client"
 
 [vars]
-# API base for server->PesaSwap calls (src/api/payments.ts). Sandbox is live;
-# switch to https://api.pesaswap.io for production. NOT app.pesaswap.io (dashboard).
-PESASWAP_URL = "https://api.sandbox.pesaswap.io"
+# API base for server->PesaSwap calls (src/api/payments.ts). Production is live;
+# NOT app.pesaswap.io (dashboard). Use https://api.sandbox.pesaswap.io for tests.
+PESASWAP_URL = "https://api.pesaswap.io"
 
 # Auth posture (config-as-code so it is version-controlled, not a floating
 # secret). "0"/unset = open, scoped, NON-admin pilot session — demo login works
