@@ -42,6 +42,7 @@ import { Route as DashboardSettingsRouteImport } from './routes/dashboard/settin
 import { Route as DashboardServicesRouteImport } from './routes/dashboard/services'
 import { Route as DashboardRewardsRouteImport } from './routes/dashboard/rewards'
 import { Route as DashboardReviewsRouteImport } from './routes/dashboard/reviews'
+import { Route as DashboardRetentionRouteImport } from './routes/dashboard/retention'
 import { Route as DashboardRetailRouteImport } from './routes/dashboard/retail'
 import { Route as DashboardReportsRouteImport } from './routes/dashboard/reports'
 import { Route as DashboardQrRouteImport } from './routes/dashboard/qr'
@@ -233,6 +234,11 @@ const DashboardReviewsRoute = DashboardReviewsRouteImport.update({
   path: '/reviews',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardRetentionRoute = DashboardRetentionRouteImport.update({
+  id: '/retention',
+  path: '/retention',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardRetailRoute = DashboardRetailRouteImport.update({
   id: '/retail',
   path: '/retail',
@@ -403,6 +409,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/qr': typeof DashboardQrRoute
   '/dashboard/reports': typeof DashboardReportsRoute
   '/dashboard/retail': typeof DashboardRetailRoute
+  '/dashboard/retention': typeof DashboardRetentionRoute
   '/dashboard/reviews': typeof DashboardReviewsRoute
   '/dashboard/rewards': typeof DashboardRewardsRoute
   '/dashboard/services': typeof DashboardServicesRoute
@@ -461,6 +468,7 @@ export interface FileRoutesByTo {
   '/dashboard/qr': typeof DashboardQrRoute
   '/dashboard/reports': typeof DashboardReportsRoute
   '/dashboard/retail': typeof DashboardRetailRoute
+  '/dashboard/retention': typeof DashboardRetentionRoute
   '/dashboard/reviews': typeof DashboardReviewsRoute
   '/dashboard/rewards': typeof DashboardRewardsRoute
   '/dashboard/services': typeof DashboardServicesRoute
@@ -522,6 +530,7 @@ export interface FileRoutesById {
   '/dashboard/qr': typeof DashboardQrRoute
   '/dashboard/reports': typeof DashboardReportsRoute
   '/dashboard/retail': typeof DashboardRetailRoute
+  '/dashboard/retention': typeof DashboardRetentionRoute
   '/dashboard/reviews': typeof DashboardReviewsRoute
   '/dashboard/rewards': typeof DashboardRewardsRoute
   '/dashboard/services': typeof DashboardServicesRoute
@@ -584,6 +593,7 @@ export interface FileRouteTypes {
     | '/dashboard/qr'
     | '/dashboard/reports'
     | '/dashboard/retail'
+    | '/dashboard/retention'
     | '/dashboard/reviews'
     | '/dashboard/rewards'
     | '/dashboard/services'
@@ -642,6 +652,7 @@ export interface FileRouteTypes {
     | '/dashboard/qr'
     | '/dashboard/reports'
     | '/dashboard/retail'
+    | '/dashboard/retention'
     | '/dashboard/reviews'
     | '/dashboard/rewards'
     | '/dashboard/services'
@@ -702,6 +713,7 @@ export interface FileRouteTypes {
     | '/dashboard/qr'
     | '/dashboard/reports'
     | '/dashboard/retail'
+    | '/dashboard/retention'
     | '/dashboard/reviews'
     | '/dashboard/rewards'
     | '/dashboard/services'
@@ -977,6 +989,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardReviewsRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/retention': {
+      id: '/dashboard/retention'
+      path: '/retention'
+      fullPath: '/dashboard/retention'
+      preLoaderRoute: typeof DashboardRetentionRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/retail': {
       id: '/dashboard/retail'
       path: '/retail'
@@ -1193,6 +1212,7 @@ interface DashboardRouteChildren {
   DashboardQrRoute: typeof DashboardQrRoute
   DashboardReportsRoute: typeof DashboardReportsRoute
   DashboardRetailRoute: typeof DashboardRetailRoute
+  DashboardRetentionRoute: typeof DashboardRetentionRoute
   DashboardReviewsRoute: typeof DashboardReviewsRoute
   DashboardRewardsRoute: typeof DashboardRewardsRoute
   DashboardServicesRoute: typeof DashboardServicesRoute
@@ -1227,6 +1247,7 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardQrRoute: DashboardQrRoute,
   DashboardReportsRoute: DashboardReportsRoute,
   DashboardRetailRoute: DashboardRetailRoute,
+  DashboardRetentionRoute: DashboardRetentionRoute,
   DashboardReviewsRoute: DashboardReviewsRoute,
   DashboardRewardsRoute: DashboardRewardsRoute,
   DashboardServicesRoute: DashboardServicesRoute,

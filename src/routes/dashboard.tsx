@@ -16,6 +16,7 @@ import {
   CalendarDays,
   ChefHat,
   Contact,
+  UserCheck,
   CreditCard,
   Gift,
   Inbox,
@@ -111,6 +112,7 @@ const navGroups = [
     items: [
       { to: "/dashboard/inbox", label: "Inbox", icon: MessagesSquare },
       { to: "/dashboard/contacts", label: "Contacts", icon: Contact },
+      { to: "/dashboard/retention", label: "Retention", icon: UserCheck },
       { to: "/dashboard/knowledge", label: "Knowledge", icon: BookOpen },
       { to: "/dashboard/automations", label: "Automations", icon: Zap },
       { to: "/dashboard/reviews", label: "Reviews", icon: Star },

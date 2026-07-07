@@ -42,6 +42,7 @@ import { handleA2aRoute } from "./api/a2a";
 import { handleMenuRoute } from "./api/menu";
 import { handleForecastRoute } from "./api/forecast";
 import { handlePricingRoute } from "./api/pricing";
+import { handleRfmRoute } from "./api/rfm";
 
 type ServerEntry = {
   fetch: (
@@ -224,6 +225,10 @@ export default {
           // Dynamic / time-of-day pricing suggestions + happy-hour windows
           const pricingResponse = await handlePricingRoute(request, env);
           if (pricingResponse) return pricingResponse;
+
+          // Customer RFM segmentation + churn / LTV + win-back targets
+          const rfmResponse = await handleRfmRoute(request, env);
+          if (rfmResponse) return rfmResponse;
 
           // Reputation: reviews capture (public) + list/stats + AI reply
           const reviewsResponse = await handleReviewsRoute(request, env);
