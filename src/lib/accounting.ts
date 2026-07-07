@@ -515,6 +515,29 @@ export async function journalList(
   return entries;
 }
 
+// Journal entries ordered OLDEST-first — the deterministic input for the
+// tamper-evident audit hash chain (see GET /api/accounting/audit).
+export async function auditEntries(
+  sql: Sql,
+  venue: string,
+  from?: string,
+  to?: string,
+  limit = 5000,
+) {
+  return sql`
+    SELECT e.id, e.entry_date, e.memo, e.source_type, e.source_id, e.currency, e.amount,
+           COALESCE(json_agg(json_build_object(
+             'account', l.account_code, 'debit', l.debit, 'credit', l.credit, 'memo', l.memo
+           ) ORDER BY l.account_code, l.debit DESC), '[]') AS lines
+    FROM journal_entries e
+    LEFT JOIN journal_lines l ON l.entry_id = e.id
+    WHERE e.venue_id = ${venue}
+      AND e.entry_date::date BETWEEN ${from ?? MIN} AND ${to ?? MAX}
+    GROUP BY e.id
+    ORDER BY e.entry_date ASC, e.created_at ASC, e.id ASC
+    LIMIT ${limit}`;
+}
+
 // Accounts-Receivable aging: outstanding invoice balances by age bucket. Invoices
 // are the AR subledger — a customer bill that is issued but not yet paid.
 export async function arAging(sql: Sql, venue: string) {

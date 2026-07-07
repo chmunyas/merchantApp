@@ -87,7 +87,11 @@ export async function handleSettlementRoute(
       SELECT count(*)::int AS tx_count,
              coalesce(sum(amount), 0)::bigint AS gross,
              coalesce(sum(amount) FILTER (WHERE settlement_id IS NOT NULL), 0)::bigint AS reconciled,
-             coalesce(sum(amount) FILTER (WHERE settlement_id IS NULL), 0)::bigint AS unreconciled
+             coalesce(sum(amount) FILTER (WHERE settlement_id IS NULL), 0)::bigint AS unreconciled,
+             count(*) FILTER (WHERE initiator = 'agent')::int AS agent_count,
+             coalesce(sum(amount) FILTER (WHERE initiator = 'agent'), 0)::bigint AS agent_gross,
+             count(*) FILTER (WHERE initiator <> 'agent')::int AS human_count,
+             coalesce(sum(amount) FILTER (WHERE initiator <> 'agent'), 0)::bigint AS human_gross
       FROM payments
       WHERE venue_id = ${venue}
         AND status IN ('succeeded', 'paid', 'captured')
@@ -105,6 +109,16 @@ export async function handleSettlementRoute(
       txCount: Number(row?.tx_count ?? 0),
       reconciled: money(row?.reconciled),
       unreconciled: money(row?.unreconciled),
+      byInitiator: {
+        agent: {
+          count: Number(row?.agent_count ?? 0),
+          gross: money(row?.agent_gross),
+        },
+        human: {
+          count: Number(row?.human_count ?? 0),
+          gross: money(row?.human_gross),
+        },
+      },
     });
   }
 

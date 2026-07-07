@@ -2,6 +2,7 @@ import { requireAuth } from "@/api/auth";
 import {
   CHART,
   arAging,
+  auditEntries,
   balanceSheet,
   closePeriod,
   generalLedger,
@@ -14,6 +15,7 @@ import {
   trialBalance,
 } from "@/lib/accounting";
 import { getSql } from "@/lib/db";
+import { sha256Hex } from "@/lib/hash";
 import { venueFromPayload } from "@/lib/tenancy";
 
 const corsHeaders = {
@@ -86,6 +88,66 @@ export async function handleAccountingRoute(
       Math.max(1, Number(url.searchParams.get("limit") ?? 200) || 200),
     );
     return json({ entries: await journalList(sql, venue, from, to, limit) });
+  }
+
+  // Tamper-evident audit export: each entry carries a content hash, and every
+  // entry is chained to the previous one (chainHash = SHA-256(prevHash +
+  // contentHash)). Altering, inserting, deleting or reordering any entry breaks
+  // the chain, so `finalHash` anchors the integrity of the whole period.
+  if (path === "/api/accounting/audit" && request.method === "GET") {
+    const role = typeof payload.role === "string" ? payload.role : "";
+    if (!POST_ROLES.has(role)) return json({ error: "forbidden" }, 403);
+    const rows = (await auditEntries(sql, venue, from, to)) as unknown as Array<{
+      id: string;
+      entry_date: string;
+      memo: string | null;
+      source_type: string | null;
+      source_id: string | null;
+      currency: string | null;
+      amount: string | number | null;
+      lines: Array<{
+        account: string;
+        debit: number | string;
+        credit: number | string;
+        memo: string | null;
+      }>;
+    }>;
+    let prevHash = "GENESIS";
+    let totalDebits = 0;
+    let totalCredits = 0;
+    const entries = [];
+    for (const row of rows) {
+      const lines = Array.isArray(row.lines) ? row.lines : [];
+      for (const l of lines) {
+        totalDebits += Number(l.debit) || 0;
+        totalCredits += Number(l.credit) || 0;
+      }
+      const core = {
+        id: row.id,
+        entry_date: row.entry_date,
+        memo: row.memo,
+        source_type: row.source_type,
+        source_id: row.source_id,
+        currency: row.currency,
+        amount: row.amount,
+        lines,
+      };
+      const contentHash = await sha256Hex(JSON.stringify(core));
+      const chainHash = await sha256Hex(prevHash + contentHash);
+      entries.push({ ...core, contentHash, prevHash, chainHash });
+      prevHash = chainHash;
+    }
+    return json({
+      from,
+      to,
+      currency: "KES",
+      count: entries.length,
+      balanced: Math.round(totalDebits) === Math.round(totalCredits),
+      totalDebits,
+      totalCredits,
+      finalHash: prevHash,
+      entries,
+    });
   }
 
   const ledgerMatch = path.match(/^\/api\/accounting\/ledger\/([^/]+)$/);

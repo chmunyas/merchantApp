@@ -17,7 +17,9 @@ Fiscal periods can be closed (locked) once reported.
 
 ## Key files
 - `src/lib/accounting.ts` — chart (`CHART`), balanced line-builders, `postEntry`
-  (rejects posts into a closed period), event wrappers, reports, period close.
+  (rejects posts into a closed period), event wrappers, reports, period close,
+  `auditEntries` (oldest-first source for the audit hash chain).
+- `src/lib/hash.ts` — `sha256Hex` used to build the audit hash chain.
 - `src/api/accounting.ts` — gated `/api/accounting/*` routes.
 - `db/30-accounting.sql` — `ledger_accounts`, `journal_entries`, `journal_lines`;
   `db/31-accounting-periods.sql` — `ledger_periods` (close/lock). Minor units.
@@ -37,6 +39,10 @@ Fiscal periods can be closed (locked) once reported.
 - `GET /api/accounting/ar-aging` — invoices as the AR subledger (minor units).
 - `GET /api/accounting/lost-basket?from=&to=` — unpaid orders subledger.
 - `GET /api/accounting/summary?from=&to=` — dashboard rollup.
+- `GET /api/accounting/audit?from=&to=` — **manager+** tamper-evident export:
+  each entry carries a `contentHash`; entries are chained
+  (`chainHash = SHA-256(prevHash + contentHash)`), and `finalHash` anchors the
+  whole period. Reordering/altering/inserting/deleting any entry breaks the chain.
 - `POST /api/accounting/journal` — **manager+** manual balanced adjustment.
 - `GET /api/accounting/periods` · `POST /api/accounting/period/close` ·
   `POST /api/accounting/period/reopen` — **manager+** period lock.

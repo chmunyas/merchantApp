@@ -14,14 +14,26 @@ on the existing A2A surface — payment becomes infrastructure an agent can
 understand, invoke and trust.
 
 ## Key files
-- `src/api/agentcommerce.ts` — `GET /api/agent/catalog`, `POST /api/agent/checkout`.
+- `src/api/agentcommerce.ts` — `GET /api/agent/catalog`, `POST /api/agent/checkout`,
+  `POST /api/agent/intent`, `POST /api/agent/intent/verify`.
 - `src/api/a2a.ts` — the discovery card (`/.well-known/agent-card.json`) + NL endpoint.
+- `src/lib/agent-intent.ts` — Verifiable Intent: `signIntent`/`verifyIntent` (HMAC-SHA256).
 - `src/api/payments.ts` / `src/api/invoices.ts` — the pay-link mechanism reused for intents.
 
 ## Endpoints
 - `GET /api/agent/catalog?venue=` — **public**; machine-readable menu + checkout hint.
-- `POST /api/agent/checkout` — create a payment intent → { intentId, amount, payUrl }.
+- `POST /api/agent/checkout` — create a payment intent → { intentId, amount, payUrl,
+  **intent** (signed payload + signature) }.
+- `POST /api/agent/intent` — create + **sign** a standalone spending intent → { id, payload, signature }.
+- `POST /api/agent/intent/verify` — `{ payload, signature }` → `{ valid }` (constant-time HMAC check).
 - `GET /.well-known/agent-card.json` — capabilities incl. `get_catalog` + `checkout`.
+
+## Verifiable Intent Framework
+- Every checkout is signed (HMAC-SHA256 over a canonical payload) so the merchant / a
+  relying bank can cryptographically confirm exactly what the agent authorised.
+- Signing secret: `AGENT_INTENT_SECRET` → falls back to `JWT_SECRET` → dev default.
+  Set `AGENT_INTENT_SECRET` as a Worker secret in production.
+- Signed intents are persisted to the `agent_intents` table (`db/35`).
 
 ## Conventions
 - Checkout reuses the existing public pay URL (`/pay?i=` → `/api/invoices/payinfo`)

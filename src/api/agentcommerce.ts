@@ -1,5 +1,6 @@
 import { getSql } from "@/lib/db";
 import { envVar } from "@/lib/env";
+import { signIntent, verifyIntent, type IntentPayload } from "@/lib/agent-intent";
 import { createInvoice, type LineItem } from "@/lib/invoices";
 import { getMenu } from "@/lib/menu";
 
@@ -34,6 +35,16 @@ function wholeNumber(value: unknown): number {
 function isTrusted(request: Request, env: unknown): boolean {
   const key = envVar(env, "A2A_API_KEY") ?? envVar(env, "OMNI_API_KEY");
   return Boolean(key) && request.headers.get("x-api-key") === key;
+}
+
+// Secret for signing verifiable agent intents (falls back to JWT_SECRET, then a
+// dev default). Set AGENT_INTENT_SECRET as a Worker secret in production.
+function intentSecret(env: unknown): string {
+  return (
+    envVar(env, "AGENT_INTENT_SECRET") ??
+    envVar(env, "JWT_SECRET") ??
+    "pesaswap-dev-intent"
+  );
 }
 
 type CheckoutItemInput = {
@@ -124,16 +135,109 @@ export async function handleAgentCommerceRoute(
 
       if ("error" in result) return json({ error: result.error }, 400);
 
+      // Verifiable Intent: sign this checkout so the merchant (and any relying
+      // party) can cryptographically confirm what the agent authorised.
+      const intentPayload: IntentPayload = {
+        agentRef:
+          request.headers.get("x-agent-id") ||
+          (isTrusted(request, env) ? "trusted-agent" : "public-agent"),
+        userRef: body.customerRef ?? "",
+        merchant: venue,
+        amount: result.amount,
+        currency: "KES",
+        timestamp: Date.now(),
+        context: "Agentic checkout",
+      };
+      const signature = await signIntent(intentPayload, intentSecret(env));
+      const sql = getSql(env);
+      if (sql) {
+        try {
+          await sql`
+            INSERT INTO agent_intents
+              (venue_id, agent_ref, user_ref, merchant, amount, currency, context, signature, status)
+              VALUES (${venue}, ${intentPayload.agentRef}, ${intentPayload.userRef ?? null},
+                      ${venue}, ${result.amount}, 'KES', ${intentPayload.context ?? null},
+                    ${signature}, 'checkout')`;
+        } catch {
+          /* audit insert is best-effort; the invoice already exists */
+        }
+      }
+
       return json({
         intentId: result.number,
         amount: result.amount,
         currency: "KES",
         payUrl: result.payLink,
         status: "created",
+        intent: { ...intentPayload, signature },
       });
     } catch {
       return json({ error: "could not create checkout" }, 500);
     }
+  }
+
+  // Create + sign a standalone agent intent (Agent Pay Gateway handshake).
+  if (path === "/api/agent/intent" && request.method === "POST") {
+    const body = (await request.json().catch(() => ({}))) as {
+      venue?: string;
+      agentRef?: string;
+      userRef?: string;
+      merchant?: string;
+      amount?: number | string;
+      currency?: string;
+      context?: string;
+    };
+    const venue = String(body.venue || "main").trim() || "main";
+    const amount = wholeNumber(body.amount);
+    if (amount <= 0) return json({ error: "amount required" }, 400);
+    if (!isTrusted(request, env) && amount > UNTRUSTED_AMOUNT_CAP) {
+      return json({ error: "amount exceeds public cap" }, 400);
+    }
+    const payload: IntentPayload = {
+      agentRef: String(
+        body.agentRef || request.headers.get("x-agent-id") || "public-agent",
+      ),
+      userRef: String(body.userRef || ""),
+      merchant: String(body.merchant || venue),
+      amount,
+      currency: String(body.currency || "KES"),
+      timestamp: Date.now(),
+      context: String(body.context || ""),
+    };
+    const signature = await signIntent(payload, intentSecret(env));
+    const sql = getSql(env);
+    let id: string | undefined;
+    if (sql) {
+      try {
+        const [row] = await sql`
+          INSERT INTO agent_intents
+            (venue_id, agent_ref, user_ref, merchant, amount, currency, context, signature, status)
+          VALUES (${venue}, ${payload.agentRef}, ${payload.userRef ?? null}, ${payload.merchant},
+                  ${amount}, ${payload.currency}, ${payload.context ?? null}, ${signature}, 'signed')
+          RETURNING id`;
+        id = (row as { id?: string } | undefined)?.id;
+      } catch {
+        /* best-effort persistence */
+      }
+    }
+    return json({ id, payload, signature }, 201);
+  }
+
+  // Verify a previously signed intent (constant-time HMAC check).
+  if (path === "/api/agent/intent/verify" && request.method === "POST") {
+    const body = (await request.json().catch(() => ({}))) as {
+      payload?: IntentPayload;
+      signature?: string;
+    };
+    if (!body.payload || !body.signature) {
+      return json({ error: "payload and signature required" }, 400);
+    }
+    const valid = await verifyIntent(
+      body.payload,
+      body.signature,
+      intentSecret(env),
+    );
+    return json({ valid });
   }
 
   return null;

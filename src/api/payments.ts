@@ -14,6 +14,7 @@ import {
   postRefundEntry,
 } from "@/lib/accounting";
 import { recordPayment as recordInvoicePayment } from "@/lib/invoicing";
+import { resolveInitiator } from "@/lib/tx-initiator";
 
 type Env = {
   PESASWAP_API_KEY: string;
@@ -144,6 +145,8 @@ async function recordLedger(
     typeof meta.staff_id === "string" && /^[0-9a-f-]{36}$/i.test(meta.staff_id)
       ? meta.staff_id
       : null;
+  // Agent Pay Gateway: tag human- vs agent-initiated transactions.
+  const initiator = resolveInitiator(meta);
 
   // Loyalty is keyed on the customer phone (the unique loyalty reference). Award
   // points only on the FIRST transition into a succeeded state, so re-recording
@@ -172,10 +175,10 @@ async function recordLedger(
   try {
     await sql`
       INSERT INTO payments
-        (id, venue_id, kind, amount, currency, status, provider_ref, reference, metadata, tip_amount, staff_id)
+        (id, venue_id, kind, amount, currency, status, provider_ref, reference, metadata, tip_amount, staff_id, initiator)
       VALUES (${rec.id}, ${rec.venue ?? null}, ${rec.kind ?? "payment"}, ${rec.amount},
               ${rec.currency}, ${rec.status}, ${rec.providerRef ?? null}, ${rec.reference ?? null},
-              ${sql.json(JSON.parse(JSON.stringify(rec.metadata ?? {})))}, ${tipAmount}, ${staffId})
+              ${sql.json(JSON.parse(JSON.stringify(rec.metadata ?? {})))}, ${tipAmount}, ${staffId}, ${initiator})
       ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status,
         tip_amount = EXCLUDED.tip_amount,
         staff_id = COALESCE(EXCLUDED.staff_id, payments.staff_id),

@@ -55,7 +55,10 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
   drives the pay flow. **Never trust an amount from the URL.**
 - **`recordLedger` side effects (on a succeeded payment):** accrues loyalty points
   to the contact by **phone** (unique key), and marks a QR `orders.paid_at`
-  (one-time-use) when `metadata.order_id` is present — both best-effort.
+  (one-time-use) when `metadata.order_id` is present — both best-effort. It also
+  tags each row with an **`initiator`** (`human` | `agent`) via
+  `resolveInitiator(metadata)` — explicit `metadata.initiator` wins, else an
+  `agent_id`/`agentRef` or an A2A `flow_type`/`channel` marks it `agent` (`db/35`).
 - **Add a webhook side effect:** update `handleWebhook` in `payments.ts` and
   persist status changes to the `payments` ledger via `recordLedger`.
 
