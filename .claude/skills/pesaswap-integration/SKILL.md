@@ -64,13 +64,41 @@ Amounts are **minor units** (cents); currency defaults to `KES` in this app.
   `loadHyperLoader`, `buildPaymentMetadata`) + `VITE_PESASWAP_PUBLISHABLE_KEY`.
 - `src/routes/pay.tsx` — hosted checkout (`/pay?i=INV-XXX`, QR `?tapgo=`).
 - `db/13-payments.sql` — durable `payments` ledger (minor units).
-- **Saved methods / one-tap reuse** — `handleWebhook`'s `payment.succeeded` branch
+- **Saved methods / one-tap reuse** — `handleWebhook`'s success branch
   persists tokenised card/wallet methods (token id + brand + last4, **never a PAN**)
   to `customer_payment_methods` (`db/37` + `db/38`, UNIQUE `(phone, COALESCE(
   provider_ref, kind))`). Read back per phone via
   `GET /api/customers/payment-methods?phone=`; merchants review all of them at
   `/dashboard/payment-methods` (`GET /api/payment-methods`, manager+). This is the
   Customers + Payment Methods API surface, wired to the customer's **phone**.
+
+## Webhooks — payload & signature (verified against docs.pesaswap.io)
+- **Envelope** (Hyperswitch-derived): `{ event_type, event_id, content: { object } }`.
+  Event names are **underscored**: `payment_succeeded`, `payment_failed`,
+  `payment_captured`, `payment_cancelled`, `refund_succeeded`, `dispute_opened`, …
+  (NOT dotted `payment.succeeded`). `handleWebhook` reads `body.event_type ?? body.type`
+  and the resource from `body.content.object ?? body.data`, so it accepts both the live
+  shape and our simulator.
+- **Signature**: HMAC over the **raw body** with the business-profile
+  `payments_response_hash_key` (= `PESASWAP_WEBHOOK_SECRET`). Preferred header
+  `x-webhook-signature-512` (**HMAC-SHA512**), fallback `x-webhook-signature-256`
+  (HMAC-SHA256); hex digest, compared case-insensitively + constant-time.
+  **Fail-closed**: 503 if the secret is unset, 401 on a bad/missing signature.
+- **Idempotent by design**: PesaSwap may deliver a webhook more than once.
+  `recordLedger` gates loyalty accrual + saved-method writes on `firstSuccess`
+  (prior-status check) and every write is `ON CONFLICT … DO UPDATE`, so a duplicate
+  `payment_succeeded` never double-awards points (no `event_id` store needed).
+- Register the destination `https://<app>/api/webhooks/pesaswap` in the dashboard
+  (Developer → Payment Settings → Webhook Setup) with the same secret.
+
+## Saving a card/wallet (setup_future_usage)
+A card/wallet is only tokenised (and therefore only surfaces on a webhook to persist)
+when the **create** call sets `setup_future_usage: "on_session" | "off_session"` **and**
+a `customer_id` is attached; the SDK collects consent (`customer_acceptance`) on confirm.
+Reuse a saved token off-session with `off_session: true` + `recurring_details: { type:
+"payment_method_id", data: "pm_…" }`. `handleCreatePayment` forwards all three fields
+when present (additive — omitted by the default M-Pesa STK flow). List a customer's
+saved methods provider-side with `GET /customers/{customer_id}/payment_methods`.
 
 ## Go-live checklist
 1. Create a **production API key** in the PesaSwap dashboard (keep sandbox for tests).

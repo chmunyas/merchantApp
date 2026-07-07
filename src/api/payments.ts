@@ -54,6 +54,12 @@ type PaymentRequest = {
   customer_id?: string;
   payment_method?: string;
   capture?: boolean;
+  // Saved-method lifecycle (PesaSwap/Hyperswitch). Tokenise the card/wallet used in
+  // this payment for future reuse; the SDK sends `customer_acceptance` in confirm.
+  setup_future_usage?: "on_session" | "off_session";
+  // Charge a previously saved token off-session (MIT); pair with recurring_details.
+  off_session?: boolean;
+  recurring_details?: { type: string; data: string };
 };
 
 type RefundRequest = {
@@ -511,6 +517,16 @@ async function handleCreatePayment(
         customer_id: body.customer_id,
         capture_method: body.capture === false ? "manual" : "automatic",
         confirm: false, // client will confirm
+        // Save the card/wallet for future reuse when requested. Only meaningful with
+        // a customer_id; the SDK collects consent (customer_acceptance) on confirm.
+        ...(body.setup_future_usage
+          ? { setup_future_usage: body.setup_future_usage }
+          : {}),
+        // Reuse a previously saved token off-session (MIT / one-tap).
+        ...(body.off_session ? { off_session: true } : {}),
+        ...(body.recurring_details
+          ? { recurring_details: body.recurring_details }
+          : {}),
       }),
     });
 
@@ -840,57 +856,67 @@ async function handleWebhook(
 ): Promise<Response> {
   const env = getEnv(runtimeEnv);
   const rawBody = await request.text();
-  const signature = request.headers.get("x-pesaswap-signature") || "";
+  // PesaSwap signs each outgoing webhook with an HMAC over the raw body using the
+  // business-profile `payments_response_hash_key` (our PESASWAP_WEBHOOK_SECRET).
+  // Preferred: HMAC-SHA512 in `x-webhook-signature-512`; fallback HMAC-SHA256 in
+  // `x-webhook-signature-256`. (`x-pesaswap-signature` kept for our own simulator.)
+  const sig512 = request.headers.get("x-webhook-signature-512") || "";
+  const sig256 =
+    request.headers.get("x-webhook-signature-256") ||
+    request.headers.get("x-pesaswap-signature") ||
+    "";
 
   // Signature verification is MANDATORY (fail closed). Without it, a forged
-  // `payment.succeeded` event would be broadcast to the merchant dashboard as a
+  // `payment_succeeded` event would be broadcast to the merchant dashboard as a
   // real sale. Reject when the secret is unconfigured or the signature is bad.
   if (!env.PESASWAP_WEBHOOK_SECRET) {
     console.error("[PesaSwap] Webhook secret not configured; rejecting webhook");
     return jsonResponse({ error: { message: "Webhook not configured" } }, 503);
   }
-  const isValid = await verifyWebhookSignature(
-    rawBody,
-    signature,
-    env.PESASWAP_WEBHOOK_SECRET,
-  );
+  const isValid = sig512
+    ? await verifyWebhookSignature(rawBody, sig512, env.PESASWAP_WEBHOOK_SECRET, "SHA-512")
+    : sig256
+      ? await verifyWebhookSignature(rawBody, sig256, env.PESASWAP_WEBHOOK_SECRET, "SHA-256")
+      : false;
   if (!isValid) {
-    console.warn("[PesaSwap] Invalid webhook signature");
+    console.warn("[PesaSwap] Invalid or missing webhook signature");
     return jsonResponse({ error: { message: "Invalid signature" } }, 401);
   }
 
-  const event = JSON.parse(rawBody) as {
-    type: string;
-    data: {
-      payment_id?: string;
-      id?: string;
-      status?: string;
-      amount?: number;
-      currency?: string;
-      metadata?: Record<string, unknown>;
-      payment_method?: {
-        id?: string;
-        type?: string; // card | apple_pay | google_pay | mpesa
-        card?: { brand?: string; last4?: string };
-        wallet?: { type?: string };
-      };
-    };
-  };
+  const body = JSON.parse(rawBody) as Record<string, any>;
+  // PesaSwap (Hyperswitch-derived) envelope: { event_type, event_id, content:{ object } }
+  // with underscore event names (payment_succeeded …). Our simulator uses { type, data }
+  // with dotted names. Accept BOTH shapes.
+  const eventType: string = body.event_type || body.type || "";
+  const resource: Record<string, any> =
+    body.content?.object || body.content || body.data || {};
 
-  console.info(`[PesaSwap] Webhook: ${event.type}`, event.data?.payment_id || event.data?.id);
+  console.info(
+    `[PesaSwap] Webhook: ${eventType}`,
+    resource.payment_id || resource.id || body.event_id || "",
+  );
 
-  switch (event.type) {
-    case "payment_intent.succeeded":
-    case "payment.succeeded": {
-      const paymentId = event.data.payment_id || event.data.id || "";
+  const isSuccess =
+    eventType === "payment_succeeded" ||
+    eventType === "payment_captured" ||
+    eventType === "payment.succeeded" ||
+    eventType === "payment_intent.succeeded";
+  const isFailure =
+    eventType === "payment_failed" ||
+    eventType === "payment_cancelled" ||
+    eventType === "payment.failed" ||
+    eventType === "payment_intent.payment_failed";
+
+  if (isSuccess) {
+      const paymentId = resource.payment_id || resource.id || "";
       const payment = payments.get(paymentId);
       if (payment) {
         payment.status = "succeeded";
       }
 
       // Award loyalty points
-      const metadata = payment?.metadata || event.data.metadata || {};
-      const amount = payment?.amount || event.data.amount || 0;
+      const metadata = (payment?.metadata || resource.metadata || {}) as Record<string, unknown>;
+      const amount = payment?.amount || resource.amount || 0;
       const venue =
         (metadata.venue as string) || (metadata.merchant_id as string) || null;
 
@@ -903,7 +929,7 @@ async function handleWebhook(
           amount: Number(amount) || 0,
           currency:
             (payment?.currency as string) ||
-            (event.data.currency as string) ||
+            (resource.currency as string) ||
             "KES",
           status: "succeeded",
           venue,
@@ -915,21 +941,22 @@ async function handleWebhook(
       }
 
       // Persist a tokenised card / wallet (Apple Pay / Google Pay) as a saved method
-      // (SAQ-A: only the token + brand/last4 for display, never a PAN).
-      const pm = event.data.payment_method;
+      // (SAQ-A: only the token + brand/last4 for display, never a PAN). Handles both
+      // our simulator shape and the live Hyperswitch payment-method shape.
+      const saved = extractSavedMethod(resource);
       const pmPhone = (metadata.customer_phone as string) || "";
-      if (pm?.id && pmPhone && pm.type && pm.type !== "mpesa") {
+      if (saved && pmPhone) {
         try {
           const sql = getSql(runtimeEnv);
           if (sql) {
-            const brand = pm.card?.brand ?? pm.wallet?.type ?? pm.type;
-            const last4 = pm.card?.last4 ?? null;
-            const kind = pm.type === "card" ? "card" : "wallet";
+            const brand = saved.brand;
+            const last4 = saved.last4;
+            const kind = saved.kind;
             const label = last4 ? `${brand} •••${last4}` : brand;
             await sql`
               INSERT INTO customer_payment_methods
                 (venue_id, phone, kind, label, provider_ref, brand, last4)
-              VALUES (${venue}, ${pmPhone}, ${kind}, ${label}, ${pm.id}, ${brand}, ${last4})
+              VALUES (${venue}, ${pmPhone}, ${kind}, ${label}, ${saved.id}, ${brand}, ${last4})
               ON CONFLICT (phone, COALESCE(provider_ref, kind))
               DO UPDATE SET last_used_at = now(), label = EXCLUDED.label,
                             brand = EXCLUDED.brand, last4 = EXCLUDED.last4`;
@@ -946,7 +973,7 @@ async function handleWebhook(
         data: {
           payment_id: paymentId,
           amount,
-          currency: payment?.currency || "KES",
+          currency: (payment?.currency as string) || (resource.currency as string) || "KES",
           table_number: metadata.table_number as number | undefined,
           customer_phone: (metadata.customer_phone as string) || "",
           customer_name: (metadata.customer_name as string) || undefined,
@@ -959,32 +986,26 @@ async function handleWebhook(
           timestamp: new Date().toISOString(),
         },
       });
-      break;
-    }
-
-    case "payment_intent.payment_failed":
-    case "payment.failed": {
-      const paymentId = event.data.payment_id || event.data.id || "";
+  } else if (isFailure) {
+      const paymentId = resource.payment_id || resource.id || "";
       const payment = payments.get(paymentId);
       if (payment) {
         payment.status = "failed";
       }
 
-      const metadata = payment?.metadata || {};
+      const metadata = (payment?.metadata || resource.metadata || {}) as Record<string, unknown>;
       const merchantId = (metadata.merchant_id as string) || "";
       broadcastToMerchant(merchantId, {
         type: "payment.failed",
         data: {
           payment_id: paymentId,
-          amount: payment?.amount || 0,
-          currency: payment?.currency || "KES",
+          amount: payment?.amount || resource.amount || 0,
+          currency: (payment?.currency as string) || (resource.currency as string) || "KES",
           table_number: metadata.table_number as number | undefined,
           customer_phone: (metadata.customer_phone as string) || "",
           timestamp: new Date().toISOString(),
         },
       });
-      break;
-    }
   }
 
   return jsonResponse({ received: true });
@@ -1081,10 +1102,15 @@ function broadcastToMerchant(merchantId: string, event: unknown): void {
 
 // --- Webhook Signature Verification ---
 
-async function verifyWebhookSignature(payload: string, signature: string, secret: string): Promise<boolean> {
+async function verifyWebhookSignature(
+  payload: string,
+  signature: string,
+  secret: string,
+  hash: "SHA-256" | "SHA-512" = "SHA-256",
+): Promise<boolean> {
   try {
     const encoder = new TextEncoder();
-    const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, [
+    const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash }, false, [
       "sign",
     ]);
     const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(payload));
@@ -1092,16 +1118,59 @@ async function verifyWebhookSignature(payload: string, signature: string, secret
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("");
 
-    // Constant-time comparison
-    if (expected.length !== signature.length) return false;
+    // Constant-time comparison (case-insensitive hex)
+    const provided = signature.toLowerCase();
+    if (expected.length !== provided.length) return false;
     let mismatch = 0;
     for (let i = 0; i < expected.length; i++) {
-      mismatch |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
+      mismatch |= expected.charCodeAt(i) ^ provided.charCodeAt(i);
     }
     return mismatch === 0;
   } catch {
     return false;
   }
+}
+
+// Normalise a saved (tokenised) card/wallet from a webhook resource. Supports both
+// our simulator shape ({ payment_method: { id, type, card, wallet } }) and the live
+// Hyperswitch shape ({ payment_method: "card", payment_method_id, payment_method_data,
+// payment_method_type }). Returns null for M-Pesa/bank or un-tokenised payments —
+// only methods the customer chose to save (setup_future_usage) carry a token id.
+function extractSavedMethod(resource: Record<string, any>): {
+  id: string;
+  kind: "card" | "wallet";
+  brand: string;
+  last4: string | null;
+} | null {
+  const pm = resource.payment_method;
+  if (pm && typeof pm === "object") {
+    if (!pm.id || !pm.type || pm.type === "mpesa") return null;
+    const kind = pm.type === "card" ? "card" : "wallet";
+    const brand = pm.card?.brand ?? pm.wallet?.type ?? pm.type;
+    return { id: String(pm.id), kind, brand: String(brand), last4: pm.card?.last4 ?? null };
+  }
+  if (typeof pm === "string") {
+    const id = resource.payment_method_id;
+    if (!id) return null;
+    const card = resource.payment_method_data?.card;
+    if (pm === "card") {
+      return {
+        id: String(id),
+        kind: "card",
+        brand: String(card?.card_network ?? card?.brand ?? "card"),
+        last4: card?.last4 ?? card?.last_four_digits ?? null,
+      };
+    }
+    if (pm === "wallet") {
+      return {
+        id: String(id),
+        kind: "wallet",
+        brand: String(resource.payment_method_type ?? "wallet"),
+        last4: null,
+      };
+    }
+  }
+  return null;
 }
 
 // --- Utilities ---

@@ -31,9 +31,12 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
 - `POST /api/refunds` — **public**, rate-limited; over-refund guarded.
 - `POST /api/payments/:id/capture` — **gated**; captures a `capture:false`
   (manual-capture / card pre-auth hold) payment. Simulated in test mode.
-- `POST /api/webhooks/pesaswap` — provider webhook. On `payment.succeeded` it
-  confirms the ledger (`recordLedger`) and **persists tokenised card/wallet saved
-  methods** (SAQ-A: only the token id, brand, last4) to `customer_payment_methods`.
+- `POST /api/webhooks/pesaswap` — provider webhook. Verifies HMAC-SHA512 in
+  `x-webhook-signature-512` (fallback `-256`) over the raw body; **fail-closed**.
+  On `payment_succeeded`/`payment_captured` (Hyperswitch envelope `{ event_type,
+  content:{ object } }`) it confirms the ledger (`recordLedger`, idempotent) and
+  **persists tokenised card/wallet saved methods** (SAQ-A: only the token id, brand,
+  last4) to `customer_payment_methods`.
 - `GET /api/payment-methods` — **gated (manager+)** merchant view: all saved
   customer methods joined to contacts (name/tier) + M-Pesa/card/wallet counts.
   Renders at `/dashboard/payment-methods`.
