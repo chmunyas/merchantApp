@@ -764,20 +764,36 @@ async function handleRetryPayment(
     );
   }
   const meta = (row.metadata ?? {}) as Record<string, unknown>;
+  // Optional overrides from the merchant re-request modal: a new amount and/or a
+  // corrected phone. Amount is in MINOR units (cents), matching the ledger.
+  const overrides = (await request.json().catch(() => ({}))) as {
+    amount?: number;
+    phone?: string;
+  };
+  if (typeof overrides.phone === "string" && overrides.phone.trim()) {
+    meta.customer_phone = overrides.phone.trim();
+  }
   if (!meta.customer_phone) {
     return jsonResponse(
       { error: { message: "no customer phone on file to re-request" } },
       400,
     );
   }
+  const amount =
+    typeof overrides.amount === "number" && overrides.amount > 0
+      ? Math.round(overrides.amount)
+      : Number(row.amount) || 0;
+  if (amount <= 0) {
+    return jsonResponse({ error: { message: "amount must be positive" } }, 400);
+  }
 
   // Reuse the full create path (venue default + STK + ledger recording) by replaying
-  // the original parameters as a fresh create request.
+  // the original parameters (with any overrides) as a fresh create request.
   const replay = new Request("https://internal/api/payments/create", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      amount: Number(row.amount) || 0,
+      amount,
       currency: String(row.currency ?? "KES"),
       description: `Re-request of ${paymentId}`,
       metadata: meta,
@@ -826,6 +842,68 @@ async function handleListPayments(
           WHERE venue_id = ${venue}
           ORDER BY created_at DESC
           LIMIT ${limit}`;
+
+    // Capture all: reconcile any still-"processing" live payments against PesaSwap
+    // so the ledger reflects the terminal state even if the customer closed the tab
+    // before the client finished polling. Bounded (only pay_ ids older than 45s,
+    // capped) so the list stays fast; recordLedger is idempotent.
+    const env = getEnv(workerEnv);
+    if (env.PESASWAP_API_KEY) {
+      const stale = rows
+        .filter(
+          (r) =>
+            String(r.status) === "processing" &&
+            String(r.id).startsWith("pay_") &&
+            Date.now() - new Date(r.created_at as string).getTime() > 45_000,
+        )
+        .slice(0, 10);
+      if (stale.length) {
+        await Promise.all(
+          stale.map(async (r) => {
+            try {
+              const resp = await fetch(`${env.PESASWAP_URL}/payments/${r.id}`, {
+                headers: {
+                  "api-key": env.PESASWAP_API_KEY,
+                  Accept: "application/json",
+                },
+              });
+              if (!resp.ok) return;
+              const p = (await resp.json()) as Record<string, any>;
+              const mapped = mapPesaSwapStatus(p.status);
+              if (mapped === "processing") return;
+              const meta = (p.metadata ?? {}) as Record<string, unknown>;
+              await recordLedger(workerEnv, {
+                id: String(r.id),
+                amount: Number(p.amount) || Number(r.amount) || 0,
+                currency: (p.currency as string) || String(r.currency ?? "KES"),
+                status: mapped === "cancelled" ? "failed" : mapped,
+                venue:
+                  (meta.venue as string) || (meta.merchant_id as string) || venue,
+                reference: (meta.till as string) || null,
+                providerRef: (p.connector_transaction_id as string) || null,
+                metadata:
+                  mapped === "succeeded"
+                    ? meta
+                    : {
+                        ...meta,
+                        error_code: p.error_code ?? undefined,
+                        error_message: p.error_message ?? undefined,
+                      },
+              });
+              // Reflect the reconciled state in this response without a re-query.
+              (r as Record<string, unknown>).status =
+                mapped === "cancelled" ? "failed" : mapped;
+              if (p.connector_transaction_id) {
+                (r as Record<string, unknown>).provider_ref =
+                  p.connector_transaction_id;
+              }
+            } catch {
+              /* best-effort reconcile */
+            }
+          }),
+        );
+      }
+    }
 
     return jsonResponse({
       payments: rows.map((r) => {

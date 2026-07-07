@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { format, isSameDay, subDays } from "date-fns";
-import { Download, RotateCcw, Search } from "lucide-react";
+import { Download, RotateCcw, Search, Send } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -686,7 +686,7 @@ function LivePaymentsPanel({
   const [statusFilter, setStatusFilter] = useState<
     "all" | "succeeded" | "processing" | "failed"
   >("all");
-  const [retrying, setRetrying] = useState<string | null>(null);
+  const [modalTarget, setModalTarget] = useState<LivePayment | null>(null);
 
   const succeeded = payments.filter((p) =>
     ["succeeded", "paid", "captured"].includes(p.status),
@@ -701,27 +701,6 @@ function LivePaymentsPanel({
       return ["failed", "cancelled"].includes(p.status);
     return p.status === statusFilter;
   });
-
-  async function reRequest(id: string) {
-    setRetrying(id);
-    try {
-      const res = await authFetch(`/api/payments/${id}/retry`, {
-        method: "POST",
-      });
-      if (res.ok) {
-        toast.success("M-Pesa prompt re-sent to the customer");
-      } else {
-        const d = (await res.json().catch(() => ({}))) as {
-          error?: { message?: string };
-        };
-        toast.error(d.error?.message || "Couldn't re-request payment");
-      }
-    } catch {
-      toast.error("Couldn't re-request payment");
-    } finally {
-      setRetrying(null);
-    }
-  }
 
   return (
     <div className="rounded-2xl border border-border bg-card p-6">
@@ -836,12 +815,11 @@ function LivePaymentsPanel({
                     <td className="py-2 pr-4 text-right">
                       {canRetry && p.customerPhone ? (
                         <button
-                          onClick={() => reRequest(p.id)}
-                          disabled={retrying === p.id}
-                          className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                          onClick={() => setModalTarget(p)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
                         >
                           <RotateCcw className="h-3 w-3" />
-                          {retrying === p.id ? "Sending…" : "Re-request"}
+                          Re-request
                         </button>
                       ) : null}
                     </td>
@@ -851,6 +829,134 @@ function LivePaymentsPanel({
             </tbody>
           </table>
         )}
+      </div>
+
+      {modalTarget ? (
+        <ReRequestModal
+          payment={modalTarget}
+          onClose={() => setModalTarget(null)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+// Merchant re-request modal — edit the amount + phone, then re-send the M-Pesa STK.
+function ReRequestModal({
+  payment,
+  onClose,
+}: {
+  payment: LivePayment;
+  onClose: () => void;
+}) {
+  const [amountKes, setAmountKes] = useState(
+    String(Math.round(payment.amount / 100)),
+  );
+  const [phone, setPhone] = useState(payment.customerPhone ?? "");
+  const [sending, setSending] = useState(false);
+  const amount = Math.max(0, Math.round(Number(amountKes) || 0));
+
+  async function send() {
+    if (amount <= 0 || !phone) return;
+    setSending(true);
+    try {
+      const res = await authFetch(`/api/payments/${payment.id}/retry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: amount * 100, phone }),
+      });
+      if (res.ok) {
+        toast.success(`M-Pesa prompt for KES ${amount.toLocaleString()} sent to ${phone}`);
+        onClose();
+      } else {
+        const d = (await res.json().catch(() => ({}))) as {
+          error?: { message?: string };
+        };
+        toast.error(d.error?.message || "Couldn't re-request payment");
+      }
+    } catch {
+      toast.error("Couldn't re-request payment");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm rounded-3xl bg-card p-6 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex size-11 items-center justify-center rounded-2xl bg-emerald-100">
+            <RotateCcw className="size-5 text-emerald-600" />
+          </div>
+          <div>
+            <h3 className="text-base font-bold">Re-request payment</h3>
+            <p className="text-xs text-muted-foreground">
+              Send a fresh M-Pesa prompt to the customer
+            </p>
+          </div>
+        </div>
+
+        <label className="mb-1 block text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+          Amount
+        </label>
+        <div className="mb-3 flex items-center gap-2">
+          <button
+            onClick={() => setAmountKes(String(Math.max(0, amount - 50)))}
+            className="size-11 shrink-0 rounded-xl border border-border text-lg font-bold text-muted-foreground"
+          >
+            −
+          </button>
+          <div className="flex flex-1 items-center rounded-xl border border-border bg-background px-3">
+            <span className="text-sm font-mono font-bold text-muted-foreground">
+              KES
+            </span>
+            <input
+              type="tel"
+              inputMode="numeric"
+              value={amountKes}
+              onChange={(e) => setAmountKes(e.target.value.replace(/[^0-9]/g, ""))}
+              className="w-full bg-transparent px-2 py-3 text-center text-2xl font-bold font-mono focus:outline-none"
+            />
+          </div>
+          <button
+            onClick={() => setAmountKes(String(amount + 50))}
+            className="size-11 shrink-0 rounded-xl border border-border text-lg font-bold text-muted-foreground"
+          >
+            +
+          </button>
+        </div>
+
+        <label className="mb-1 block text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+          Customer M-Pesa number
+        </label>
+        <input
+          type="tel"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          placeholder="+2547XXXXXXXX"
+          className="mb-5 w-full rounded-xl border border-border bg-background px-4 py-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        />
+
+        <button
+          onClick={send}
+          disabled={sending || amount <= 0 || !phone}
+          className="flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 py-3.5 text-sm font-bold text-white disabled:opacity-40"
+        >
+          <Send className="size-4" />
+          {sending ? "Sending…" : `Send prompt · KES ${amount.toLocaleString()}`}
+        </button>
+        <button
+          onClick={onClose}
+          className="mt-2 w-full rounded-2xl py-2.5 text-sm text-muted-foreground"
+        >
+          Cancel
+        </button>
       </div>
     </div>
   );

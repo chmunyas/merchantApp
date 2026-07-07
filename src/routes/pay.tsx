@@ -11,6 +11,7 @@ import {
   Camera,
   AlertCircle,
   Star,
+  Pencil,
 } from "lucide-react";
 import {
   executePayment,
@@ -214,7 +215,7 @@ function PayPage() {
     await processRealPayment(customerPhone);
   }
 
-  async function processRealPayment(phone: string) {
+  async function processRealPayment(phone: string, amountOverride?: number) {
     if (!paymentData) return;
     setState("processing");
     setErrorMsg("");
@@ -250,7 +251,7 @@ function PayPage() {
     (metadata as Record<string, unknown>).till = paymentData.till;
 
     const result = await executePayment({
-      amount: (payAmount ?? paymentData.amount) + payTip,
+      amount: (amountOverride ?? payAmount ?? paymentData.amount) + payTip,
       currency: "KES",
       metadata,
       phone,
@@ -300,12 +301,17 @@ function PayPage() {
     }
   }
 
-  function retryPayment() {
+  function retryPayment(overrideAmount?: number) {
     setErrorMsg("");
-    // Re-fire the SAME payment seamlessly (same phone + share) instead of making the
-    // guest re-enter everything — the common case is a cancelled/timed-out STK.
+    // Re-fire the SAME payment seamlessly (same phone + share) — or with a new
+    // amount when the guest edits it — instead of making them re-enter everything.
     if (paymentData && customerPhone) {
-      void processRealPayment(customerPhone);
+      if (typeof overrideAmount === "number" && overrideAmount > 0) {
+        setPayAmount(overrideAmount);
+        void processRealPayment(customerPhone, overrideAmount);
+      } else {
+        void processRealPayment(customerPhone);
+      }
     } else {
       setState("scanned");
       setPin("");
@@ -394,7 +400,12 @@ function PayPage() {
         )}
         {state === "processing" && <ProcessingState biometric={useBiometric} />}
         {state === "error" && (
-          <ErrorState message={errorMsg} onRetry={retryPayment} onCancel={reset} />
+          <ErrorState
+            message={errorMsg}
+            amount={(payAmount ?? paymentData?.amount ?? 0) + payTip}
+            onRetry={retryPayment}
+            onCancel={reset}
+          />
         )}
         {state === "success" && paymentData && (
           <SuccessState
@@ -1051,36 +1062,114 @@ function ProcessingState({ biometric }: { biometric: boolean }) {
 
 function ErrorState({
   message,
+  amount,
   onRetry,
   onCancel,
 }: {
   message: string;
-  onRetry: () => void;
+  amount: number;
+  onRetry: (newAmount?: number) => void;
   onCancel: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [amt, setAmt] = useState(String(Math.round(amount)));
+  const newAmount = Math.max(0, Math.round(Number(amt) || 0));
+  const changed = newAmount !== Math.round(amount) && newAmount > 0;
+
+  const bump = (delta: number) =>
+    setAmt(String(Math.max(0, (Number(amt) || 0) + delta)));
+
   return (
     <div className="space-y-5">
-      <div className="flex flex-col items-center py-8 space-y-4">
+      <div className="flex flex-col items-center py-6 space-y-4">
         <div className="size-20 rounded-full bg-red-100 flex items-center justify-center">
           <AlertCircle className="size-12 text-red-600" />
         </div>
         <div className="text-center">
-          <p className="text-lg font-bold text-red-700">Payment failed</p>
+          <p className="text-lg font-bold text-red-700">Payment didn&apos;t go through</p>
           <p className="text-sm text-muted-foreground mt-2">{message}</p>
         </div>
       </div>
 
+      {editing ? (
+        <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
+          <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+            New amount
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => bump(-50)}
+              className="size-11 shrink-0 rounded-xl border border-border text-lg font-bold text-muted-foreground"
+              aria-label="Decrease amount"
+            >
+              −
+            </button>
+            <div className="flex-1 flex items-center rounded-xl border border-border bg-background px-3">
+              <span className="text-sm font-mono font-bold text-muted-foreground">
+                KES
+              </span>
+              <input
+                type="tel"
+                inputMode="numeric"
+                value={amt}
+                onChange={(e) => setAmt(e.target.value.replace(/[^0-9]/g, ""))}
+                className="w-full bg-transparent px-2 py-3 text-center text-2xl font-bold font-mono focus:outline-none"
+                aria-label="New amount in KES"
+              />
+            </div>
+            <button
+              onClick={() => bump(50)}
+              className="size-11 shrink-0 rounded-xl border border-border text-lg font-bold text-muted-foreground"
+              aria-label="Increase amount"
+            >
+              +
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {[100, 200, 500, 1000].map((v) => (
+              <button
+                key={v}
+                onClick={() => setAmt(String(v))}
+                className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted-foreground hover:bg-muted"
+              >
+                KES {v.toLocaleString()}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-2xl bg-muted p-4 text-center">
+          <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+            Amount
+          </p>
+          <p className="text-2xl font-bold font-mono mt-1">
+            KES {Math.round(amount).toLocaleString()}
+          </p>
+        </div>
+      )}
+
       <button
-        onClick={onRetry}
-        className="w-full bg-foreground text-background py-4 rounded-2xl text-sm font-bold flex items-center justify-center gap-2"
+        onClick={() => onRetry(editing && changed ? newAmount : undefined)}
+        disabled={editing && newAmount <= 0}
+        className="w-full bg-emerald-600 text-white py-4 rounded-2xl text-base font-bold flex items-center justify-center gap-2 disabled:opacity-40"
       >
-        <Zap className="size-4" />
-        Try Again
+        <Zap className="size-5" />
+        {editing && changed
+          ? `Retry with KES ${newAmount.toLocaleString()}`
+          : "Try again"}
+      </button>
+
+      <button
+        onClick={() => setEditing((v) => !v)}
+        className="w-full border border-border py-3 rounded-2xl text-sm font-semibold flex items-center justify-center gap-2"
+      >
+        <Pencil className="size-4" />
+        {editing ? "Keep original amount" : "Change amount"}
       </button>
 
       <button
         onClick={onCancel}
-        className="w-full border border-border py-3 rounded-2xl text-sm text-muted-foreground"
+        className="w-full py-2 rounded-2xl text-sm text-muted-foreground"
       >
         Cancel
       </button>
