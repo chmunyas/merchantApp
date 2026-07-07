@@ -52,6 +52,7 @@ import { Route as DashboardKnowledgeRouteImport } from './routes/dashboard/knowl
 import { Route as DashboardInvoicesRouteImport } from './routes/dashboard/invoices'
 import { Route as DashboardInventoryRouteImport } from './routes/dashboard/inventory'
 import { Route as DashboardInboxRouteImport } from './routes/dashboard/inbox'
+import { Route as DashboardForecastRouteImport } from './routes/dashboard/forecast'
 import { Route as DashboardFloorplanRouteImport } from './routes/dashboard/floorplan'
 import { Route as DashboardEnquiriesRouteImport } from './routes/dashboard/enquiries'
 import { Route as DashboardDepositsRouteImport } from './routes/dashboard/deposits'
@@ -281,6 +282,11 @@ const DashboardInboxRoute = DashboardInboxRouteImport.update({
   path: '/inbox',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardForecastRoute = DashboardForecastRouteImport.update({
+  id: '/forecast',
+  path: '/forecast',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardFloorplanRoute = DashboardFloorplanRouteImport.update({
   id: '/floorplan',
   path: '/floorplan',
@@ -379,6 +385,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/deposits': typeof DashboardDepositsRoute
   '/dashboard/enquiries': typeof DashboardEnquiriesRoute
   '/dashboard/floorplan': typeof DashboardFloorplanRoute
+  '/dashboard/forecast': typeof DashboardForecastRoute
   '/dashboard/inbox': typeof DashboardInboxRoute
   '/dashboard/inventory': typeof DashboardInventoryRoute
   '/dashboard/invoices': typeof DashboardInvoicesRoute
@@ -435,6 +442,7 @@ export interface FileRoutesByTo {
   '/dashboard/deposits': typeof DashboardDepositsRoute
   '/dashboard/enquiries': typeof DashboardEnquiriesRoute
   '/dashboard/floorplan': typeof DashboardFloorplanRoute
+  '/dashboard/forecast': typeof DashboardForecastRoute
   '/dashboard/inbox': typeof DashboardInboxRoute
   '/dashboard/inventory': typeof DashboardInventoryRoute
   '/dashboard/invoices': typeof DashboardInvoicesRoute
@@ -494,6 +502,7 @@ export interface FileRoutesById {
   '/dashboard/deposits': typeof DashboardDepositsRoute
   '/dashboard/enquiries': typeof DashboardEnquiriesRoute
   '/dashboard/floorplan': typeof DashboardFloorplanRoute
+  '/dashboard/forecast': typeof DashboardForecastRoute
   '/dashboard/inbox': typeof DashboardInboxRoute
   '/dashboard/inventory': typeof DashboardInventoryRoute
   '/dashboard/invoices': typeof DashboardInvoicesRoute
@@ -554,6 +563,7 @@ export interface FileRouteTypes {
     | '/dashboard/deposits'
     | '/dashboard/enquiries'
     | '/dashboard/floorplan'
+    | '/dashboard/forecast'
     | '/dashboard/inbox'
     | '/dashboard/inventory'
     | '/dashboard/invoices'
@@ -610,6 +620,7 @@ export interface FileRouteTypes {
     | '/dashboard/deposits'
     | '/dashboard/enquiries'
     | '/dashboard/floorplan'
+    | '/dashboard/forecast'
     | '/dashboard/inbox'
     | '/dashboard/inventory'
     | '/dashboard/invoices'
@@ -668,6 +679,7 @@ export interface FileRouteTypes {
     | '/dashboard/deposits'
     | '/dashboard/enquiries'
     | '/dashboard/floorplan'
+    | '/dashboard/forecast'
     | '/dashboard/inbox'
     | '/dashboard/inventory'
     | '/dashboard/invoices'
@@ -1023,6 +1035,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardInboxRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/forecast': {
+      id: '/dashboard/forecast'
+      path: '/forecast'
+      fullPath: '/dashboard/forecast'
+      preLoaderRoute: typeof DashboardForecastRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/floorplan': {
       id: '/dashboard/floorplan'
       path: '/floorplan'
@@ -1143,6 +1162,7 @@ interface DashboardRouteChildren {
   DashboardDepositsRoute: typeof DashboardDepositsRoute
   DashboardEnquiriesRoute: typeof DashboardEnquiriesRoute
   DashboardFloorplanRoute: typeof DashboardFloorplanRoute
+  DashboardForecastRoute: typeof DashboardForecastRoute
   DashboardInboxRoute: typeof DashboardInboxRoute
   DashboardInventoryRoute: typeof DashboardInventoryRoute
   DashboardInvoicesRoute: typeof DashboardInvoicesRoute
@@ -1175,6 +1195,7 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardDepositsRoute: DashboardDepositsRoute,
   DashboardEnquiriesRoute: DashboardEnquiriesRoute,
   DashboardFloorplanRoute: DashboardFloorplanRoute,
+  DashboardForecastRoute: DashboardForecastRoute,
   DashboardInboxRoute: DashboardInboxRoute,
   DashboardInventoryRoute: DashboardInventoryRoute,
   DashboardInvoicesRoute: DashboardInvoicesRoute,

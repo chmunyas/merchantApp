@@ -40,6 +40,7 @@ import { handleInvoiceRoute } from "./api/invoices";
 import { handleRecurringRoute } from "./api/recurring";
 import { handleA2aRoute } from "./api/a2a";
 import { handleMenuRoute } from "./api/menu";
+import { handleForecastRoute } from "./api/forecast";
 
 type ServerEntry = {
   fetch: (
@@ -214,6 +215,10 @@ export default {
           // Accounting: double-entry general ledger + financial statements
           const accountingResponse = await handleAccountingRoute(request, env);
           if (accountingResponse) return accountingResponse;
+
+          // Demand forecasting + smart prep (busy periods, prep quantities)
+          const forecastResponse = await handleForecastRoute(request, env);
+          if (forecastResponse) return forecastResponse;
 
           // Reputation: reviews capture (public) + list/stats + AI reply
           const reviewsResponse = await handleReviewsRoute(request, env);

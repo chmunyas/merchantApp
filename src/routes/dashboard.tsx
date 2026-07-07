@@ -7,6 +7,7 @@ import {
 import {
   Armchair,
   BarChart3,
+  CalendarClock,
   BookOpen,
   Bot,
   BriefcaseBusiness,
@@ -71,6 +72,7 @@ const navGroups = [
       { to: "/dashboard", label: "Overview", icon: LayoutDashboard },
       { to: "/dashboard/copilot", label: "Copilot", icon: Bot },
       { to: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
+      { to: "/dashboard/forecast", label: "Forecast", icon: CalendarClock },
     ],
   },
   {
