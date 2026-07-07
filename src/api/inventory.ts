@@ -1,5 +1,7 @@
 import { getSql } from "@/lib/db";
 import { requireAuth } from "@/api/auth";
+import { roleAtLeast } from "@/lib/rbac";
+import { planReorder, type InventoryStat } from "@/lib/reorder";
 import { venueFromPayload } from "@/lib/tenancy";
 
 const corsHeaders = {
@@ -71,6 +73,41 @@ export async function handleInventoryRoute(
       WHERE venue_id = ${venue} AND active = true AND stock <= reorder_level
       ORDER BY stock ASC, name`;
     return json({ items });
+  }
+
+  // Auto-reorder: predict stockouts from consumption velocity (negative stock
+  // movements over the window) and draft supplier-grouped purchase orders. Gated
+  // manager+ (exposes costs + supplier spend). Recommends only — never writes stock.
+  if (url.pathname === "/api/inventory/reorder" && request.method === "GET") {
+    if (!roleAtLeast(payload, "manager")) {
+      return json({ error: "forbidden" }, 403);
+    }
+    const rows = await sql`
+      SELECT i.id, i.name, i.sku, i.unit,
+             i.stock::float8 AS stock,
+             i.reorder_level::float8 AS reorder_level,
+             i.cost::float8 AS cost,
+             i.supplier,
+             COALESCE((
+               SELECT sum(-m.delta) FROM inventory_movements m
+               WHERE m.item_id = i.id AND m.delta < 0
+                 AND m.created_at >= now() - interval '30 days'
+             ), 0)::float8 AS consumed
+      FROM inventory_items i
+      WHERE i.venue_id = ${venue} AND i.active = true
+      ORDER BY i.name`;
+    const stats: InventoryStat[] = rows.map((r) => ({
+      id: String(r.id),
+      name: String(r.name),
+      sku: r.sku ? String(r.sku) : null,
+      unit: String(r.unit),
+      stock: Number(r.stock) || 0,
+      reorderLevel: Number(r.reorder_level) || 0,
+      cost: Math.round(Number(r.cost) || 0) / 100, // minor units → whole KES
+      supplier: r.supplier ? String(r.supplier) : null,
+      consumedInWindow: Number(r.consumed) || 0,
+    }));
+    return json({ currency: "KES", ...planReorder(stats, { windowDays: 30 }) });
   }
 
   if (url.pathname === "/api/inventory" && request.method === "POST") {
