@@ -99,8 +99,11 @@ The journey (and where each step lives today):
    and an auto-issued portal token (QR + link) in one screen — `POST /api/portal/token`
    now returns the loyalty snapshot; points use the shared `loyaltyPointsFor`
    (`src/lib/loyalty.ts`, `src/routes/pay.tsx`).
-4. **Auto-enroll loyalty in the QR flow (PARTIAL):** capture phone once, enrol, and
-   show the points balance inline.
+4. **Auto-enroll loyalty in the QR flow (DONE):** the QR order page looks up a
+   returning guest's points + tier inline as they type their phone
+   (`GET /api/loyalty/status`) and shows what this order will earn (shared
+   `loyaltyPointsFor`); enrolment completes automatically on payment
+   (`recordLedger`). `src/routes/q.$code.tsx`, `src/api/portal.ts`.
 5. **Customer offers / promo codes (MISSING):** redeemable discount codes and
    offer-based points multipliers in the order/pay flow.
 6. **Unify the journey (PARTIAL):** embed pay + receipt into the scan flow so it's

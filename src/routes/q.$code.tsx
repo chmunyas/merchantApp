@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Check, Loader2, Minus, Phone, Plus, ShoppingBag } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { loyaltyPointsFor } from "@/lib/loyalty";
 
 export const Route = createFileRoute("/q/$code")({
   component: UnifiedQrPage,
@@ -37,6 +38,15 @@ type CartItem = {
   qty: number;
 };
 
+type LoyaltyStatus = {
+  enrolled: boolean;
+  name?: string;
+  points?: number;
+  tier?: string;
+  nextTier?: string | null;
+  pointsToNext?: number;
+};
+
 function formatKes(amount: number): string {
   return `KES ${(amount / 100).toLocaleString(undefined, {
     minimumFractionDigits: amount % 100 === 0 ? 0 : 2,
@@ -61,6 +71,7 @@ function UnifiedQrPage() {
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loyalty, setLoyalty] = useState<LoyaltyStatus | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -92,6 +103,37 @@ function UnifiedQrPage() {
     () => cart.reduce((sum, item) => sum + item.price * item.qty, 0),
     [cart],
   );
+  const estPoints = useMemo(() => loyaltyPointsFor(total), [total]);
+  const venueId = payload?.venue.id;
+
+  // Look up a returning guest's loyalty inline (debounced) so points + tier show
+  // while they order — the "earn on this order" nudge. Read-only; never blocks.
+  useEffect(() => {
+    const digits = phone.replace(/[^0-9]/g, "");
+    if (!venueId || digits.length < 9) {
+      setLoyalty(null);
+      return;
+    }
+    let active = true;
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch(
+            `/api/loyalty/status?venue=${encodeURIComponent(venueId)}&phone=${encodeURIComponent(phone)}`,
+          );
+          if (!res.ok) return;
+          const d = (await res.json()) as LoyaltyStatus;
+          if (active) setLoyalty(d);
+        } catch {
+          /* the loyalty banner is a bonus — never block ordering */
+        }
+      })();
+    }, 500);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [phone, venueId]);
   const quantityById = useMemo(
     () =>
       cart.reduce<Record<string, number>>((acc, item) => {
@@ -274,6 +316,31 @@ function UnifiedQrPage() {
 
       <section className="fixed inset-x-0 bottom-0 border-t bg-white/95 p-4 shadow-2xl backdrop-blur">
         <div className="mx-auto max-w-md space-y-3">
+          {loyalty?.enrolled ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm">
+              <span className="font-semibold text-amber-800">
+                Welcome back{loyalty.name ? `, ${loyalty.name}` : ""}!
+              </span>{" "}
+              <span className="text-amber-700">
+                {loyalty.points?.toLocaleString()} pts · {loyalty.tier}
+              </span>
+              {loyalty.nextTier ? (
+                <span className="text-amber-600">
+                  {" "}
+                  · {loyalty.pointsToNext} to {loyalty.nextTier}
+                </span>
+              ) : null}
+              {estPoints > 0 ? (
+                <span className="text-amber-600"> · +{estPoints} this order</span>
+              ) : null}
+            </div>
+          ) : estPoints > 0 ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              💛 Add your number to earn{" "}
+              <span className="font-semibold">~{estPoints} points</span> &amp; join
+              rewards.
+            </div>
+          ) : null}
           <label className="flex items-center gap-2 rounded-2xl border bg-slate-50 px-3 py-2">
             <Phone className="h-4 w-4 text-slate-500" />
             <input

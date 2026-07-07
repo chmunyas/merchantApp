@@ -108,7 +108,8 @@ export async function handlePortalRoute(
   const url = new URL(request.url);
   if (
     !url.pathname.startsWith("/api/portal") &&
-    !url.pathname.startsWith("/api/rewards")
+    !url.pathname.startsWith("/api/rewards") &&
+    !url.pathname.startsWith("/api/loyalty")
   ) {
     return null;
   }
@@ -116,6 +117,32 @@ export async function handlePortalRoute(
 
   const sql = getSql(env);
   if (!sql) return json({ error: "database not configured" }, 503);
+
+  // Public loyalty lookup: show a returning guest their points + tier inline in the
+  // QR order flow (and estimate what this order will earn). Read-only; safe to be
+  // public + rate-limited. Returns { enrolled:false } for an unknown phone.
+  if (url.pathname === "/api/loyalty/status" && request.method === "GET") {
+    const venue =
+      String(url.searchParams.get("venue") ?? "main").trim() || "main";
+    const phone = cleanPhone(url.searchParams.get("phone"));
+    if (!phone) return json({ enrolled: false });
+    const [contact] = await sql`
+      SELECT name, points, tier FROM contacts
+      WHERE venue_id = ${venue} AND phone = ${phone}
+      ORDER BY created_at DESC
+      LIMIT 1`;
+    if (!contact) return json({ enrolled: false });
+    const points = Number(contact.points ?? 0);
+    const prog = tierProgress(points);
+    return json({
+      enrolled: true,
+      name: (contact.name as string) ?? "Guest",
+      points,
+      tier: (contact.tier as string) ?? "Bronze",
+      nextTier: prog.nextTier,
+      pointsToNext: prog.pointsToNext,
+    });
+  }
 
   if (url.pathname === "/api/portal/token" && request.method === "POST") {
     const body = (await request.json().catch(() => ({}))) as {
