@@ -1272,15 +1272,37 @@ async function handleWebhook(
 ): Promise<Response> {
   const env = getEnv(runtimeEnv);
   const rawBody = await request.text();
-  // Parse the envelope first so we have the payment id for verification. PesaSwap
-  // (Hyperswitch-derived) sends { event_type, event_id, content:{ object } } with
-  // underscore event names (payment_succeeded …). Our simulator uses { type, data }
-  // with dotted names. Accept BOTH shapes.
+  // A malformed body or an internal error must still be ACKNOWLEDGED (200) — a
+  // webhook that returns non-2xx triggers PesaSwap's "CallToMerchantFailed" + 24h of
+  // retries. We reconcile any missed event via the status-poll + list reconcile, so
+  // acknowledging is safe. Only a real bad-signature (secret configured) returns 401.
+  try {
+    return await processWebhook(request, env, runtimeEnv, rawBody);
+  } catch (err) {
+    console.error("[PesaSwap] Webhook processing error (acknowledged):", err);
+    return jsonResponse({ received: true, error: "processing_error" });
+  }
+}
+
+async function processWebhook(
+  request: Request,
+  env: Env,
+  runtimeEnv: unknown,
+  rawBody: string,
+): Promise<Response> {
+  // PesaSwap sends the payment object in one of two shapes:
+  //  - wrapped envelope: { event_type, event_id, content: { object } }
+  //  - the payment object at the TOP LEVEL (payment_id + status at the root) ← live
+  // Our own simulator uses { type, data }. Accept ALL of them.
   const body = JSON.parse(rawBody) as Record<string, any>;
   const eventType: string = body.event_type || body.type || "";
   let resource: Record<string, any> =
-    body.content?.object || body.content || body.data || {};
-  const paymentId: string = resource.payment_id || resource.id || "";
+    body.content?.object ||
+    body.content ||
+    body.data ||
+    (body.payment_id || body.status ? body : {});
+  const paymentId: string =
+    resource.payment_id || resource.id || body.payment_id || "";
 
   // --- Establish trust BEFORE acting on the webhook ---
   // A forged `payment_succeeded` must never be recorded as a real sale. We accept a
@@ -1310,21 +1332,27 @@ async function handleWebhook(
     }
     trusted = true;
   } else if (env.PESASWAP_API_KEY && paymentId && !paymentId.startsWith("test_")) {
+    // Re-fetch the authoritative record — but with a hard timeout so a slow provider
+    // can never make US slow enough to trip PesaSwap's webhook-delivery timeout.
     try {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 4000);
       const resp = await fetch(`${env.PESASWAP_URL}/payments/${paymentId}`, {
         headers: { "api-key": env.PESASWAP_API_KEY, Accept: "application/json" },
+        signal: ac.signal,
       });
+      clearTimeout(timer);
       if (resp.ok) {
         resource = (await resp.json()) as Record<string, any>;
         trusted = true;
       }
     } catch {
-      /* fall through to an unverified acknowledgement */
+      /* timeout / network error → acknowledge below, reconcile via polling */
     }
   }
 
   console.info(
-    `[PesaSwap] Webhook: ${eventType} ${paymentId}${trusted ? "" : " (unverified)"}`,
+    `[PesaSwap] Webhook: ${eventType || resource.status} ${paymentId}${trusted ? "" : " (unverified)"}`,
   );
 
   if (!trusted) {

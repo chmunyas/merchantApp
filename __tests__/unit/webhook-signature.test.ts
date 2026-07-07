@@ -129,4 +129,41 @@ describe("PesaSwap webhook — signature + envelope", () => {
     );
     expect(res!.status).toBe(200);
   });
+
+  // Live PesaSwap sends the payment object at the TOP LEVEL (no event_type / content
+  // wrapper): { payment_id, status, amount, amount_received, ... }.
+  const topLevelBody = JSON.stringify({
+    payment_id: "pay_live_toplevel1234567890ab",
+    merchant_id: "merchant_1",
+    status: "succeeded",
+    amount: 199,
+    amount_received: 100,
+    currency: "KES",
+    connector_transaction_id: "UG75TAXKL4",
+    metadata: { venue: "main", customer_phone: "+254700111222" },
+  });
+
+  it("accepts the live TOP-LEVEL payment shape with a valid signature", async () => {
+    const sig = await hmacHex(topLevelBody, SECRET, "SHA-512");
+    const res = await handlePaymentRoute(
+      webhookRequest(topLevelBody, { "x-webhook-signature-512": sig }),
+      { PESASWAP_WEBHOOK_SECRET: SECRET },
+    );
+    expect(res!.status).toBe(200);
+    expect(await res!.json()).toEqual({ received: true });
+  });
+
+  it("acknowledges (200) the top-level shape when unverifiable (no secret/api-key)", async () => {
+    const res = await handlePaymentRoute(webhookRequest(topLevelBody, {}), {});
+    expect(res!.status).toBe(200);
+    expect(await res!.json()).toEqual({ received: true, verified: false });
+  });
+
+  it("acknowledges (200) even on a malformed body (never CallToMerchantFailed)", async () => {
+    const res = await handlePaymentRoute(
+      webhookRequest("not json at all", {}),
+      {},
+    );
+    expect(res!.status).toBe(200);
+  });
 });
