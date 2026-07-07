@@ -20,6 +20,7 @@ import {
 } from "../lib/pesaswap-payments";
 import { tipSuggestions } from "@/lib/tip";
 import { loyaltyPointsFor } from "@/lib/loyalty";
+import { QrScanner } from "@/components/QrScanner";
 import { QRCodeSVG } from "qrcode.react";
 
 export const Route = createFileRoute("/pay")({
@@ -79,6 +80,7 @@ function PayPage() {
   const [payAmount, setPayAmount] = useState<number | null>(null);
   const [payTip, setPayTip] = useState(0);
   const [payStaffId, setPayStaffId] = useState<string | null>(null);
+  const [scannerOpen, setScannerOpen] = useState(false);
   const startTimeRef = useRef<number>(0);
   const pendingInvoiceRef = useRef<string | null>(null);
 
@@ -286,14 +288,29 @@ function PayPage() {
   }
 
   // Demo: simulate scanning
-  function simulateScan() {
-    setPaymentData({
-      till: "247365",
-      amount: 2450,
-      merchant: "Naivas Supermarket",
-    });
-    setState("scanned");
-    startTimeRef.current = Date.now();
+  // Handle a scanned QR value. App QR codes encode a URL: a table code (/q/:code),
+  // a QR order pay link (/pay?o=), or an invoice link (/pay?i=). Resolve it in place.
+  function handleScan(value: string) {
+    setScannerOpen(false);
+    try {
+      const u = new URL(value.trim(), window.location.origin);
+      if (u.pathname.startsWith("/q/")) {
+        window.location.href = u.pathname + u.search;
+        return;
+      }
+      const o = u.searchParams.get("o");
+      const i = u.searchParams.get("i");
+      if (o) {
+        void loadQrOrder(o);
+        return;
+      }
+      if (i) {
+        void loadInvoice(i);
+        return;
+      }
+    } catch {
+      /* not a recognised URL — fall through */
+    }
   }
 
   return (
@@ -323,7 +340,7 @@ function PayPage() {
           />
         )}
         {state === "idle" && !linkLoading && !linkError && (
-          <IdleState onScan={simulateScan} />
+          <IdleState onScan={() => setScannerOpen(true)} />
         )}
         {state === "scanned" && paymentData && (
           <ScannedState data={paymentData} onConfirm={confirmPayment} onCancel={reset} />
@@ -353,6 +370,12 @@ function PayPage() {
           />
         )}
       </div>
+      {scannerOpen ? (
+        <QrScanner
+          onResult={handleScan}
+          onClose={() => setScannerOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

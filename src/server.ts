@@ -140,7 +140,7 @@ function withSecurityHeaders(response: Response): Response {
     "Strict-Transport-Security",
     "max-age=31536000; includeSubDomains",
   );
-  headers.set("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+  headers.set("Permissions-Policy", "geolocation=(), microphone=(), camera=(self)");
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,

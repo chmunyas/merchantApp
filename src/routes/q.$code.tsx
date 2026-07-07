@@ -1,5 +1,15 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Check, Loader2, Minus, Phone, Plus, ShoppingBag } from "lucide-react";
+import {
+  Bell,
+  CalendarDays,
+  Check,
+  Loader2,
+  MessageCircle,
+  Minus,
+  Phone,
+  Plus,
+  ShoppingBag,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { loyaltyPointsFor } from "@/lib/loyalty";
 
@@ -81,6 +91,11 @@ function UnifiedQrPage() {
     reason?: string;
   } | null>(null);
   const [promoBusy, setPromoBusy] = useState(false);
+  const [showEnquiry, setShowEnquiry] = useState(false);
+  const [enqName, setEnqName] = useState("");
+  const [enqMsg, setEnqMsg] = useState("");
+  const [serviceSent, setServiceSent] = useState<string | null>(null);
+  const [serviceBusy, setServiceBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -204,6 +219,68 @@ function UnifiedQrPage() {
       });
     } finally {
       setPromoBusy(false);
+    }
+  }
+
+  // Remember the guest's phone across visits so returning guests are recognised
+  // (loyalty + saved details auto-load) without re-typing it.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = window.localStorage.getItem("pesaswap_phone");
+    if (saved) setPhone(saved);
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (phone.replace(/[^0-9]/g, "").length >= 9) {
+      window.localStorage.setItem("pesaswap_phone", phone);
+    }
+  }, [phone]);
+
+  async function requestBill() {
+    if (!venueId) return;
+    setServiceBusy(true);
+    try {
+      const who = payload?.table?.label ? `Table ${payload.table.label}` : "A guest";
+      await fetch("/api/enquiries", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          venue: venueId,
+          customerName: who,
+          phone: phone.trim() || undefined,
+          notes: "🔔 Bill / service requested from the table QR",
+        }),
+      });
+      setServiceSent("A server is on the way — thank you! 🔔");
+    } catch {
+      setServiceSent("Couldn't reach the team — please flag a server.");
+    } finally {
+      setServiceBusy(false);
+    }
+  }
+
+  async function sendEnquiry() {
+    if (!venueId || !enqName.trim() || !enqMsg.trim()) return;
+    setServiceBusy(true);
+    try {
+      await fetch("/api/enquiries", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          venue: venueId,
+          customerName: enqName.trim(),
+          phone: phone.trim() || undefined,
+          notes: enqMsg.trim(),
+        }),
+      });
+      setShowEnquiry(false);
+      setEnqName("");
+      setEnqMsg("");
+      setServiceSent("Thanks! The team will get back to you.");
+    } catch {
+      setServiceSent("Couldn't send — please try again.");
+    } finally {
+      setServiceBusy(false);
     }
   }
 
@@ -371,6 +448,69 @@ function UnifiedQrPage() {
             </div>
           ))
         )}
+      </section>
+
+      <section className="mx-auto mb-48 max-w-md px-4">
+        <div className="rounded-3xl border bg-white p-4 shadow-sm">
+          <p className="text-sm font-bold text-slate-900">Need anything?</p>
+          {serviceSent ? (
+            <p className="mt-2 rounded-2xl bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+              {serviceSent}
+            </p>
+          ) : null}
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <a
+              href={`/book/${encodeURIComponent(venueId ?? "")}`}
+              className="flex flex-col items-center gap-1 rounded-2xl border p-3 text-xs font-semibold text-slate-700"
+            >
+              <CalendarDays className="h-5 w-5" />
+              Book a table
+            </a>
+            <button
+              type="button"
+              onClick={() => setShowEnquiry((s) => !s)}
+              className="flex flex-col items-center gap-1 rounded-2xl border p-3 text-xs font-semibold text-slate-700"
+            >
+              <MessageCircle className="h-5 w-5" />
+              Ask us
+            </button>
+            <button
+              type="button"
+              onClick={() => void requestBill()}
+              disabled={serviceBusy}
+              className="flex flex-col items-center gap-1 rounded-2xl border p-3 text-xs font-semibold text-slate-700 disabled:opacity-40"
+            >
+              <Bell className="h-5 w-5" />
+              Request bill
+            </button>
+          </div>
+          {showEnquiry ? (
+            <div className="mt-3 space-y-2">
+              <input
+                value={enqName}
+                onChange={(event) => setEnqName(event.target.value)}
+                placeholder="Your name"
+                className="w-full rounded-2xl border bg-slate-50 px-3 py-2 text-sm outline-none"
+              />
+              <textarea
+                value={enqMsg}
+                onChange={(event) => setEnqMsg(event.target.value)}
+                placeholder="Your question or request…"
+                rows={3}
+                className="w-full rounded-2xl border bg-slate-50 px-3 py-2 text-sm outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => void sendEnquiry()}
+                disabled={serviceBusy || !enqName.trim() || !enqMsg.trim()}
+                className="w-full rounded-2xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+                style={{ background: accent }}
+              >
+                Send
+              </button>
+            </div>
+          ) : null}
+        </div>
       </section>
 
       <section className="fixed inset-x-0 bottom-0 border-t bg-white/95 p-4 shadow-2xl backdrop-blur">

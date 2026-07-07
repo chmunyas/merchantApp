@@ -52,7 +52,11 @@ The journey (and where each step lives today):
    `POST /api/portal/:token/redeem` (`src/api/portal.ts`).
 
 ## Key files (customer-facing)
-- `src/routes/q.$code.tsx` + `src/api/qr.ts` — scan-to-order (unified QR).
+- `src/routes/q.$code.tsx` + `src/api/qr.ts` — scan-to-order (unified QR) + guest
+  services (Book a table, Ask us, Request the bill → `/api/enquiries`) + remembered
+  phone (localStorage) so returning guests are recognised.
+- `src/components/QrScanner.tsx` — live camera QR scanner (BarcodeDetector, graceful
+  fallback); camera allowed via `Permissions-Policy: camera=(self)` in `server.ts`.
 - `src/routes/pay.tsx` + `src/lib/use-payment.ts` + `src/api/payments.ts` — checkout.
 - `src/api/tips.ts` / `src/lib/tips.ts` — tip capture, attribution, pooling, payout.
 - `src/api/portal.ts` + `src/routes/me.$token.tsx` — receipts + loyalty portal.
