@@ -266,6 +266,18 @@ async function recordLedger(
         /* best-effort loyalty */
       }
     }
+    // Remember the M-Pesa number as a saved method (DB-backed, phone-keyed) so a
+    // returning guest can retrieve their method by phone. Best-effort.
+    try {
+      const last4 = loyaltyPhone.slice(-4);
+      await sql`
+        INSERT INTO customer_payment_methods (venue_id, phone, kind, label)
+        VALUES (${rec.venue ?? null}, ${loyaltyPhone}, 'mpesa', ${"M-Pesa •••" + last4})
+        ON CONFLICT (phone, kind)
+        DO UPDATE SET last_used_at = now(), venue_id = EXCLUDED.venue_id`;
+    } catch {
+      /* best-effort saved method */
+    }
   }
 
   // Mark a QR order as paid (one-time-use) once its payment succeeds, so its pay
@@ -343,7 +355,7 @@ export async function handlePaymentRoute(
   // --- Customer Payment Methods ---
   if (path === "/api/customers/payment-methods" && request.method === "GET") {
     const phone = url.searchParams.get("phone") || "";
-    return withCors(handleGetCustomerMethods(phone), corsHeaders);
+    return withCors(await handleGetCustomerMethods(phone, env), corsHeaders);
   }
 
   // --- Webhook from PesaSwap ---
@@ -774,14 +786,45 @@ async function handleRefund(
 
 // --- Customer Payment Methods ---
 
-function handleGetCustomerMethods(phone: string): Response {
-  const customer = customerMethods.get(phone);
-  if (!customer) {
-    return jsonResponse({ has_saved: false, methods: [] });
+async function handleGetCustomerMethods(
+  phone: string,
+  env: unknown,
+): Promise<Response> {
+  const cleaned = phone.trim();
+  if (cleaned) {
+    const sql = getSql(env);
+    if (sql) {
+      try {
+        const rows = await sql`
+          SELECT kind, label FROM customer_payment_methods
+          WHERE phone = ${cleaned}
+          ORDER BY is_default DESC, last_used_at DESC
+          LIMIT 5`;
+        if (rows.length > 0) {
+          return jsonResponse({
+            // has_saved stays false: M-Pesa STK is not a stored one-tap token, so
+            // the pay flow keeps prompting the number. `methods` is for display.
+            has_saved: false,
+            known: true,
+            methods: rows.map((r) => ({
+              kind: String(r.kind),
+              label: String(r.label ?? ""),
+            })),
+            default_method: String(rows[0].kind),
+          });
+        }
+      } catch {
+        /* fall through to the in-memory / empty response */
+      }
+    }
   }
-
+  const customer = customerMethods.get(cleaned);
+  if (!customer) {
+    return jsonResponse({ has_saved: false, known: false, methods: [] });
+  }
   return jsonResponse({
     has_saved: customer.methods.length > 0,
+    known: customer.methods.length > 0,
     methods: customer.methods,
     default_method: customer.default_method,
   });

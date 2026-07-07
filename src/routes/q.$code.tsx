@@ -83,6 +83,7 @@ function UnifiedQrPage() {
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loyalty, setLoyalty] = useState<LoyaltyStatus | null>(null);
+  const [savedMethod, setSavedMethod] = useState<string | null>(null);
   const [promoInput, setPromoInput] = useState("");
   const [promoResult, setPromoResult] = useState<{
     valid: boolean;
@@ -144,18 +145,31 @@ function UnifiedQrPage() {
     const digits = phone.replace(/[^0-9]/g, "");
     if (!venueId || digits.length < 9) {
       setLoyalty(null);
+      setSavedMethod(null);
       return;
     }
     let active = true;
     const timer = setTimeout(() => {
       void (async () => {
         try {
-          const res = await fetch(
-            `/api/loyalty/status?venue=${encodeURIComponent(venueId)}&phone=${encodeURIComponent(phone)}`,
-          );
-          if (!res.ok) return;
-          const d = (await res.json()) as LoyaltyStatus;
-          if (active) setLoyalty(d);
+          const [lres, mres] = await Promise.all([
+            fetch(
+              `/api/loyalty/status?venue=${encodeURIComponent(venueId)}&phone=${encodeURIComponent(phone)}`,
+            ),
+            fetch(
+              `/api/customers/payment-methods?phone=${encodeURIComponent(phone)}`,
+            ),
+          ]);
+          if (lres.ok && active) {
+            setLoyalty((await lres.json()) as LoyaltyStatus);
+          }
+          if (mres.ok && active) {
+            const m = (await mres.json()) as {
+              known?: boolean;
+              methods?: { label: string }[];
+            };
+            setSavedMethod(m.known ? (m.methods?.[0]?.label ?? null) : null);
+          }
         } catch {
           /* the loyalty banner is a bonus — never block ordering */
         }
@@ -531,6 +545,11 @@ function UnifiedQrPage() {
               ) : null}
               {estPoints > 0 ? (
                 <span className="text-amber-600"> · +{estPoints} this order</span>
+              ) : null}
+              {savedMethod ? (
+                <span className="mt-1 block text-xs text-amber-600">
+                  💳 {savedMethod} · saved
+                </span>
               ) : null}
             </div>
           ) : estPoints > 0 ? (

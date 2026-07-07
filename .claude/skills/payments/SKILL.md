@@ -65,6 +65,11 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
   so a guest can never overpay. Shares are computed in `src/lib/split-bill.ts`; the
   balance is exposed by `GET /api/qr/pay/:token`. QR order amounts are **minor
   units** end-to-end (the QR menu resolver converts whole-KES prices ×100).
+- **Saved payment methods are DB-backed** (`customer_payment_methods`, `db/37`):
+  `recordLedger` remembers the M-Pesa number on a successful payment, and
+  `GET /api/customers/payment-methods?phone=` retrieves it from Postgres (was an
+  in-memory Map). `has_saved` stays false for M-Pesa STK (not a one-tap token), so
+  the flow is unchanged; the `methods` list is for display/prefill.
 - **Add a webhook side effect:** update `handleWebhook` in `payments.ts` and
   persist status changes to the `payments` ledger via `recordLedger`.
 
