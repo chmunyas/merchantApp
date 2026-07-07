@@ -73,6 +73,8 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { OmniShare } from "@/components/merchant/OmniShare";
+import { authFetch } from "@/lib/auth";
 import {
   ensureServicesDemoData,
   getServiceAnalytics,
@@ -181,6 +183,13 @@ const defaultTab: ServicesTab = "bookings";
 
 function ServicesDashboardPage() {
   const [tab, setTab] = useState<ServicesTab>(defaultTab);
+  const [servicePay, setServicePay] = useState<{
+    link: string;
+    amount: number;
+    name: string;
+    phone: string;
+    title: string;
+  } | null>(null);
   const [snapshot, setSnapshot] = useState<ServicesSnapshot>(() =>
     ensureServicesDemoData(),
   );
@@ -650,6 +659,48 @@ function ServicesDashboardPage() {
     );
     persist({ ...snapshot, jobCards: nextJobCards });
     toast.success("Invoice linked to job card");
+  }
+
+  // Collect a real payment for a job card as a shareable server-bound pay-link
+  // (kind=service, referenced to the job), sent over WhatsApp/Telegram/SMS. Uses the
+  // actual cost when known, else the estimate.
+  async function requestJobPayment(jobCard: JobCard) {
+    const amount = Math.round(jobCard.actualCost || jobCard.estimatedCost || 0);
+    if (amount <= 0) {
+      toast.error("Set an estimate or actual cost first.");
+      return;
+    }
+    try {
+      const res = await authFetch("/api/pay-links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amountKes: amount,
+          kind: "service",
+          reference: jobCard.id,
+          description: jobCard.title,
+          phone: jobCard.clientPhone,
+          name: jobCard.clientName,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        url?: string;
+        error?: string;
+      };
+      if (!res.ok || !data.url) {
+        toast.error(data.error || "Couldn't create the pay link");
+        return;
+      }
+      setServicePay({
+        link: data.url,
+        amount,
+        name: jobCard.clientName,
+        phone: jobCard.clientPhone,
+        title: jobCard.title,
+      });
+    } catch {
+      toast.error("Couldn't create the pay link");
+    }
   }
 
   function shareJobCard(jobCard: JobCard) {
@@ -1692,6 +1743,13 @@ function ServicesDashboardPage() {
                     </Button>
                     <Button
                       variant="outline"
+                      className="rounded-full border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                      onClick={() => requestJobPayment(jobCard)}
+                    >
+                      <Send className="h-4 w-4" /> Request payment
+                    </Button>
+                    <Button
+                      variant="outline"
                       className="rounded-full"
                       onClick={() => shareJobCard(jobCard)}
                     >
@@ -2566,6 +2624,16 @@ function ServicesDashboardPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {servicePay ? (
+        <OmniShare
+          open={!!servicePay}
+          onClose={() => setServicePay(null)}
+          title={`Send KES ${servicePay.amount.toLocaleString()} pay link`}
+          message={`Payment for ${servicePay.title} — KES ${servicePay.amount.toLocaleString()}. Tap to pay securely 👇`}
+          link={servicePay.link}
+          defaultPhone={servicePay.phone}
+        />
+      ) : null}
     </div>
   );
 }

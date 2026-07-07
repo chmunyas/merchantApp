@@ -15,7 +15,8 @@ export type PayLinkKind =
   | "tapgo"
   | "deposit"
   | "split"
-  | "booking";
+  | "booking"
+  | "service";
 
 export type CreatePayLinkInput = {
   amount: number; // MINOR units (cents)

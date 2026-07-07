@@ -1,6 +1,7 @@
 import { requireAuth } from "@/api/auth";
 import { getSql } from "@/lib/db";
 import { getAdapter } from "@/lib/channels";
+import { getBaseUrl } from "@/lib/links";
 import { orderReadyMessage } from "@/lib/order-notify";
 import { venueFromPayload } from "@/lib/tenancy";
 
@@ -232,6 +233,45 @@ export async function handleOrdersRoute(
       }
     }
     return json({ ok: true, notified });
+  }
+
+  // Take payment against ANY order (kitchen/dashboard-created, not just QR scans):
+  // ensure the order carries a fresh, server-bound pay token and return the
+  // split-aware /pay?o= link. The amount is always the order's outstanding balance
+  // (never trusted from the URL); recordLedger settles the order when covered.
+  const payLinkMatch = url.pathname.match(
+    /^\/api\/orders\/([0-9a-fA-F-]+)\/pay-link$/,
+  );
+  if (payLinkMatch && request.method === "POST") {
+    const id = payLinkMatch[1];
+    const [order] = await sql`
+      SELECT o.id, o.total::bigint AS total, o.pay_token, o.paid_at,
+             COALESCE((SELECT sum(p.amount - COALESCE(p.tip_amount, 0)) FROM payments p
+                       WHERE p.metadata->>'order_id' = o.id::text
+                         AND p.status IN ('succeeded', 'paid', 'captured')
+                         AND p.kind <> 'refund'), 0)::bigint AS paid
+      FROM orders o WHERE o.id = ${id} AND o.venue_id = ${venue} LIMIT 1`;
+    if (!order) return json({ error: "not found" }, 404);
+    const remaining = Math.max(0, Number(order.total) - Number(order.paid));
+    if (order.paid_at || remaining <= 0) {
+      return json({ error: "order already paid", status: "paid" }, 409);
+    }
+    // Reuse the existing token if present, else mint a 256-bit one. Refresh the
+    // 15-minute expiry so the link is immediately valid.
+    const token =
+      (order.pay_token as string | null) ||
+      `${crypto.randomUUID()}${crypto.randomUUID()}`.replace(/-/g, "");
+    await sql`
+      UPDATE orders
+      SET pay_token = ${token}, pay_expires_at = now() + interval '15 minutes'
+      WHERE id = ${id} AND venue_id = ${venue}`;
+    const base = await getBaseUrl(env);
+    return json({
+      payUrl: `${base}/pay?o=${token}`,
+      orderId: id,
+      remaining: remaining / 100,
+      total: Number(order.total) / 100,
+    });
   }
 
   return null;

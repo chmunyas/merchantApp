@@ -23,6 +23,12 @@ kitchen stay in sync, and staff can take payment against an order.
   omnichannel adapter). Click-&-collect fields + `db/34`. The
   unified-QR flow (`POST /api/qr/:code/order`) also creates an order + a
   **server-bound pay token** (`/pay?o=<token>`).
+- **Take payment against ANY order** (kitchen/dashboard-created, not just QR
+  scans): `POST /api/orders/:id/pay-link` (gated) ensures the order carries a fresh
+  server-bound pay token + returns the split-aware `/pay?o=<token>` link (amount =
+  outstanding balance; 409 if already paid). Surfaced as a **"Request payment"**
+  button on each Kitchen Display card → OmniShare (WhatsApp/Telegram/SMS). Settles
+  the order via `recordLedger` when cumulative payments cover the total.
 - **Payment:** an order is charged via the pay flow; `recordLedger` stamps
   `orders.paid_at` on success (one-time-use). See `payments` + `unified-qr`.
 - Realtime: keep the BroadcastChannel for UX; the DB is the source of truth.

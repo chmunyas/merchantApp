@@ -6,6 +6,7 @@ import {
   Clock,
   Flame,
   Package,
+  Send,
   Timer,
   Utensils,
   XCircle,
@@ -13,6 +14,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { OmniShare } from "@/components/merchant/OmniShare";
 import { Button } from "@/components/ui/button";
 import { authFetch } from "@/lib/auth";
 import {
@@ -314,6 +316,30 @@ function OrderCard({
   const StatusIcon = config.icon;
   const isNew = order.status === "new";
   const isFinished = order.status === "served" || order.status === "cancelled";
+  const [payLink, setPayLink] = useState<string | null>(null);
+  const [minting, setMinting] = useState(false);
+
+  async function requestPayment() {
+    setMinting(true);
+    try {
+      const res = await authFetch(`/api/orders/${order.id}/pay-link`, {
+        method: "POST",
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        payUrl?: string;
+        error?: string;
+      };
+      if (!res.ok || !data.payUrl) {
+        toast.error(data.error || "Couldn't create the pay link");
+        return;
+      }
+      setPayLink(data.payUrl);
+    } catch {
+      toast.error("Couldn't create the pay link");
+    } finally {
+      setMinting(false);
+    }
+  }
 
   return (
     <div
@@ -393,6 +419,27 @@ function OrderCard({
         </span>
         <span className="font-bold">KES {order.total.toLocaleString()}</span>
       </div>
+
+      {/* Take payment against this order (split-aware /pay?o= link) */}
+      {!isFinished && order.total > 0 ? (
+        <button
+          onClick={requestPayment}
+          disabled={minting}
+          className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+        >
+          <Send className="h-3.5 w-3.5" />
+          {minting ? "Creating link…" : "Request payment"}
+        </button>
+      ) : null}
+      {payLink ? (
+        <OmniShare
+          open={!!payLink}
+          onClose={() => setPayLink(null)}
+          title={`Send bill · Table ${order.tableNumber}`}
+          message={`Your bill for KES ${order.total.toLocaleString()} is ready. Split it or pay in full 👇`}
+          link={payLink}
+        />
+      ) : null}
 
       {/* Action buttons */}
       {!isFinished && (
