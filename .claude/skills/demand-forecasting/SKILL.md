@@ -19,6 +19,8 @@ demand-forecasting agent.
   `dailyOutlook`, `prepPlan`, `weekdayName`.
 - `src/api/forecast.ts` — `GET /api/forecast` (gated manager+); registered in
   `src/server.ts` as `handleForecastRoute`.
+- `src/lib/venue-stats.ts` — shared `demandSlots` (Nairobi-local dow×hour) reused by
+  the pricing (happy-hour) surface.
 - `src/routes/dashboard/forecast.tsx` — manager-gated "Forecast" page (busiest
   windows, next-N-days outlook bars, smart-prep table with a date picker).
 - Reuses existing tables — **no migration**: `orders` (created_at, status) +

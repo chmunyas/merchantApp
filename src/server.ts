@@ -41,6 +41,7 @@ import { handleRecurringRoute } from "./api/recurring";
 import { handleA2aRoute } from "./api/a2a";
 import { handleMenuRoute } from "./api/menu";
 import { handleForecastRoute } from "./api/forecast";
+import { handlePricingRoute } from "./api/pricing";
 
 type ServerEntry = {
   fetch: (
@@ -219,6 +220,10 @@ export default {
           // Demand forecasting + smart prep (busy periods, prep quantities)
           const forecastResponse = await handleForecastRoute(request, env);
           if (forecastResponse) return forecastResponse;
+
+          // Dynamic / time-of-day pricing suggestions + happy-hour windows
+          const pricingResponse = await handlePricingRoute(request, env);
+          if (pricingResponse) return pricingResponse;
 
           // Reputation: reviews capture (public) + list/stats + AI reply
           const reviewsResponse = await handleReviewsRoute(request, env);

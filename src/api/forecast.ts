@@ -11,6 +11,7 @@ import {
 import { getSql } from "@/lib/db";
 import { roleAtLeast } from "@/lib/rbac";
 import { venueFromPayload } from "@/lib/tenancy";
+import { demandSlots } from "@/lib/venue-stats";
 
 // The app's market is Kenya (KES): bucket demand by Nairobi-local wall-clock so
 // "busy at 19:00" means 7pm locally, not UTC.
@@ -62,27 +63,7 @@ export async function handleForecastRoute(
   const targetDow = targetDate.getUTCDay();
 
   // 1) Average orders/units per (weekday, hour), Nairobi-local, last 8 weeks.
-  const rows = await sql`
-    SELECT extract(dow from (o.created_at AT TIME ZONE 'Africa/Nairobi'))::int AS dow,
-           extract(hour from (o.created_at AT TIME ZONE 'Africa/Nairobi'))::int AS hour,
-           count(distinct o.id)::float8 AS orders,
-           count(distinct (o.created_at AT TIME ZONE 'Africa/Nairobi')::date)::float8 AS days,
-           coalesce(sum(oi.qty), 0)::float8 AS units
-    FROM orders o
-    LEFT JOIN order_items oi ON oi.order_id = o.id
-    WHERE o.venue_id = ${venue}
-      AND o.status NOT IN ('cancelled', 'void')
-      AND o.created_at >= now() - interval '56 days'
-    GROUP BY 1, 2`;
-  const slots: HourSlot[] = rows.map((r) => {
-    const d = Number(r.days) || 0;
-    return {
-      dow: Number(r.dow),
-      hour: Number(r.hour),
-      avgOrders: d > 0 ? Number(r.orders) / d : 0,
-      avgUnits: d > 0 ? Number(r.units) / d : 0,
-    };
-  });
+  const slots: HourSlot[] = await demandSlots(sql, venue);
 
   // 2) Per-item units for the target weekday, last 12 weeks — the prep basis.
   const itemRows = await sql`

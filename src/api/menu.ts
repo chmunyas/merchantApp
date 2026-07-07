@@ -13,6 +13,7 @@ import {
   type MenuStat,
 } from "@/lib/menu-engineering";
 import { roleAtLeast } from "@/lib/rbac";
+import { menuProfitStats } from "@/lib/venue-stats";
 import { requireAuth, resolveVenue } from "@/api/auth";
 import { venueFromPayload } from "@/lib/tenancy";
 
@@ -131,40 +132,7 @@ export async function handleMenuRoute(
       url.searchParams.get("from"),
       isoDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
     );
-    // price is whole KES; inventory cost is minor units (÷100). Units sold come
-    // from order_items matched by name (as COGS/lost-basket already match).
-    const rows = await sql`
-      SELECT m.name, m.category, m.price::float8 AS price,
-             COALESCE(inv.cost, 0)::float8 AS cost_minor,
-             (inv.cost IS NOT NULL) AS has_cost,
-             COALESCE(s.units, 0)::int AS units_sold
-      FROM menu_items m
-      LEFT JOIN LATERAL (
-        SELECT i.cost FROM inventory_items i
-        WHERE i.venue_id = m.venue_id
-          AND (i.menu_item_id = m.id OR lower(i.name) = lower(m.name))
-        ORDER BY (i.menu_item_id = m.id) DESC NULLS LAST
-        LIMIT 1
-      ) inv ON true
-      LEFT JOIN LATERAL (
-        SELECT SUM(oi.qty)::int AS units
-        FROM order_items oi
-        JOIN orders o ON o.id = oi.order_id
-        WHERE o.venue_id = m.venue_id
-          AND lower(oi.name) = lower(m.name)
-          AND o.status NOT IN ('cancelled', 'void')
-          AND o.created_at::date BETWEEN ${from} AND ${to}
-      ) s ON true
-      WHERE m.venue_id = ${venue} AND m.available = true
-      ORDER BY m.name`;
-    const stats: MenuStat[] = rows.map((r) => ({
-      name: String(r.name),
-      category: String(r.category),
-      price: Number(r.price),
-      cost: Math.round(Number(r.cost_minor)) / 100,
-      hasCost: Boolean(r.has_cost),
-      unitsSold: Number(r.units_sold),
-    }));
+    const stats: MenuStat[] = await menuProfitStats(sql, venue, from, to);
     const engineering = classifyMenu(stats, "KES");
     // Best-effort AI narrative from the revenue-optimisation advisor; degrade to
     // the deterministic headline when no AI provider is configured.

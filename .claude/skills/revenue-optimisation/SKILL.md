@@ -20,6 +20,8 @@ This is the analytical brain of the revenue-optimisation agent.
   margins, menu-mix, thresholds, per-item recommendation), `buildHeadline`,
   `buildAdvicePrompt` (AI narrative prompt).
 - `src/api/menu.ts` — `GET /api/menu/engineering` (gated, manager+).
+- `src/lib/venue-stats.ts` — shared `menuProfitStats` (price/cost/units) reused by
+  the pricing surface.
 - `src/routes/dashboard/menu.tsx` — the "Engineering" tab (counts, headline, advice,
   per-item table with quadrant badges).
 - Reuses existing tables — **no migration**: `menu_items` (price, whole KES),
