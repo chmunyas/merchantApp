@@ -683,10 +683,45 @@ function LivePaymentsPanel({
   payments: LivePayment[];
   loading: boolean;
 }) {
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "succeeded" | "processing" | "failed"
+  >("all");
+  const [retrying, setRetrying] = useState<string | null>(null);
+
   const succeeded = payments.filter((p) =>
     ["succeeded", "paid", "captured"].includes(p.status),
   );
   const gross = succeeded.reduce((sum, p) => sum + p.amount, 0) / 100;
+
+  const filtered = payments.filter((p) => {
+    if (statusFilter === "all") return true;
+    if (statusFilter === "succeeded")
+      return ["succeeded", "paid", "captured"].includes(p.status);
+    if (statusFilter === "failed")
+      return ["failed", "cancelled"].includes(p.status);
+    return p.status === statusFilter;
+  });
+
+  async function reRequest(id: string) {
+    setRetrying(id);
+    try {
+      const res = await authFetch(`/api/payments/${id}/retry`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        toast.success("M-Pesa prompt re-sent to the customer");
+      } else {
+        const d = (await res.json().catch(() => ({}))) as {
+          error?: { message?: string };
+        };
+        toast.error(d.error?.message || "Couldn't re-request payment");
+      }
+    } catch {
+      toast.error("Couldn't re-request payment");
+    } finally {
+      setRetrying(null);
+    }
+  }
 
   return (
     <div className="rounded-2xl border border-border bg-card p-6">
@@ -704,11 +739,27 @@ function LivePaymentsPanel({
             every attempt, updated automatically.
           </p>
         </div>
-        <div className="text-right">
-          <p className="text-2xl font-semibold">{liveCurrency.format(gross)}</p>
-          <p className="text-xs text-muted-foreground">
-            {succeeded.length} succeeded · {payments.length} total
-          </p>
+        <div className="flex items-center gap-3">
+          <select
+            value={statusFilter}
+            onChange={(e) =>
+              setStatusFilter(
+                e.target.value as "all" | "succeeded" | "processing" | "failed",
+              )
+            }
+            className="rounded-xl border border-border bg-background px-3 py-2 text-sm"
+          >
+            <option value="all">All statuses</option>
+            <option value="succeeded">Succeeded</option>
+            <option value="processing">Processing</option>
+            <option value="failed">Failed / declined</option>
+          </select>
+          <div className="text-right">
+            <p className="text-2xl font-semibold">{liveCurrency.format(gross)}</p>
+            <p className="text-xs text-muted-foreground">
+              {succeeded.length} succeeded · {payments.length} total
+            </p>
+          </div>
         </div>
       </div>
 
@@ -717,13 +768,14 @@ function LivePaymentsPanel({
           <p className="py-6 text-center text-sm text-muted-foreground">
             Loading live transactions…
           </p>
-        ) : payments.length === 0 ? (
+        ) : filtered.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
-            No live transactions yet. A real payment will appear here the moment
-            it is attempted.
+            {payments.length === 0
+              ? "No live transactions yet. A real payment will appear here the moment it is attempted."
+              : "No transactions match this filter."}
           </p>
         ) : (
-          <table className="w-full min-w-[720px] text-sm">
+          <table className="w-full min-w-[760px] text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
                 <th className="py-2 pr-4">Time</th>
@@ -732,52 +784,70 @@ function LivePaymentsPanel({
                 <th className="py-2 pr-4">Customer</th>
                 <th className="py-2 pr-4">Flow</th>
                 <th className="py-2 pr-4">Ref</th>
+                <th className="py-2 pr-4"></th>
               </tr>
             </thead>
             <tbody>
-              {payments.map((p) => (
-                <tr key={p.id} className="border-b border-border/50">
-                  <td className="py-2 pr-4 whitespace-nowrap text-muted-foreground">
-                    {format(new Date(p.createdAt), "d MMM HH:mm")}
-                  </td>
-                  <td className="py-2 pr-4 font-medium">
-                    {liveCurrency.format(p.amount / 100)}
-                    {p.tipAmount > 0 ? (
-                      <span className="ml-1 text-xs text-muted-foreground">
-                        (+{liveCurrency.format(p.tipAmount / 100)} tip)
+              {filtered.map((p) => {
+                const isFailed = ["failed", "cancelled"].includes(p.status);
+                const canRetry = isFailed || p.status === "processing";
+                return (
+                  <tr key={p.id} className="border-b border-border/50">
+                    <td className="py-2 pr-4 whitespace-nowrap text-muted-foreground">
+                      {format(new Date(p.createdAt), "d MMM HH:mm")}
+                    </td>
+                    <td className="py-2 pr-4 font-medium">
+                      {liveCurrency.format(p.amount / 100)}
+                      {p.tipAmount > 0 ? (
+                        <span className="ml-1 text-xs text-muted-foreground">
+                          (+{liveCurrency.format(p.tipAmount / 100)} tip)
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="py-2 pr-4">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                          LIVE_STATUS_STYLE[p.status] ??
+                          "bg-slate-100 text-slate-700"
+                        }`}
+                      >
+                        {p.status}
                       </span>
-                    ) : null}
-                  </td>
-                  <td className="py-2 pr-4">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                        LIVE_STATUS_STYLE[p.status] ?? "bg-slate-100 text-slate-700"
-                      }`}
-                    >
-                      {p.status}
-                    </span>
-                    {p.errorMessage ? (
-                      <span className="ml-2 text-xs text-rose-600">
-                        {p.errorMessage}
-                      </span>
-                    ) : null}
-                  </td>
-                  <td className="py-2 pr-4">
-                    {p.customerName || p.customerPhone || "—"}
-                    {p.initiator === "agent" ? (
-                      <span className="ml-1 rounded bg-purple-100 px-1 text-[10px] font-medium text-purple-700">
-                        agent
-                      </span>
-                    ) : null}
-                  </td>
-                  <td className="py-2 pr-4 text-muted-foreground">
-                    {p.flowType || p.kind}
-                  </td>
-                  <td className="py-2 pr-4 font-mono text-xs text-muted-foreground">
-                    {p.providerRef || "—"}
-                  </td>
-                </tr>
-              ))}
+                      {p.errorMessage ? (
+                        <span className="ml-2 text-xs text-rose-600">
+                          {p.errorMessage}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="py-2 pr-4">
+                      {p.customerName || p.customerPhone || "—"}
+                      {p.initiator === "agent" ? (
+                        <span className="ml-1 rounded bg-purple-100 px-1 text-[10px] font-medium text-purple-700">
+                          agent
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="py-2 pr-4 text-muted-foreground">
+                      {p.flowType || p.kind}
+                    </td>
+                    <td className="py-2 pr-4 font-mono text-xs text-muted-foreground">
+                      {p.providerRef || "—"}
+                    </td>
+                    <td className="py-2 pr-4 text-right">
+                      {canRetry && p.customerPhone ? (
+                        <button
+                          onClick={() => reRequest(p.id)}
+                          disabled={retrying === p.id}
+                          className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          {retrying === p.id ? "Sending…" : "Re-request"}
+                        </button>
+                      ) : null}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

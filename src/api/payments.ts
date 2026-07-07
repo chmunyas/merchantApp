@@ -193,6 +193,8 @@ async function recordLedger(
       ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status,
         tip_amount = EXCLUDED.tip_amount,
         staff_id = COALESCE(EXCLUDED.staff_id, payments.staff_id),
+        provider_ref = COALESCE(EXCLUDED.provider_ref, payments.provider_ref),
+        metadata = EXCLUDED.metadata,
         updated_at = now()`;
   } catch {
     /* best-effort ledger */
@@ -356,6 +358,16 @@ export async function handlePaymentRoute(
   ) {
     const paymentId = path.split("/")[3];
     return withCors(await handleCapture(paymentId, request, env), corsHeaders);
+  }
+
+  // Re-request payment: re-fire a fresh STK for a prior (failed/processing) payment
+  // using its stored phone + amount. Lets a merchant re-send the M-Pesa prompt.
+  if (
+    path.match(/^\/api\/payments\/[^/]+\/retry$/) &&
+    request.method === "POST"
+  ) {
+    const paymentId = path.split("/")[3];
+    return withCors(await handleRetryPayment(paymentId, request, env), corsHeaders);
   }
 
   if (path.match(/^\/api\/payments\/[^/]+\/status$/) && request.method === "GET") {
@@ -718,8 +730,63 @@ async function handleCreatePayment(
   }
 }
 
-// --- DB-backed payments ledger (merchant view) ---
+// --- Re-request payment (retry) ---
 
+// Re-fires a fresh M-Pesa STK for a prior payment (typically failed/cancelled) using
+// its stored phone + amount + metadata, so a merchant can re-prompt the customer.
+// Gated manager+. For a split (order_id in metadata) the create path re-clamps to
+// the remaining balance, so a re-request can never overcharge a settled bill.
+async function handleRetryPayment(
+  paymentId: string,
+  request: Request,
+  workerEnv: unknown,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const payload = await requireAuth(request, workerEnv);
+  if (!payload) return jsonResponse({ error: { message: "unauthorized" } }, 401);
+  if (!roleAtLeast(payload, "manager")) {
+    return jsonResponse({ error: { message: "forbidden" } }, 403);
+  }
+  const venue = venueFromPayload(payload, url);
+  const sql = getSql(workerEnv);
+  if (!sql) return jsonResponse({ error: { message: "database not configured" } }, 503);
+
+  const [row] = await sql`
+    SELECT amount, currency, status, metadata
+    FROM payments
+    WHERE id = ${paymentId} AND venue_id = ${venue}
+    LIMIT 1`;
+  if (!row) return jsonResponse({ error: { message: "payment not found" } }, 404);
+  if (["succeeded", "paid", "captured"].includes(String(row.status))) {
+    return jsonResponse(
+      { error: { message: "payment already succeeded" } },
+      409,
+    );
+  }
+  const meta = (row.metadata ?? {}) as Record<string, unknown>;
+  if (!meta.customer_phone) {
+    return jsonResponse(
+      { error: { message: "no customer phone on file to re-request" } },
+      400,
+    );
+  }
+
+  // Reuse the full create path (venue default + STK + ledger recording) by replaying
+  // the original parameters as a fresh create request.
+  const replay = new Request("https://internal/api/payments/create", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      amount: Number(row.amount) || 0,
+      currency: String(row.currency ?? "KES"),
+      description: `Re-request of ${paymentId}`,
+      metadata: meta,
+    }),
+  });
+  return handleCreatePayment(replay, workerEnv);
+}
+
+// --- DB-backed payments ledger (merchant view) ---
 // Lists real payment attempts from the durable ledger (any status) so the merchant
 // dashboard reflects live sales, refunds and failed/cancelled attempts — matching
 // the PesaSwap dashboard. Gated manager+ (exposes customer PII + revenue).
@@ -1227,6 +1294,7 @@ async function handleWebhook(
           status: "succeeded",
           venue,
           reference: (metadata.till as string) || null,
+          providerRef: (resource.connector_transaction_id as string) || null,
           metadata,
         });
       } catch {

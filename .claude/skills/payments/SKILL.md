@@ -40,6 +40,15 @@ touches the server (hosted fields → target PCI SAQ-A); we hold only tokens and
 - `GET /api/payment-methods` — **gated (manager+)** merchant view: all saved
   customer methods joined to contacts (name/tier) + M-Pesa/card/wallet counts.
   Renders at `/dashboard/payment-methods`.
+- `GET /api/payments/list` — **gated (manager+)** DB-backed ledger: every real
+  attempt (any status) for the venue, with the M-Pesa receipt (`provider_ref` =
+  `connector_transaction_id`, e.g. `UG75TAWWYH`), decline reason, tip + initiator.
+  Powers the "Live payments" panel on `/dashboard/payments` (localStorage demo
+  data alone never showed real sales).
+- `POST /api/payments/:id/retry` — **gated (manager+)** re-request: re-fires a
+  fresh STK for a failed/processing payment from its stored phone + amount (409 if
+  already succeeded). Replays through `handleCreatePayment`, so a split re-clamps
+  to the remaining balance.
 - `GET /api/invoices/payinfo?number=INV-XXX` — **public** resolver the pay page
   uses to render an amount from a short link (see the invoicing skill).
 

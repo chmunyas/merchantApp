@@ -75,6 +75,9 @@ function PayPage() {
   const [customerPhone, setCustomerPhone] = useState("");
   const [paymentId, setPaymentId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
+  // Split bills: the order's remaining balance after this payer's share, so the
+  // success screen can invite the next person to pay the rest.
+  const [nextRemaining, setNextRemaining] = useState<number | null>(null);
   const [linkLoading, setLinkLoading] = useState(false);
   const [linkError, setLinkError] = useState(false);
   const [payAmount, setPayAmount] = useState<number | null>(null);
@@ -258,6 +261,21 @@ function PayPage() {
 
     if (result.success) {
       setPaymentId(result.payment_id || null);
+      // Split bills: re-fetch the order so the NEXT person sees the updated balance
+      // and can push their own share. Each payer keeps their own phone + STK.
+      if (paymentData.orderId && search.o) {
+        try {
+          const res = await fetch(`/api/qr/pay/${encodeURIComponent(search.o)}`);
+          if (res.ok) {
+            const d = (await res.json()) as { remaining?: number | null };
+            setNextRemaining(
+              typeof d.remaining === "number" ? d.remaining : null,
+            );
+          }
+        } catch {
+          /* balance refresh is a bonus — never block the receipt */
+        }
+      }
       setState("success");
     } else {
       setErrorMsg(result.error || "Payment failed. Please try again.");
@@ -275,6 +293,7 @@ function PayPage() {
     setPayTip(0);
     setPayStaffId(null);
     setPaymentId(null);
+    setNextRemaining(null);
     setErrorMsg("");
     if (typeof window !== "undefined") {
       window.history.replaceState({}, "", "/pay");
@@ -283,8 +302,27 @@ function PayPage() {
 
   function retryPayment() {
     setErrorMsg("");
-    setState("scanned");
+    // Re-fire the SAME payment seamlessly (same phone + share) instead of making the
+    // guest re-enter everything — the common case is a cancelled/timed-out STK.
+    if (paymentData && customerPhone) {
+      void processRealPayment(customerPhone);
+    } else {
+      setState("scanned");
+      setPin("");
+    }
+  }
+
+  // Split bills: hand the phone to the next person. Reloads the order so they see the
+  // remaining balance and push their own share on their own number.
+  function payNextShare() {
+    setNextRemaining(null);
     setPin("");
+    setErrorMsg("");
+    setPayAmount(null);
+    setPayTip(0);
+    setPaymentId(null);
+    if (search.o) void loadQrOrder(search.o);
+    else setState("scanned");
   }
 
   // Demo: simulate scanning
@@ -366,6 +404,8 @@ function PayPage() {
             amountPaid={(payAmount ?? paymentData.amount) + payTip}
             tip={payTip}
             elapsedMs={Date.now() - startTimeRef.current}
+            nextRemaining={nextRemaining}
+            onNext={payNextShare}
             onDone={reset}
           />
         )}
@@ -1055,6 +1095,8 @@ function SuccessState({
   amountPaid,
   tip,
   elapsedMs,
+  nextRemaining,
+  onNext,
   onDone,
 }: {
   data: PaymentData;
@@ -1063,6 +1105,8 @@ function SuccessState({
   amountPaid: number;
   tip: number;
   elapsedMs: number;
+  nextRemaining?: number | null;
+  onNext?: () => void;
   onDone: () => void;
 }) {
   const elapsedSec = Math.round(elapsedMs / 1000);
@@ -1116,6 +1160,29 @@ function SuccessState({
           <p className="text-sm text-muted-foreground mt-1">{data.merchant}</p>
         </div>
       </div>
+
+      {typeof nextRemaining === "number" && nextRemaining > 0 ? (
+        <div className="rounded-2xl border-2 border-emerald-300 bg-emerald-50 p-4 text-center space-y-3">
+          <p className="text-sm font-bold text-emerald-800">
+            Your share is paid — thank you! 🎉
+          </p>
+          <p className="text-2xl font-bold font-mono text-emerald-700">
+            KES {nextRemaining.toLocaleString()} still due
+          </p>
+          <p className="text-[11px] text-emerald-700">
+            Hand the phone to the next person — they pay their share on their own
+            M-Pesa number.
+          </p>
+          {onNext ? (
+            <button
+              onClick={onNext}
+              className="w-full bg-emerald-600 text-white py-3 rounded-2xl text-sm font-bold flex items-center justify-center gap-2"
+            >
+              <Zap className="size-4" /> Next person pays
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="rounded-2xl bg-muted p-4 space-y-2">
         {(

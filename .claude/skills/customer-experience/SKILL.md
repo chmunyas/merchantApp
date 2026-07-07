@@ -31,12 +31,16 @@ The journey (and where each step lives today):
    `POST /api/payments/create` (M-Pesa STK today). The unified `usePayment` hook
    (`src/lib/use-payment.ts`) already carries `split` and `tip` metadata.
 4. **Split** — self-service split-pay on `/pay`: **Pay all / Split evenly (N) /
-   By item / Custom**. Each guest pays a share against the same order; the server
-   tracks the balance and **clamps every charge to the remaining balance**
-   (server-authoritative — a guest can never overpay). The order settles (and its
-   pay token closes) only when cumulative payments cover the total. Shares:
-   `src/lib/split-bill.ts`; balance in `GET /api/qr/pay/:token`; clamp + settlement
-   in `src/api/payments.ts` (`handleCreatePayment` + `recordLedger`).
+   By item / Custom**. Each guest pays a share against the same order **on their
+   own phone / M-Pesa STK**; the server tracks the balance and **clamps every
+   charge to the remaining balance** (server-authoritative — a guest can never
+   overpay). After a share is paid, the success screen shows **"KES X still due —
+   next person pays"** and reloads the order so the next diner pushes their own STK;
+   the order settles (and its pay token closes) only when cumulative payments cover
+   the total. A failed/cancelled STK offers a **seamless one-tap retry** (re-fires
+   the same share to the same number — `retryPayment` in `src/routes/pay.tsx`).
+   Shares: `src/lib/split-bill.ts`; balance in `GET /api/qr/pay/:token`; clamp +
+   settlement in `src/api/payments.ts` (`handleCreatePayment` + `recordLedger`).
 5. **Tip** — in-flow "tip your server" on `/pay`: suggestions (None / 5 / 10 / 15% /
    custom) **on top of** the share, attributed to a server the guest picks from the
    venue's tippable staff (returned by `GET /api/qr/pay/:token`). The tip is passed
