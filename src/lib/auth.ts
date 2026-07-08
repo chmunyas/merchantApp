@@ -172,6 +172,7 @@ export async function signup(input: {
   email: string;
   password: string;
   phone?: string;
+  org?: string;
 }): Promise<{ user: AuthUser; venue?: string } | { error: string }> {
   try {
     const res = await fetch("/api/auth/signup", {

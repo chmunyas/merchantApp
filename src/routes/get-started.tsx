@@ -15,13 +15,25 @@ import { InstallButton } from "@/components/InstallButton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { signup } from "@/lib/auth";
+import { useEffect } from "react";
 import {
   ensureMerchantDemoData,
   saveMerchantSettings,
   setCurrentVenueId,
 } from "@/lib/merchant-dashboard";
 
+type ResellerBrand = {
+  name: string;
+  slug: string;
+  logoUrl: string | null;
+  primaryColor: string | null;
+  poweredBy: string | null;
+};
+
 export const Route = createFileRoute("/get-started")({
+  validateSearch: (search: Record<string, unknown>): { org?: string } => ({
+    org: typeof search.org === "string" ? search.org : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Get started — PesaSwap" },
@@ -42,6 +54,7 @@ const ORDER: Step[] = ["welcome", "business", "install", "done"];
 
 function GetStartedPage() {
   const navigate = useNavigate();
+  const { org } = Route.useSearch();
   const existing = useMemo(() => ensureMerchantDemoData(), []);
   const [step, setStep] = useState<Step>("welcome");
   const [bizName, setBizName] = useState("");
@@ -50,6 +63,27 @@ function GetStartedPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [reseller, setReseller] = useState<ResellerBrand | null>(null);
+
+  // Co-branded signup: a merchant arriving via a bank's /get-started?org=<slug>
+  // sees that reseller's brand and is linked to its org on signup.
+  useEffect(() => {
+    if (!org) return;
+    let active = true;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/org?slug=${encodeURIComponent(org)}`);
+        if (!res.ok) return;
+        const data = (await res.json()) as { org?: ResellerBrand | null };
+        if (active && data.org) setReseller(data.org);
+      } catch {
+        /* fall back to the default PesaSwap brand */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [org]);
 
   const index = ORDER.indexOf(step);
 
@@ -85,6 +119,7 @@ function GetStartedPage() {
       email: email.trim(),
       password,
       phone: phone.trim() || undefined,
+      org: org || undefined,
     });
     if ("error" in result) {
       setError(result.error);
@@ -116,7 +151,21 @@ function GetStartedPage() {
       {/* Progress */}
       <header className="mx-auto w-full max-w-md px-5 pt-6">
         <div className="flex items-center justify-between">
-          <span className="text-sm font-semibold tracking-tight">PesaSwap</span>
+          {reseller ? (
+            <span className="flex items-center gap-2 text-sm font-semibold tracking-tight">
+              {reseller.logoUrl ? (
+                <img
+                  src={reseller.logoUrl}
+                  alt={reseller.name}
+                  className="h-5 w-auto rounded"
+                />
+              ) : null}
+              {reseller.name}
+              <span className="text-slate-500">× PesaSwap</span>
+            </span>
+          ) : (
+            <span className="text-sm font-semibold tracking-tight">PesaSwap</span>
+          )}
           <span className="text-xs text-slate-400">
             Step {Math.min(index + 1, 3)} of 3
           </span>

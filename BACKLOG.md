@@ -106,8 +106,10 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   merchants, edit org branding, and see aggregate analytics + revenue share.
 - **P1** **Org-scoped login** — a reseller-admin role + `org` claim on login (only
   merchant *signup* carries the org claim today); RBAC for reseller vs merchant.
-- **P2** **Co-branded signup** — `/get-started?org=<slug>` reads `GET /api/org` and
-  applies the bank's brand; optional bank **invite** flow (vs open slug signup).
+- ✅ **DONE (co-branded signup)** `/get-started?org=<slug>` reads `GET /api/org`,
+  shows the reseller's brand (logo + "{bank} × PesaSwap"), and links the new
+  `venue.org_id` to the org on signup (`signup({..., org})`). **Remaining:** an
+  invite-token flow (vs open slug signup).
 - **P2** **Reseller settlement** — wire `organizations.pesaswap_partner_id` into
   payment creation so a bank's merchants settle under its PesaSwap partner, plus a
   revenue-share / commission ledger.
