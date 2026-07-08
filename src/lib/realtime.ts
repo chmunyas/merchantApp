@@ -386,6 +386,7 @@ export type KitchenOrder = {
   total: number;
   customerNote?: string;
   fulfilment: "dine-in" | "takeaway" | "delivery";
+  scheduledAt?: string | null;
   createdAt: string;
   updatedAt: string;
 };

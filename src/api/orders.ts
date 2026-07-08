@@ -63,6 +63,7 @@ export async function handleOrdersRoute(
       ? await sql`
           SELECT o.id, o.venue_id, o.table_id, o.staff_id, o.status, o.total,
                  o.currency, o.created_at, o.updated_at,
+                 o.fulfillment_type, o.scheduled_at,
                  COALESCE(
                    (
                      SELECT json_agg(
@@ -86,6 +87,7 @@ export async function handleOrdersRoute(
       : await sql`
           SELECT o.id, o.venue_id, o.table_id, o.staff_id, o.status, o.total,
                  o.currency, o.created_at, o.updated_at,
+                 o.fulfillment_type, o.scheduled_at,
                  COALESCE(
                    (
                      SELECT json_agg(
@@ -154,6 +156,7 @@ export async function handleOrdersRoute(
       return tx`
         SELECT o.id, o.venue_id, o.table_id, o.staff_id, o.status, o.total,
                o.currency, o.created_at, o.updated_at,
+               o.fulfillment_type, o.scheduled_at,
                COALESCE(
                  (
                    SELECT json_agg(

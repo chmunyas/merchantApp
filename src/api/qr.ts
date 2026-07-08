@@ -4,6 +4,7 @@ import { getMenu } from "@/lib/menu";
 import { applyPromo } from "@/lib/promo";
 import { lookupPromo } from "@/api/promo";
 import { venueFromPayload } from "@/lib/tenancy";
+import { normalizeFulfillment, parseScheduledAt } from "@/lib/fulfillment";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -115,6 +116,8 @@ export async function handleQrRoute(
       items?: OrderItemInput[];
       phone?: string;
       promoCode?: string;
+      fulfillmentType?: string;
+      scheduledAt?: string;
     };
     const items = (body.items ?? [])
       .map((item) => ({
@@ -124,6 +127,13 @@ export async function handleQrRoute(
       }))
       .filter((item) => item.name && item.price > 0);
     if (items.length === 0) return json({ error: "items required" }, 400);
+
+    // A table QR defaults to dine-in; a counter/venue QR lets the guest choose
+    // collection or eat-in, and optionally pre-order for a future time.
+    const fulfillment = normalizeFulfillment(
+      body.fulfillmentType ?? (code.table_id ? "dine_in" : "collection"),
+    );
+    const scheduledAt = parseScheduledAt(body.scheduledAt);
 
     const subtotal = items.reduce((sum, item) => sum + item.qty * item.price, 0);
     const phone = body.phone ? String(body.phone).trim() : null;
@@ -147,9 +157,10 @@ export async function handleQrRoute(
     const [created] = await sql.begin(async (tx) => {
       const [order] = await tx`
         INSERT INTO orders
-          (venue_id, table_id, total, discount, promo_code, pay_token, pay_expires_at, customer_phone)
+          (venue_id, table_id, total, discount, promo_code, pay_token, pay_expires_at, customer_phone, fulfillment_type, scheduled_at)
         VALUES (${code.venue_id}, ${code.table_id ?? null}, ${amount}, ${discount},
-                ${appliedCode}, ${token}, now() + interval '15 minutes', ${phone})
+                ${appliedCode}, ${token}, now() + interval '15 minutes', ${phone},
+                ${fulfillment}, ${scheduledAt})
         RETURNING id`;
       for (const item of items) {
         await tx`
@@ -176,6 +187,8 @@ export async function handleQrRoute(
         subtotal,
         discount,
         promoCode: appliedCode,
+        fulfillmentType: fulfillment,
+        scheduledAt,
         payUrl,
       },
       201,

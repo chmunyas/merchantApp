@@ -79,6 +79,10 @@ function UnifiedQrPage() {
   const [payload, setPayload] = useState<QrPayload | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [phone, setPhone] = useState("");
+  const [fulfillment, setFulfillment] = useState<"dine_in" | "collection">(
+    "dine_in",
+  );
+  const [scheduledAt, setScheduledAt] = useState("");
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -138,6 +142,11 @@ function UnifiedQrPage() {
   useEffect(() => {
     setPromoResult(null);
   }, [total]);
+
+  // A counter/venue QR (no table) defaults to collection; a table QR to dine-in.
+  useEffect(() => {
+    if (payload && !payload.table) setFulfillment("collection");
+  }, [payload]);
 
   // Look up a returning guest's loyalty inline (debounced) so points + tier show
   // while they order — the "earn on this order" nudge. Read-only; never blocks.
@@ -310,6 +319,8 @@ function UnifiedQrPage() {
           items: cart.map(({ name, price, qty }) => ({ name, price, qty })),
           phone: phone.trim() || undefined,
           promoCode: promoResult?.valid ? promoInput.trim() : undefined,
+          fulfillmentType: fulfillment,
+          scheduledAt: scheduledAt || undefined,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -586,6 +597,59 @@ function UnifiedQrPage() {
               <p className="text-xs text-red-600">{promoResult.reason}</p>
             )
           ) : null}
+          <div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setFulfillment("dine_in")}
+                className={`rounded-2xl border px-3 py-2 text-sm font-semibold transition ${
+                  fulfillment === "dine_in"
+                    ? "border-transparent text-white"
+                    : "bg-slate-50 text-slate-600"
+                }`}
+                style={
+                  fulfillment === "dine_in" ? { background: accent } : undefined
+                }
+              >
+                🍽️ Eat in
+              </button>
+              <button
+                type="button"
+                onClick={() => setFulfillment("collection")}
+                className={`rounded-2xl border px-3 py-2 text-sm font-semibold transition ${
+                  fulfillment === "collection"
+                    ? "border-transparent text-white"
+                    : "bg-slate-50 text-slate-600"
+                }`}
+                style={
+                  fulfillment === "collection"
+                    ? { background: accent }
+                    : undefined
+                }
+              >
+                🛍️ Collection
+              </button>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setScheduledAt("")}
+                className={`rounded-2xl border px-3 py-2 text-xs font-semibold ${
+                  scheduledAt === "" ? "bg-slate-900 text-white" : "bg-slate-50 text-slate-600"
+                }`}
+              >
+                ASAP
+              </button>
+              <input
+                type="datetime-local"
+                value={scheduledAt}
+                min={new Date(Date.now() + 5 * 60_000).toISOString().slice(0, 16)}
+                onChange={(event) => setScheduledAt(event.target.value)}
+                className="min-w-0 flex-1 rounded-2xl border bg-slate-50 px-3 py-2 text-xs outline-none"
+                aria-label="Pre-order for a later time"
+              />
+            </div>
+          </div>
           <label className="flex items-center gap-2 rounded-2xl border bg-slate-50 px-3 py-2">
             <Phone className="h-4 w-4 text-slate-500" />
             <input

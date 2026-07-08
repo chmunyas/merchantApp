@@ -246,6 +246,8 @@ type ApiOrder = {
   total: number | string;
   created_at?: string;
   updated_at?: string;
+  fulfillment_type?: string | null;
+  scheduled_at?: string | null;
   items?: ApiOrderItem[];
 };
 
@@ -266,7 +268,13 @@ function apiOrderToKitchenOrder(order: ApiOrder): KitchenOrder {
     tableNumber: Number.isFinite(tableNumber) ? tableNumber : 0,
     status: order.status,
     total: Number(order.total ?? 0),
-    fulfilment: "dine-in",
+    fulfilment:
+      order.fulfillment_type === "collection"
+        ? "takeaway"
+        : order.fulfillment_type === "delivery"
+          ? "delivery"
+          : "dine-in",
+    scheduledAt: order.scheduled_at ?? null,
     createdAt: order.created_at ?? new Date().toISOString(),
     updatedAt: order.updated_at ?? order.created_at ?? new Date().toISOString(),
     items: (order.items ?? []).map((item) => ({
@@ -354,7 +362,28 @@ function OrderCard({
         <div>
           <div className="flex items-center gap-2">
             <Utensils className="h-4 w-4 text-muted-foreground" />
-            <span className="font-semibold">Table {order.tableNumber}</span>
+            <span className="font-semibold">
+              {order.fulfilment === "dine-in"
+                ? `Table ${order.tableNumber}`
+                : order.fulfilment === "delivery"
+                  ? "Delivery"
+                  : "Collection"}
+            </span>
+            {order.fulfilment !== "dine-in" ? (
+              <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-700">
+                {order.fulfilment === "delivery" ? "Delivery" : "Pickup"}
+              </span>
+            ) : null}
+            {order.scheduledAt ? (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">
+                Pre-order ·{" "}
+                {new Date(order.scheduledAt).toLocaleString([], {
+                  weekday: "short",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </span>
+            ) : null}
           </div>
           <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
             {order.id}
