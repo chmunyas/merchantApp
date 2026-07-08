@@ -22,6 +22,7 @@ import { handleAgentCommerceRoute } from "./api/agentcommerce";
 import { handleShareRoute } from "./api/share";
 import { handleInventoryRoute } from "./api/inventory";
 import { handleSettlementRoute } from "./api/settlement";
+import { handleDisputeRoute } from "./api/disputes";
 import { handleAccountingRoute } from "./api/accounting";
 import { handleReviewsRoute } from "./api/reviews";
 import { handleShiftsRoute } from "./api/shifts";
@@ -221,6 +222,10 @@ export default {
           // Settlement + reconciliation (batch payments, fees/net)
           const settlementResponse = await handleSettlementRoute(request, env);
           if (settlementResponse) return settlementResponse;
+
+          // Disputes / chargebacks + payment webhook-event audit trail
+          const disputeResponse = await handleDisputeRoute(request, env);
+          if (disputeResponse) return disputeResponse;
 
           // Accounting: double-entry general ledger + financial statements
           const accountingResponse = await handleAccountingRoute(request, env);

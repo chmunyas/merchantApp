@@ -37,9 +37,15 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   reads the secret from the Worker `env` and rejects when unset/invalid
   (fail-closed). **Remaining P1:** set `PESASWAP_WEBHOOK_SECRET` + `PESASWAP_API_KEY`
   secrets to enable live payments (the webhook 503s until the secret is set).
-- **P2** Persist **webhook + refund** events to the `payments` ledger (create is
-  persisted today) and add **settlement/payout reconciliation**.
-- **P2** Dispute / chargeback tooling.
+- ✅ **DONE** Persist **webhook + refund + dispute** events — every trusted webhook
+  is written to `payment_events` (audit trail + idempotency, `db/40`); refunds are
+  booked to the ledger (`recordRefundRow`); **disputes/chargebacks** are upserted to
+  `disputes` (`db/41`) from the payment's `disputes[]` or a dispute event, with
+  `GET /api/disputes` + `GET /api/payment-events` reads. **Settlement/payout
+  reconciliation** is live (`/api/settlement/*`, batches + fees/net + GL posting).
+- **P2** Dispute / chargeback **response tooling** (submit evidence, accept) — the
+  disputes are now recorded + surfaced via API; the merchant-facing evidence-upload
+  UI + a provider "submit evidence" call remain.
 - **P1 (external dependency)** **KE-QR interoperability — CBK-directory PSP id.**
   KE-QR codes (EMVCo MPM TLV, `src/lib/ke-qr.ts`) are structurally valid +
   CRC-verified but not yet routable by other banks until an acquiring-PSP

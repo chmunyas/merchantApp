@@ -16,6 +16,7 @@ import {
   postRefundEntry,
 } from "@/lib/accounting";
 import { recordPayment as recordInvoicePayment } from "@/lib/invoicing";
+import { isDisputeEvent, mapDisputeStatus } from "@/lib/disputes";
 import { loyaltyPointsFor } from "@/lib/loyalty";
 import { markPayLinkPaid } from "@/lib/pay-links";
 import { resolveInitiator } from "@/lib/tx-initiator";
@@ -428,6 +429,102 @@ async function recordRefundRow(
   });
   await updateParentRefundStatus(runtimeEnv, paymentId);
   return true;
+}
+
+// Persist an incoming TRUSTED webhook to the audit trail. Idempotent on the
+// provider event id (a retried delivery is a no-op). Returns true when the row is
+// newly inserted (i.e. this event has not been seen before).
+async function recordPaymentEvent(
+  runtimeEnv: unknown,
+  event: {
+    eventId?: string | null;
+    venue?: string | null;
+    paymentId?: string | null;
+    eventType?: string | null;
+    status?: string | null;
+    amount?: number | null;
+    currency?: string | null;
+    raw: unknown;
+  },
+): Promise<boolean> {
+  const sql = getSql(runtimeEnv);
+  if (!sql) return false;
+  const id =
+    String(event.eventId || "") ||
+    `${event.paymentId || "evt"}:${event.eventType || ""}:${Date.now()}`;
+  try {
+    const [row] = await sql`
+      INSERT INTO payment_events
+        (id, venue_id, payment_id, event_type, status, amount, currency, raw)
+      VALUES (${id}, ${event.venue ?? null}, ${event.paymentId ?? null},
+              ${event.eventType ?? ""}, ${event.status ?? null},
+              ${event.amount ?? null}, ${event.currency ?? "KES"},
+              ${sql.json(JSON.parse(JSON.stringify(event.raw ?? {})))})
+      ON CONFLICT (id) DO NOTHING
+      RETURNING id`;
+    return Boolean(row);
+  } catch {
+    return false;
+  }
+}
+
+// Upsert a dispute / chargeback, attributing it to the parent payment's venue (a
+// dispute for a payment we never recorded is not ours to book). Idempotent on the
+// dispute id — a status change (opened → won/lost) updates in place.
+async function recordDispute(
+  runtimeEnv: unknown,
+  dispute: Record<string, unknown>,
+): Promise<boolean> {
+  const sql = getSql(runtimeEnv);
+  if (!sql) return false;
+  const disputeId = String(dispute.dispute_id || dispute.id || "");
+  const paymentId = String(dispute.payment_id || "");
+  if (!disputeId || !paymentId) return false;
+
+  let parent: { venue_id?: string | null } | undefined;
+  try {
+    const [row] = await sql`
+      SELECT venue_id FROM payments WHERE id = ${paymentId} LIMIT 1`;
+    parent = row as typeof parent;
+  } catch {
+    /* ignore */
+  }
+  if (!parent || !parent.venue_id) return false;
+
+  const amount = Math.max(0, Math.round(Number(dispute.amount) || 0));
+  const status = mapDisputeStatus(dispute.status as string);
+  const reason = (dispute.reason as string) ?? null;
+  const connectorId =
+    (dispute.connector_dispute_id as string) ||
+    (dispute.dispute_arn as string) ||
+    null;
+  const rawDue = dispute.evidence_due_by || dispute.challenge_required_by || null;
+  let dueBy: string | null = null;
+  if (rawDue) {
+    const parsed = new Date(String(rawDue));
+    if (!Number.isNaN(parsed.getTime())) dueBy = parsed.toISOString();
+  }
+  try {
+    await sql`
+      INSERT INTO disputes
+        (id, venue_id, payment_id, amount, currency, status, reason,
+         connector_dispute_id, evidence_due_by)
+      VALUES (${disputeId}, ${parent.venue_id}, ${paymentId}, ${amount},
+              ${String(dispute.currency || "KES")}, ${status}, ${reason},
+              ${connectorId}, ${dueBy})
+      ON CONFLICT (id) DO UPDATE SET
+        status = EXCLUDED.status,
+        reason = COALESCE(EXCLUDED.reason, disputes.reason),
+        amount = EXCLUDED.amount,
+        connector_dispute_id =
+          COALESCE(EXCLUDED.connector_dispute_id, disputes.connector_dispute_id),
+        evidence_due_by =
+          COALESCE(EXCLUDED.evidence_due_by, disputes.evidence_due_by),
+        updated_at = now()`;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Pull recent refunds from PesaSwap and sync any we don't yet have. This is the
@@ -1630,11 +1727,33 @@ async function processWebhook(
   // NOT a payment — so it must never be treated as a payment success/failure.
   const isRefundEvent =
     Boolean(resource.refund_id) || /refund/i.test(eventType);
+  // A dispute / chargeback likewise is not a payment success/failure.
+  const isDispute = isDisputeEvent(eventType, resource);
+
+  // Audit trail: persist EVERY trusted webhook (idempotent on the provider event
+  // id) so the merchant has an auditable timeline matching the PesaSwap dashboard.
+  {
+    const evtMeta = (resource.metadata || {}) as Record<string, unknown>;
+    const evtVenue =
+      (evtMeta.venue as string) || (evtMeta.merchant_id as string) || null;
+    await recordPaymentEvent(runtimeEnv, {
+      eventId: (body.event_id as string) || null,
+      venue: evtVenue,
+      paymentId: paymentId || null,
+      eventType: eventType || (resource.status as string) || "",
+      status: (resource.status as string) || null,
+      amount: Number(resource.amount) || null,
+      currency: (resource.currency as string) || "KES",
+      raw: body,
+    });
+  }
+
   // Effective status: the record's status maps to the real terminal state, else we
   // infer from the event name.
   const mappedStatus = resource.status ? mapPesaSwapStatus(resource.status) : "";
   const isSuccess =
     !isRefundEvent &&
+    !isDispute &&
     (mappedStatus === "succeeded" ||
       eventType === "payment_succeeded" ||
       eventType === "payment_captured" ||
@@ -1642,6 +1761,7 @@ async function processWebhook(
       eventType === "payment_intent.succeeded");
   const isFailure =
     !isRefundEvent &&
+    !isDispute &&
     !isSuccess &&
     (mappedStatus === "failed" ||
       mappedStatus === "cancelled" ||
@@ -1807,6 +1927,51 @@ async function processWebhook(
       });
     } catch {
       /* best-effort refund */
+    }
+  }
+
+  // Sync disputes / chargebacks carried on this trusted webhook. Two shapes (same
+  // as refunds): (a) the payment record carries a disputes[] array; or (b) the
+  // event IS a dispute (resource has a dispute_id). Both are idempotent.
+  if (Array.isArray(resource.disputes)) {
+    for (const dp of resource.disputes) {
+      try {
+        await recordDispute(runtimeEnv, {
+          ...(dp as Record<string, unknown>),
+          payment_id: (dp as { payment_id?: string }).payment_id || paymentId,
+        });
+      } catch {
+        /* best-effort dispute */
+      }
+    }
+  }
+  if (isDispute && resource.dispute_id) {
+    try {
+      const booked = await recordDispute(runtimeEnv, {
+        dispute_id: resource.dispute_id,
+        payment_id: resource.payment_id || paymentId,
+        amount: resource.amount,
+        currency: resource.currency,
+        status: resource.status || "open",
+        reason: resource.reason,
+        connector_dispute_id: resource.connector_dispute_id,
+        evidence_due_by: resource.evidence_due_by,
+      });
+      if (booked) {
+        const evtMeta = (resource.metadata || {}) as Record<string, unknown>;
+        broadcastToMerchant((evtMeta.merchant_id as string) || "", {
+          type: "payment.disputed",
+          data: {
+            payment_id: resource.payment_id || paymentId,
+            dispute_id: resource.dispute_id,
+            amount: Number(resource.amount) || 0,
+            status: mapDisputeStatus(resource.status as string),
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+    } catch {
+      /* best-effort dispute */
     }
   }
 
