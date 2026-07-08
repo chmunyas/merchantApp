@@ -60,9 +60,15 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   real merchant (`v_*`) gets an EMPTY starter with their own business name instead of
   the shared "Sade's Atelier" demo (`createMerchantStarterData`, `isDemoVenue`,
   `getMerchantIdentity`). POS/KE-QR read the per-venue identity, not constants.
-- **P2** Migrate the remaining localStorage-blob entities (**menus, tables**) from
-  `merchant_state` to dedicated Postgres tables following the `staff`/`orders` pattern
-  (client isolation is done; server-authoritative persistence is the next step).
+- ✅ **DONE (menus, tables)** `menu_items` + `dining_tables` are server-authoritative
+  with per-row CRUD (`/api/menu/item`, `/api/tables`) and dedicated editors
+  (`/dashboard/menu`, `/dashboard/tables`). `src/lib/server-sync.ts` mirrors both
+  into the localStorage snapshot on dashboard entry + after each edit, so the
+  read-only views (overview, floor plan, bookings, customer table) share one source
+  of truth. Gated to real merchants (demo keeps its rich local showcase).
+- **P2** Migrate the remaining localStorage-only sub-entities (**table combinations /
+  zones / floor-plan positions, menu modifiers / schedules**) to Postgres — these
+  are still client-only (no server columns). The core menu items + tables are done.
 - **P2** Serve the **venues list from Postgres** so a signed-up merchant sees their
   own venue in the picker (not the demo venues).
 

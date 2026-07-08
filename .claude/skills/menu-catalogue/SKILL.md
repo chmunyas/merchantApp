@@ -16,6 +16,8 @@ edits.
   `PATCH`/`DELETE /api/menu/item/:id`), plus gated `POST /api/menu/sync`.
 - `src/lib/menu.ts` — `getMenu(sql, venue)`.
 - `src/routes/dashboard/menu.tsx` — the editor; server-authoritative via `authFetch`.
+- `src/lib/server-sync.ts` — `hydrateMenuFromServer()`: mirrors `menu_items` into the
+  localStorage catalogue so legacy read-only views share one source of truth.
 - `db/01-schema.sql` / `db/22-menu-item-id.sql` — `menu_items` (id, name, category,
   price, dietary[], available).
 
@@ -33,6 +35,13 @@ edits.
 
 ## Conventions
 - Prefer per-item CRUD (the DB is the source of truth) over the replace-all sync.
+- The editor is **server-authoritative**; after each CRUD it re-hydrates the
+  localStorage snapshot (`hydrateMenuFromServer`) so the overview / customer table
+  view / floor plan reflect the same data. The dashboard shell hydrates on entry
+  (`hydrateServerEntities` in `dashboard.tsx`, after the state-blob pull). Hydration
+  is **gated to real merchants** — the demo venue keeps its richer local catalogue.
+- Client-only decorations (modifiers, image, linked products) are NOT server columns;
+  hydration preserves them by merging with the existing snapshot entry by id.
 - Sync remains for the AI agent's menu import — it is **replace-all** for the
   resolved venue (`resolveVenue`); send the token.
 - The agent reads menu via the lib (`getMenu`), so protecting the HTTP route

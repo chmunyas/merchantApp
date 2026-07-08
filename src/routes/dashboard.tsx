@@ -64,6 +64,7 @@ import {
 } from "@/lib/merchant-dashboard";
 import { cn } from "@/lib/utils";
 import { useBranding } from "@/lib/branding";
+import { hydrateServerEntities } from "@/lib/server-sync";
 
 export const Route = createFileRoute("/dashboard")({
   component: DashboardLayout,
@@ -488,9 +489,14 @@ function StateHydrator({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   useEffect(() => {
     let active = true;
-    Promise.all([ensureSessionToken(), hydrateMerchantState()]).finally(() => {
-      if (active) setReady(true);
-    });
+    Promise.all([ensureSessionToken(), hydrateMerchantState()])
+      // After the localStorage blob is pulled, mirror the server-authoritative
+      // menu_items + dining_tables over it so every read-only consumer (overview,
+      // floor plan, bookings, customer table view) sees ONE source of truth.
+      .then(() => hydrateServerEntities())
+      .finally(() => {
+        if (active) setReady(true);
+      });
     return () => {
       active = false;
     };

@@ -37,6 +37,7 @@ import {
   saveMerchantZones,
 } from "@/lib/merchant-dashboard";
 import { authFetch } from "@/lib/auth";
+import { hydrateMenuFromServer } from "@/lib/server-sync";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/dashboard/menu")({
@@ -568,6 +569,8 @@ function DashboardMenuPage() {
             ),
           );
         }
+        // Mirror the server truth into localStorage so legacy views update.
+        void hydrateMenuFromServer();
       } catch {
         setCatalogue(upsertById(previous, cleanedItem));
         setApiMenuEnabled(false);
@@ -602,6 +605,7 @@ function DashboardMenuPage() {
           method: "DELETE",
         });
         if (!res.ok) throw new Error("menu item delete failed");
+        void hydrateMenuFromServer();
       } catch {
         setCatalogue(
           previous

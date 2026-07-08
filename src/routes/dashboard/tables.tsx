@@ -20,6 +20,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { authFetch } from "@/lib/auth";
+import { hydrateTablesFromServer } from "@/lib/server-sync";
 import {
   DEFAULT_TABLE_CAPACITY,
   ensureMerchantDemoData,
@@ -296,6 +297,7 @@ function DashboardTablesPage() {
       setTables((current) => upsertById(current, nextTable));
     }
     toast.success(`Table ${tableNumber} saved.`);
+    if (apiTablesEnabled) void hydrateTablesFromServer();
     setTableDraft(null);
   }
 
@@ -326,6 +328,7 @@ function DashboardTablesPage() {
       }
     }
     toast.success(`Table ${table.tableNumber} removed.`);
+    if (apiTablesEnabled) void hydrateTablesFromServer();
   }
 
   function handleSaveCombination() {
