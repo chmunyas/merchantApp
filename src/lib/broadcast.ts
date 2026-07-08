@@ -1,5 +1,6 @@
 import { getAdapter } from "@/lib/channels";
 import type { ChannelId } from "@/lib/channels/types";
+import { isSuppressed } from "@/lib/consent";
 import { getSql } from "@/lib/db";
 
 type Sql = NonNullable<ReturnType<typeof getSql>>;
@@ -16,6 +17,7 @@ export type BroadcastResult = {
   sent: number;
   simulated: number;
   failed: number;
+  suppressed: number;
   channel: string;
   segment: string;
   error?: string;
@@ -74,6 +76,7 @@ export async function sendBroadcast(
       sent: 0,
       simulated: 0,
       failed: 0,
+      suppressed: 0,
       channel: params.channel,
       segment: params.segment,
       error: "database not configured",
@@ -94,8 +97,14 @@ export async function sendBroadcast(
   let sent = 0;
   let simulated = 0;
   let failed = 0;
+  let suppressed = 0;
 
   for (const recipient of recipients) {
+    // Compliance: never send to a handle that has opted out (STOP) on this channel.
+    if (await isSuppressed(sql, venue, channel, recipient.handle)) {
+      suppressed += 1;
+      continue;
+    }
     const text = personalize(recipient.name);
     try {
       const out = await adapter.send(recipient.handle, text, env);
@@ -131,6 +140,7 @@ export async function sendBroadcast(
     sent,
     simulated,
     failed,
+    suppressed,
     channel,
     segment,
   };

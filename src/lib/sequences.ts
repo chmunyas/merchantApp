@@ -1,4 +1,5 @@
 import { getAdapter } from "@/lib/channels";
+import { isSuppressed } from "@/lib/consent";
 import { getSql } from "@/lib/db";
 
 type Sql = NonNullable<ReturnType<typeof getSql>>;
@@ -65,6 +66,18 @@ export async function runDueSteps(
       enrollment.name ?? null,
       venueName,
     );
+    // Compliance: a STOP opt-out halts the drip (never send another step).
+    if (
+      await isSuppressed(
+        sql,
+        venue,
+        String(enrollment.channel),
+        String(enrollment.handle),
+      )
+    ) {
+      await sql`UPDATE sequence_enrollments SET status = 'stopped' WHERE id = ${enrollment.id}`;
+      continue;
+    }
     try {
       await getAdapter(enrollment.channel).send(enrollment.handle, text, env);
       sent += 1;

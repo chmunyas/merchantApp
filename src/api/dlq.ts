@@ -1,4 +1,5 @@
 import { getAdapter } from "@/lib/channels";
+import { isSuppressed } from "@/lib/consent";
 import { getSql } from "@/lib/db";
 import { requireAuth, resolveVenue } from "@/api/auth";
 
@@ -53,10 +54,17 @@ export async function handleDlqRoute(
       ORDER BY created_at DESC LIMIT 100`;
     let retried = 0;
     let recovered = 0;
+    let suppressed = 0;
     for (const event of failed) {
       const handle = event.payload?.handle as string | undefined;
       const text = event.payload?.text as string | undefined;
       if (!handle || !text) continue;
+      // Compliance: don't retry a send to a handle that has since opted out.
+      if (await isSuppressed(sql, venue, String(event.channel), handle)) {
+        suppressed += 1;
+        await sql`UPDATE events SET status = 'suppressed' WHERE id = ${event.id}`;
+        continue;
+      }
       retried += 1;
       try {
         const out = await getAdapter(event.channel).send(handle, text, env);

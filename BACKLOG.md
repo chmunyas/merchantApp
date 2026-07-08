@@ -124,9 +124,13 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
 - **P2** More **integration/E2E** coverage (payment webhook, campaigns, DLQ).
 
 ## Omnichannel channels (see `.claude/skills/omnichannel-agent/`)
-- **P1** Enforce **consent + suppression in code**: a `consent`/suppression table +
-  a check in `processInbound` before any outbound (compliance is documented but not
-  yet enforced programmatically).
+- ✅ **DONE** Enforce **consent + suppression in code** — the `suppressions` table
+  + `src/lib/consent.ts` (STOP/START/HELP detection, `isSuppressed`/`setSuppressed`)
+  are now honoured on **every** outbound path: inbound auto-opt-out + agent reply
+  (`inbound.ts`), single merchant sends (`share.ts`), **bulk campaigns**
+  (`lib/broadcast.ts`), **drip sequences** (`lib/sequences.ts`, opt-out halts the
+  drip) and **DLQ retries** (`api/dlq.ts`). STOP → suppressed + transactional
+  confirmation; suppressed contacts never receive unsolicited outbound.
 - **P2** Build the **to-build adapters** following the `parseInbound`/`send`/
   `verifyWebhook` pattern:
   - **Email** — ESP send + inbound-parse webhook, SPF/DKIM/DMARC, one-click
@@ -135,8 +139,8 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   - **X (Twitter)** — API v2 DMs, paid tier, eligibility + rate-limit back-off.
 - **P2** **Instagram**: wire the Meta webhook + page token; enforce the 24h / 7-day
   Human-Agent-Tag / message-tag rules in `send`.
-- **P2** **SMS**: implement STOP/HELP auto-replies, quiet hours, and 10DLC/TCR
-  registration before any outbound campaign.
+- **P2** **SMS**: STOP/HELP auto-replies are enforced (shared consent pipeline);
+  still to add **quiet hours** + **10DLC/TCR** registration before any outbound campaign.
 - **P2** **A2A hardening**: signed tokens / mTLS / peer allowlist + capability
   scoping by caller on `POST /api/a2a`.
 - **P3** Cross-channel **consent-to-switch** logging when moving a customer to a new
