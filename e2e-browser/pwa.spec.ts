@@ -8,6 +8,7 @@ test.describe("PWA UI (browser)", () => {
     page,
   }) => {
     await page.goto("/get-started");
+    const businessName = `E2E PW ${rnd()}`;
 
     // Step 1 — welcome. Retry the click to survive SSR hydration (the button is
     // in the server HTML before React attaches its onClick).
@@ -22,9 +23,7 @@ test.describe("PWA UI (browser)", () => {
     }).toPass({ timeout: 20_000 });
 
     // Step 2 — business + account
-    await page
-      .locator('label:has-text("Business name") input')
-      .fill(`E2E PW ${rnd()}`);
+    await page.locator('label:has-text("Business name") input').fill(businessName);
     await page.getByPlaceholder("you@business.com").fill(`e2e-pw-${rnd()}@e2e.test`);
     await page.getByPlaceholder("At least 8 characters").fill("e2e-passw0rd");
     await expect(async () => {
@@ -37,9 +36,12 @@ test.describe("PWA UI (browser)", () => {
     // Step 3 — create the account
     await page.getByRole("button", { name: /Create account/i }).click();
 
-    // Lands in the back office
+    // Lands in the back office as an ISOLATED tenant: the dashboard renders with
+    // THEIR business name (not the demo merchant), proving per-venue branding.
     await page.waitForURL(/\/dashboard/, { timeout: 25_000 });
-    await expect(page.getByText(/Merchant Dashboard/i)).toBeVisible();
+    await expect(page.getByText(businessName).first()).toBeVisible();
+    // ...and NEVER the shared "Sade's Atelier" demo tenant.
+    await expect(page.getByText("Sade's Atelier")).toHaveCount(0);
   });
 
   test("customer can submit a booking enquiry", async ({ page }) => {

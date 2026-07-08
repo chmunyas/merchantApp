@@ -8,11 +8,12 @@ import {
 } from "../../../lib/pesaswap-payments";
 import { authFetch } from "@/lib/auth";
 import { PaymentQr } from "@/components/pay/PaymentQr";
+import { useMerchantIdentity } from "@/lib/use-merchant-identity";
 import { OmniShare } from "../OmniShare";
 import type { TapGoTransaction } from "./types";
-import { MERCHANT_NAME, TILL_NUMBER } from "./utils";
 
 export function TapGoPOS() {
+  const { name: MERCHANT_NAME, till: TILL_NUMBER } = useMerchantIdentity();
   const [amount, setAmount] = useState("");
   const [mode, setMode] = useState<"keypad" | "qr" | "waiting" | "success">(
     "keypad",

@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { PaymentQr } from "@/components/pay/PaymentQr";
-import { MERCHANT_NAME, TILL_NUMBER } from "@/components/merchant/features/utils";
+import { useMerchantIdentity } from "@/lib/use-merchant-identity";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -37,6 +37,7 @@ type DiningTable = {
 };
 
 function DashboardQrPage() {
+  const { name: MERCHANT_NAME, till: TILL_NUMBER } = useMerchantIdentity();
   const [origin, setOrigin] = useState("");
   const [codes, setCodes] = useState<QrCodeRow[]>([]);
   const [tables, setTables] = useState<DiningTable[]>([]);

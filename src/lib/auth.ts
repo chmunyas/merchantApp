@@ -4,6 +4,9 @@ import type { StaffMember } from "@/components/merchant/features/types";
 import {
   ensureMerchantDemoData,
   loadMerchantSnapshot,
+  resetTenant,
+  setCurrentVenueId,
+  setVenues,
 } from "@/lib/merchant-dashboard";
 
 export type UserRole =
@@ -90,6 +93,18 @@ function setToken(token: string | null): void {
   else localStorage.removeItem(JWT_KEY);
 }
 
+// Pin the browser's active tenant to the logged-in merchant's own venue, so the
+// per-venue localStorage namespace + venue picker + POS identity all reflect this
+// merchant (never the shared demo venue). A no-op for venue-less principals
+// (platform admin, demo/session tokens), which stay on the demo venue.
+function applyTenant(venue: string | null | undefined, name: string): void {
+  if (!venue) return;
+  setCurrentVenueId(venue);
+  const code =
+    venue.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6).toUpperCase() || "VEN";
+  setVenues([{ id: venue, name: name || "My Business", code, active: true }]);
+}
+
 // Log in with email + password against the server (PBKDF2-verified), storing a
 // real JWT. Returns the user or null on failure.
 export async function jwtLogin(
@@ -105,14 +120,16 @@ export async function jwtLogin(
     if (!res.ok) return null;
     const data = (await res.json()) as {
       token: string;
-      user: { email: string; name?: string; role?: string };
+      user: { email: string; name?: string; role?: string; venue?: string };
     };
     setToken(data.token);
+    applyTenant(data.user.venue, data.user.name ?? "");
     const user: AuthUser = {
       id: data.user.email,
       name: data.user.name ?? "Admin",
       email: data.user.email,
       role: (data.user.role as UserRole) ?? "admin",
+      merchantId: data.user.venue,
     };
     writeUser(DEMO_AUTH_KEY, user);
     return user;
@@ -171,11 +188,13 @@ export async function signup(input: {
       return { error: data.error ?? "Could not create your account." };
     }
     setToken(data.token);
+    applyTenant(data.user.venue, data.user.name ?? input.businessName);
     const user: AuthUser = {
       id: data.user.email,
       name: data.user.name ?? data.user.email,
       email: data.user.email,
       role: (data.user.role as UserRole) ?? "merchant",
+      merchantId: data.user.venue,
     };
     writeUser(DEMO_AUTH_KEY, user);
     return { user, venue: data.user.venue };
@@ -199,6 +218,7 @@ export async function staffLogin(pin: string): Promise<AuthUser | null> {
       user: { name?: string; venue?: string; staffId?: string };
     };
     setToken(data.token);
+    applyTenant(data.user.venue, data.user.name ?? "");
     const user: AuthUser = {
       id: data.user.staffId ?? "staff",
       name: data.user.name ?? "Staff",
@@ -283,6 +303,8 @@ export function demoLogin(
   role: UserRole,
   options: { email?: string; merchantId?: string; staffId?: string } = {},
 ): void {
+  // The demo/marketing experience always runs on the demo venue.
+  resetTenant();
   let user: AuthUser;
 
   switch (role) {
@@ -343,6 +365,7 @@ export function demoLogout(): void {
   writeUser(DEMO_AUTH_KEY, null);
   clearStaffSession();
   setToken(null);
+  resetTenant();
 }
 
 export function getDemoStaffByPin(pin: string): AuthUser | null {

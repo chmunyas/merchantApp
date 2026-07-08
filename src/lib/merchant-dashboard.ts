@@ -2077,6 +2077,105 @@ export function getCurrentVenue(): Venue {
   return venues.find((venue) => venue.id === id) ?? venues[0];
 }
 
+// Replace the browser's venue list (e.g. pin it to the logged-in merchant's own
+// venue so the picker + identity reflect the tenant, not the demo venues).
+export function setVenues(venues: Venue[]): void {
+  writeStorage(VENUES_KEY, venues);
+}
+
+// The seeded demo venues carry the rich "Sade's Atelier" showcase data. A real,
+// self-serve merchant (venue id like `v_xxxxxxxx`) must NEVER inherit that — they
+// get an empty starter keyed to their own business instead.
+const DEMO_VENUE_IDS = new Set(["main", "cbd", "kisumu"]);
+export function isDemoVenue(id: string): boolean {
+  return DEMO_VENUE_IDS.has(id);
+}
+
+// Reset tenant state back to the demo venue (used on logout so the marketing demo
+// keeps working in the same browser).
+export function resetTenant(): void {
+  setCurrentVenueId("main");
+  if (canUseStorage()) window.localStorage.removeItem(VENUES_KEY);
+}
+
+// An EMPTY starter snapshot for a freshly onboarded merchant: their own business
+// name, a blank till (they configure M-Pesa in Settings), sensible config
+// defaults, and no demo catalogue/orders/staff/etc. This is what makes a new
+// tenant see THEIR business rather than shared demo content.
+export function createMerchantStarterData(identity: {
+  name: string;
+  till?: string;
+}): MerchantSnapshot {
+  const base = buildSettings();
+  const settings: MerchantSettings = {
+    ...base,
+    businessProfile: {
+      ...base.businessProfile,
+      name: identity.name || "My Business",
+      tillNumber: identity.till ?? "",
+      address: "",
+      phone: "",
+      logoUrl: "",
+    },
+    users: [],
+  };
+  return {
+    catalogue: [],
+    menus: [],
+    zones: [],
+    areas: [],
+    categoryOrder: [],
+    menuSchedules: [],
+    externalMenus: [],
+    tables: [],
+    tableCombinations: [],
+    orders: [],
+    reservations: [],
+    enquiries: [],
+    depositPolicy: buildDepositPolicy(),
+    reviews: [],
+    settings,
+    staffMembers: [],
+    staffShifts: [],
+    staffNotifications: [],
+    staffPayouts: [],
+    staffChallenges: [],
+    staffInsights: [],
+    workflows: [],
+    campaigns: [],
+    messageLog: [],
+    loyaltyCustomers: [],
+  };
+}
+
+// The seed identity used when creating a real merchant's starter — sourced from
+// their pinned venue name (set at login). Never touches the snapshot (avoids
+// recursion with loadMerchantSnapshot).
+function currentMerchantIdentity(): { name: string; till: string } {
+  const venue = getCurrentVenue();
+  return { name: venue?.name || "My Business", till: "" };
+}
+
+// The base snapshot for the CURRENT venue: the rich demo for a demo venue, an
+// empty per-merchant starter for a real tenant. Used as the seed + read fallback
+// so a new merchant never falls back to demo data.
+function baseSnapshotForCurrentVenue(): MerchantSnapshot {
+  return isDemoVenue(getCurrentVenueId())
+    ? createMerchantDemoData()
+    : createMerchantStarterData(currentMerchantIdentity());
+}
+
+// The current tenant's public identity (name + till) for POS / KE-QR / receipts.
+// Reads the per-venue business profile so each merchant shows their OWN brand.
+export function getMerchantIdentity(): { name: string; till: string } {
+  const profile = loadMerchantSnapshot().settings?.businessProfile;
+  const demo = isDemoVenue(getCurrentVenueId());
+  return {
+    name: profile?.name || (demo ? MERCHANT_NAME : "My Business"),
+    till: profile?.tillNumber || (demo ? TILL_NUMBER : ""),
+  };
+}
+
 function mkey(baseKey: string): string {
   const venueId = getCurrentVenueId();
   return venueId === "main" ? baseKey : `${baseKey}::${venueId}`;
@@ -2117,10 +2216,10 @@ function migrateMerchantData(): void {
 }
 
 export function ensureMerchantDemoData() {
-  if (!canUseStorage()) return createMerchantDemoData();
+  if (!canUseStorage()) return baseSnapshotForCurrentVenue();
 
-  ensureRetailDemoData();
-  const demo = createMerchantDemoData();
+  if (isDemoVenue(getCurrentVenueId())) ensureRetailDemoData();
+  const demo = baseSnapshotForCurrentVenue();
 
   (
     Object.entries(STORAGE_KEYS) as Array<[keyof typeof STORAGE_KEYS, string]>
@@ -2136,7 +2235,7 @@ export function ensureMerchantDemoData() {
 }
 
 export function loadMerchantSnapshot(): MerchantSnapshot {
-  const fallback = createMerchantDemoData();
+  const fallback = baseSnapshotForCurrentVenue();
 
   return {
     catalogue: readMerchant(STORAGE_KEYS.catalogue, fallback.catalogue),

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { PaymentQr } from "@/components/pay/PaymentQr";
+import { useMerchantIdentity } from "@/lib/use-merchant-identity";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -39,7 +40,6 @@ import type {
   Reservation,
   TableOrder,
 } from "./types";
-import { MERCHANT_NAME, TILL_NUMBER } from "./utils";
 
 const DEFAULT_CATALOGUE: CatalogueItem[] = [
   {
@@ -126,6 +126,7 @@ const DEFAULT_CATALOGUE: CatalogueItem[] = [
 const SERVERS = ["Grace M.", "Peter K.", "Alice N.", "David O."];
 
 export function TableServiceView() {
+  const { name: MERCHANT_NAME, till: TILL_NUMBER } = useMerchantIdentity();
   const [catalogue, setCatalogue] = useState<CatalogueItem[]>(() => {
     if (typeof window === "undefined") return DEFAULT_CATALOGUE;
     const saved = localStorage.getItem("fxengine.merchant.catalogue");

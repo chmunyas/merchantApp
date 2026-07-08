@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { realtime } from "../../lib/realtime";
 import { authFetch } from "@/lib/auth";
 import { PaymentQr } from "@/components/pay/PaymentQr";
+import { useMerchantIdentity } from "@/lib/use-merchant-identity";
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -48,12 +49,10 @@ import {
   formatTimelineDate,
   fxLockTimeRemaining,
   getPaymentMethodsForRegion,
-  MERCHANT_NAME,
   payLink,
   smsLink,
   timeAgo,
   timelineFor,
-  TILL_NUMBER,
   totalPaid,
   whatsAppLink,
 } from "./features/utils";
@@ -74,6 +73,7 @@ export function MerchantApp({
   standalone?: boolean;
 } = {}) {
   const ledger = useInvoices();
+  const { name: merchantName } = useMerchantIdentity();
   const [tab, setTab] = useState<Tab>("home");
   const [showInvoice, setShowInvoice] = useState<Invoice | null>(null);
   const [payTarget, setPayTarget] = useState<Invoice | null>(null);
@@ -95,11 +95,11 @@ export function MerchantApp({
     return () => clearInterval(id);
   }, [standalone]);
 
-  // Connect to PesaSwap real-time notifications
+  // Connect to PesaSwap real-time notifications (per-tenant channel).
   useEffect(() => {
-    realtime.connect(MERCHANT_NAME);
+    realtime.connect(merchantName);
     return () => realtime.disconnect();
-  }, []);
+  }, [merchantName]);
 
   // Real-time payment notifications
   useEffect(() => {
@@ -871,6 +871,7 @@ function InvoiceDetailSheet({
   onSendReminder: () => void;
   onRecordPayment: (amount: number, via?: string) => void;
 }) {
+  const { name: MERCHANT_NAME, till: TILL_NUMBER } = useMerchantIdentity();
   const timeline = timelineFor(invoice);
   const [showRecordPayment, setShowRecordPayment] = useState(false);
   const [partialAmount, setPartialAmount] = useState("");
