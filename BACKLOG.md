@@ -40,6 +40,15 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
 - **P2** Persist **webhook + refund** events to the `payments` ledger (create is
   persisted today) and add **settlement/payout reconciliation**.
 - **P2** Dispute / chargeback tooling.
+- **P1 (external dependency)** **KE-QR interoperability — CBK-directory PSP id.**
+  KE-QR codes (EMVCo MPM TLV, `src/lib/ke-qr.ts`) are structurally valid +
+  CRC-verified but not yet routable by other banks until an acquiring-PSP
+  identifier is issued from the CBK directory via **PesaSwap's PSP registration**.
+  Until then the till is encoded under `ke.go.qr` with a placeholder account.
+  **Ready:** it's an optional field in **Admin → Settings → KE-QR**
+  (`app_settings('ke_qr').pspId`, `GET/PUT /api/ke-qr-config`, consumed by
+  `PaymentQr` via `src/lib/ke-qr-config.ts`). Flipping in the real `pspId` is a
+  runtime change — **no deploy required**. Action when issued: enter it there.
 
 ## Data model (server-authoritative migration)
 - ✅ **DONE (staff, orders)** `staff` + `orders`/`order_items` are server-authoritative

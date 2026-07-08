@@ -88,8 +88,11 @@ scanning) and `MerchantFlows.tsx` (an international **FX** demo, non-KES).
 
 **Config:** national defaults (`KE_QR_DEFAULTS`: guid `ke.go.qr`, MCC `5812`, city
 `Nairobi`, country `KE`, postal `00`) fill everything except the merchant name +
-till, which come from branding/settings. Set the real PSP id (`pspId`) once PesaSwap
-is registered in the CBK directory.
+till, which come from branding/settings. The acquiring **PSP id** (+ optional MCC /
+city overrides) is a platform-global setting entered in **Admin → Settings → KE-QR**
+(`app_settings('ke_qr')`, `GET/PUT /api/ke-qr-config`, cached client-side by
+`src/lib/ke-qr-config.ts` and consumed by `PaymentQr`). Flipping in the real CBK
+`pspId` needs **no deploy**. See `BACKLOG.md` (Payments) for the dependency.
 
 ## Definition of Done — full parity
 A feature is not done until it has **full parity across all three runtime tiers** —

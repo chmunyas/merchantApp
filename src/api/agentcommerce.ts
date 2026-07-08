@@ -3,6 +3,8 @@ import { envVar } from "@/lib/env";
 import { signIntent, verifyIntent, type IntentPayload } from "@/lib/agent-intent";
 import { createInvoice, type LineItem } from "@/lib/invoices";
 import { getMenu } from "@/lib/menu";
+import { createPayLink } from "@/lib/pay-links";
+import { splitShares } from "@/lib/split-bill";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,6 +13,10 @@ const corsHeaders = {
 };
 
 const UNTRUSTED_AMOUNT_CAP = 100_000;
+
+// Default seats available per slot for the agentic booking capacity check
+// (mirrors the conversational agent's VENUE_CAPACITY).
+const VENUE_CAPACITY = 60;
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -97,6 +103,7 @@ export async function handleAgentCommerceRoute(
         amount?: number | string;
         customerRef?: string;
         phone?: string;
+        split?: { parties?: number; amounts?: number[] };
       };
       const venue = String(body.venue || "main").trim() || "main";
       const items = (body.items ?? [])
@@ -120,6 +127,51 @@ export async function handleAgentCommerceRoute(
       if (amount <= 0) return json({ error: "amount required" }, 400);
       if (!isTrusted(request, env) && amount > UNTRUSTED_AMOUNT_CAP) {
         return json({ error: "amount exceeds public checkout cap" }, 400);
+      }
+
+      // Split checkout: mint one server-bound pay link per share (kind=split) that
+      // together sum EXACTLY to the total, so an agent can collect a shared bill.
+      if (body.split && (body.split.parties || body.split.amounts)) {
+        const { shares, error } = splitShares(amount, {
+          parties: body.split.parties ?? null,
+          amounts: body.split.amounts ?? null,
+        });
+        if (error) return json({ error }, 400);
+        const links: { index: number; amount: number; payUrl: string }[] = [];
+        for (let i = 0; i < shares.length; i++) {
+          const link = await createPayLink(env, venue, {
+            amount: shares[i] * 100, // whole KES → minor units
+            currency: "KES",
+            kind: "split",
+            description: `Split ${i + 1}/${shares.length}${
+              body.customerRef ? ` · ${body.customerRef}` : ""
+            }`,
+            reference: body.customerRef ?? null,
+            phone: body.phone ?? null,
+            createdBy: "a2a",
+          });
+          if ("error" in link) return json({ error: link.error }, 400);
+          links.push({ index: i + 1, amount: shares[i], payUrl: link.url });
+        }
+        const splitIntent: IntentPayload = {
+          agentRef:
+            request.headers.get("x-agent-id") ||
+            (isTrusted(request, env) ? "trusted-agent" : "public-agent"),
+          userRef: body.customerRef ?? "",
+          merchant: venue,
+          amount,
+          currency: "KES",
+          timestamp: Date.now(),
+          context: "Agentic split checkout",
+        };
+        const splitSig = await signIntent(splitIntent, intentSecret(env));
+        return json({
+          amount,
+          currency: "KES",
+          status: "created",
+          split: { parties: shares.length, shares: links },
+          intent: { ...splitIntent, signature: splitSig },
+        });
       }
 
       const result = await createInvoice(env, {
@@ -173,6 +225,61 @@ export async function handleAgentCommerceRoute(
       });
     } catch {
       return json({ error: "could not create checkout" }, 500);
+    }
+  }
+
+  // Confirmed booking: an external agent reserves a table. Capacity-checked
+  // against existing reservations, then inserts a CONFIRMED reservation (not a
+  // pending enquiry) and returns the booking id.
+  if (path === "/api/agent/booking" && request.method === "POST") {
+    const sql = getSql(env);
+    if (!sql) return json({ error: "database not configured" }, 503);
+    const body = (await request.json().catch(() => ({}))) as {
+      venue?: string;
+      name?: string;
+      phone?: string;
+      covers?: number | string;
+      date?: string;
+      time?: string;
+      notes?: string;
+    };
+    const venue = String(body.venue || "main").trim() || "main";
+    const covers = wholeNumber(body.covers);
+    const name = String(body.name ?? "").trim();
+    const date = String(body.date ?? "").trim();
+    const time = String(body.time ?? "").trim();
+    if (!name) return json({ error: "name required" }, 400);
+    if (covers <= 0) return json({ error: "covers required" }, 400);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return json({ error: "date (YYYY-MM-DD) required" }, 400);
+    }
+    if (!/^\d{1,2}:\d{2}$/.test(time)) {
+      return json({ error: "time (HH:MM) required" }, 400);
+    }
+    try {
+      const [{ booked }] = await sql`
+        SELECT coalesce(sum(covers),0)::int AS booked FROM reservations
+        WHERE venue_id = ${venue} AND date = ${date} AND time = ${time}
+          AND status <> 'cancelled'`;
+      const available = VENUE_CAPACITY - Number(booked);
+      if (available < covers) {
+        return json(
+          { error: "no availability for that slot", available: Math.max(0, available) },
+          409,
+        );
+      }
+      const [row] = await sql`
+        INSERT INTO reservations
+          (venue_id, customer_name, phone, covers, date, time, status)
+        VALUES (${venue}, ${name}, ${body.phone?.trim() || null}, ${covers},
+                ${date}, ${time}, 'confirmed')
+        RETURNING id, status`;
+      return json(
+        { bookingId: row.id, status: row.status, covers, date, time, venue },
+        201,
+      );
+    } catch {
+      return json({ error: "could not create booking" }, 500);
     }
   }
 

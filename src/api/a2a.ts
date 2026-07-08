@@ -32,12 +32,13 @@ export async function handleA2aRoute(
       name: "PesaSwap Agent",
       description:
         "Restaurant/merchant CRM agent. Books tables, answers FAQs, manages enquiries, contacts and invoices in natural language.",
-      version: "1.0.0",
+      version: "1.1.0",
       protocol: "a2a-simple",
       endpoints: {
         message: "/api/a2a",
         catalog: "/api/agent/catalog",
         checkout: "/api/agent/checkout",
+        booking: "/api/agent/booking",
       },
       capabilities: [
         "create_enquiry",
@@ -50,9 +51,16 @@ export async function handleA2aRoute(
         "escalate_to_human",
         "get_catalog",
         "checkout",
+        "split_checkout",
+        "book",
       ],
       skills: [
         { id: "book", description: "Book a table (guests, date, time)" },
+        {
+          id: "reserve",
+          description:
+            "Create a CONFIRMED table reservation (capacity-checked) via /api/agent/booking.",
+        },
         { id: "faq", description: "Answer venue FAQs from the knowledge base" },
         { id: "crm", description: "Query bookings, covers, contacts (staff)" },
         { id: "invoice", description: "Create and send an invoice (staff)" },
@@ -65,6 +73,11 @@ export async function handleA2aRoute(
           id: "buy",
           description:
             "Create a secure checkout pay link for selected items or an amount.",
+        },
+        {
+          id: "split",
+          description:
+            "Split a bill into N server-bound pay links (equal or custom shares) via /api/agent/checkout with a `split` field.",
         },
       ],
     });

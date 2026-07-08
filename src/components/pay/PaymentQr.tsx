@@ -2,6 +2,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { useState } from "react";
 
 import { buildKeQr, resolveKeQrMerchant } from "@/lib/ke-qr";
+import { useKeQrConfig } from "@/lib/ke-qr-config";
 
 type PaymentQrProps = {
   /** DBA / trading name shown to the payer inside their bank app (tag 59). */
@@ -51,13 +52,20 @@ export function PaymentQr({
 }: PaymentQrProps) {
   const hasCamera = Boolean(cameraUrl);
   const offerKeqr = keqr !== false;
+  const keqrCfg = useKeQrConfig();
   const [mode, setMode] = useState<"keqr" | "camera">(
     offerKeqr ? (hasCamera ? defaultMode : "keqr") : "camera",
   );
 
   const keqrValue = offerKeqr
     ? buildKeQr(
-        resolveKeQrMerchant({ name: merchantName, merchantId: till, pspId }),
+        resolveKeQrMerchant({
+          name: merchantName,
+          merchantId: till,
+          pspId: pspId ?? keqrCfg.pspId ?? undefined,
+          mcc: keqrCfg.mcc ?? undefined,
+          city: keqrCfg.city ?? undefined,
+        }),
         { amountMinor: amountMinor ?? null, reference: reference ?? null },
       )
     : "";

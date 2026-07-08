@@ -21,12 +21,21 @@ back office.
 - `src/lib/agent.ts` — the agent's `create_enquiry` / `check_availability` tools.
 
 ## Endpoints
-- `POST /api/enquiries?venue=` — **public** (customer), rate-limited 10/min.
+- `POST /api/enquiries?venue=` — **public** (customer), rate-limited 10/min. The
+  row is **always** written to the resolved venue (token venue, else `?venue=`);
+  a `body.venue` is ignored (no cross-tenant write).
 - `GET /api/enquiries?venue=` — dashboard read (send the token → venue-pinned).
+- `POST /api/agent/booking` — **confirmed** reservation for A2A/agents (capacity-
+  checked, inserts `reservations` with `status='confirmed'`). Distinct from an
+  enquiry (which is a pending request the back office confirms). See agentic-checkout.
 - Booking counts: `/api/ai/command` ("covers today", "new enquiries").
 
 ## Conventions
-- Customer submits are **public** — keep `POST /api/enquiries` open + rate-limited.
+- Customer submits are **public** — keep `POST /api/enquiries` open + rate-limited,
+  but **never trust a body-supplied venue** — pin to the resolved venue.
+- An **enquiry** is a pending request (`enquiries`, `status='new'`); a **booking**
+  is a confirmed seat (`reservations`, `status='confirmed'`). The conversational
+  agent creates enquiries; `POST /api/agent/booking` creates confirmed bookings.
 - Server rows carry `source = "web"`; merge into the dashboard by `id` and don't
   overwrite a local status change.
 - Reservations/tables/floorplan currently live in the merchant localStorage store

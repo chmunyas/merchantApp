@@ -49,3 +49,31 @@ export function validateCustom(
   const diff = Math.round(total) - sum;
   return { valid: diff === 0, sum, diff };
 }
+
+// Resolve a split request into concrete per-party shares that sum EXACTLY to
+// `total`. Either an equal split across `parties` (>=2), or `amounts` custom
+// shares that must sum to the total. Used by the agentic-checkout split flow so
+// an agent can collect a shared bill as N server-bound pay links.
+export function splitShares(
+  total: number,
+  opts: { parties?: number | null; amounts?: number[] | null },
+): { shares: number[]; error?: string } {
+  const t = Math.max(0, Math.round(total));
+  if (opts.amounts && opts.amounts.length > 0) {
+    const amounts = opts.amounts.map((a) => Math.max(0, Math.round(a)));
+    if (amounts.some((a) => a <= 0)) {
+      return { shares: [], error: "every custom share must be positive" };
+    }
+    const check = validateCustom(t, amounts);
+    if (!check.valid) {
+      return {
+        shares: [],
+        error: `custom shares must sum to ${t} (off by ${check.diff})`,
+      };
+    }
+    return { shares: amounts };
+  }
+  const parties = Math.floor(Number(opts.parties ?? 0));
+  if (parties >= 2) return { shares: equalShares(t, parties) };
+  return { shares: [], error: "provide parties >= 2 or custom amounts" };
+}

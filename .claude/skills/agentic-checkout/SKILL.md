@@ -14,19 +14,28 @@ on the existing A2A surface — payment becomes infrastructure an agent can
 understand, invoke and trust.
 
 ## Key files
-- `src/api/agentcommerce.ts` — `GET /api/agent/catalog`, `POST /api/agent/checkout`,
-  `POST /api/agent/intent`, `POST /api/agent/intent/verify`.
+- `src/api/agentcommerce.ts` — `GET /api/agent/catalog`, `POST /api/agent/checkout`
+  (incl. **split**), `POST /api/agent/booking`, `POST /api/agent/intent`,
+  `POST /api/agent/intent/verify`.
 - `src/api/a2a.ts` — the discovery card (`/.well-known/agent-card.json`) + NL endpoint.
 - `src/lib/agent-intent.ts` — Verifiable Intent: `signIntent`/`verifyIntent` (HMAC-SHA256).
-- `src/api/payments.ts` / `src/api/invoices.ts` — the pay-link mechanism reused for intents.
+- `src/lib/split-bill.ts` — `splitShares(total,{parties|amounts})` (equal or custom, sums exactly).
+- `src/api/payments.ts` / `src/api/invoices.ts` / `src/lib/pay-links.ts` — the pay-link mechanism reused for intents + split shares.
 
 ## Endpoints
 - `GET /api/agent/catalog?venue=` — **public**; machine-readable menu + checkout hint.
 - `POST /api/agent/checkout` — create a payment intent → { intentId, amount, payUrl,
   **intent** (signed payload + signature) }.
+  - **Split:** pass `split: { parties: N }` or `split: { amounts: [...] }` → mints one
+    server-bound pay link per share (`kind:"split"`) that sum EXACTLY to the total →
+    `{ amount, split: { parties, shares:[{index, amount, payUrl}] }, intent }`.
+- `POST /api/agent/booking` — **confirmed** table reservation (capacity-checked):
+  `{ venue, name, phone?, covers, date (YYYY-MM-DD), time (HH:MM) }` →
+  `{ bookingId, status:"confirmed", ... }` (409 with `available` when full).
 - `POST /api/agent/intent` — create + **sign** a standalone spending intent → { id, payload, signature }.
 - `POST /api/agent/intent/verify` — `{ payload, signature }` → `{ valid }` (constant-time HMAC check).
-- `GET /.well-known/agent-card.json` — capabilities incl. `get_catalog` + `checkout`.
+- `GET /.well-known/agent-card.json` — capabilities incl. `get_catalog`, `checkout`,
+  `split_checkout`, `book`.
 
 ## Verifiable Intent Framework
 - Every checkout is signed (HMAC-SHA256 over a canonical payload) so the merchant / a

@@ -68,6 +68,7 @@ import { Route as DashboardAutomationsRouteImport } from './routes/dashboard/aut
 import { Route as DashboardAnalyticsRouteImport } from './routes/dashboard/analytics'
 import { Route as DashboardAccountingRouteImport } from './routes/dashboard/accounting'
 import { Route as BookBusinessIdRouteImport } from './routes/book.$businessId'
+import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
 import { Route as AdminMerchantsRouteImport } from './routes/admin/merchants'
 import { Route as AdminFeaturesRouteImport } from './routes/admin/features'
 import { Route as AdminActivityRouteImport } from './routes/admin/activity'
@@ -367,6 +368,11 @@ const BookBusinessIdRoute = BookBusinessIdRouteImport.update({
   path: '/book/$businessId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminSettingsRoute = AdminSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminMerchantsRoute = AdminMerchantsRouteImport.update({
   id: '/merchants',
   path: '/merchants',
@@ -405,6 +411,7 @@ export interface FileRoutesByFullPath {
   '/admin/activity': typeof AdminActivityRoute
   '/admin/features': typeof AdminFeaturesRoute
   '/admin/merchants': typeof AdminMerchantsRoute
+  '/admin/settings': typeof AdminSettingsRoute
   '/book/$businessId': typeof BookBusinessIdRoute
   '/dashboard/accounting': typeof DashboardAccountingRoute
   '/dashboard/analytics': typeof DashboardAnalyticsRoute
@@ -467,6 +474,7 @@ export interface FileRoutesByTo {
   '/admin/activity': typeof AdminActivityRoute
   '/admin/features': typeof AdminFeaturesRoute
   '/admin/merchants': typeof AdminMerchantsRoute
+  '/admin/settings': typeof AdminSettingsRoute
   '/book/$businessId': typeof BookBusinessIdRoute
   '/dashboard/accounting': typeof DashboardAccountingRoute
   '/dashboard/analytics': typeof DashboardAnalyticsRoute
@@ -532,6 +540,7 @@ export interface FileRoutesById {
   '/admin/activity': typeof AdminActivityRoute
   '/admin/features': typeof AdminFeaturesRoute
   '/admin/merchants': typeof AdminMerchantsRoute
+  '/admin/settings': typeof AdminSettingsRoute
   '/book/$businessId': typeof BookBusinessIdRoute
   '/dashboard/accounting': typeof DashboardAccountingRoute
   '/dashboard/analytics': typeof DashboardAnalyticsRoute
@@ -598,6 +607,7 @@ export interface FileRouteTypes {
     | '/admin/activity'
     | '/admin/features'
     | '/admin/merchants'
+    | '/admin/settings'
     | '/book/$businessId'
     | '/dashboard/accounting'
     | '/dashboard/analytics'
@@ -660,6 +670,7 @@ export interface FileRouteTypes {
     | '/admin/activity'
     | '/admin/features'
     | '/admin/merchants'
+    | '/admin/settings'
     | '/book/$businessId'
     | '/dashboard/accounting'
     | '/dashboard/analytics'
@@ -724,6 +735,7 @@ export interface FileRouteTypes {
     | '/admin/activity'
     | '/admin/features'
     | '/admin/merchants'
+    | '/admin/settings'
     | '/book/$businessId'
     | '/dashboard/accounting'
     | '/dashboard/analytics'
@@ -1207,6 +1219,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BookBusinessIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/settings': {
+      id: '/admin/settings'
+      path: '/settings'
+      fullPath: '/admin/settings'
+      preLoaderRoute: typeof AdminSettingsRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/merchants': {
       id: '/admin/merchants'
       path: '/merchants'
@@ -1235,6 +1254,7 @@ interface AdminRouteChildren {
   AdminActivityRoute: typeof AdminActivityRoute
   AdminFeaturesRoute: typeof AdminFeaturesRoute
   AdminMerchantsRoute: typeof AdminMerchantsRoute
+  AdminSettingsRoute: typeof AdminSettingsRoute
   AdminIndexRoute: typeof AdminIndexRoute
 }
 
@@ -1242,6 +1262,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminActivityRoute: AdminActivityRoute,
   AdminFeaturesRoute: AdminFeaturesRoute,
   AdminMerchantsRoute: AdminMerchantsRoute,
+  AdminSettingsRoute: AdminSettingsRoute,
   AdminIndexRoute: AdminIndexRoute,
 }
 

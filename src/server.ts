@@ -16,6 +16,7 @@ import { handleOrdersRoute } from "./api/orders";
 import { handleReportsRoute } from "./api/reports";
 import { handleTablesRoute } from "./api/tables";
 import { handleQrRoute } from "./api/qr";
+import { handleKeQrConfigRoute } from "./api/keqr";
 import { handleCopilotRoute } from "./api/copilot";
 import { handleAgentCommerceRoute } from "./api/agentcommerce";
 import { handleShareRoute } from "./api/share";
@@ -208,6 +209,10 @@ export default {
           // Unified QR: scan -> order -> pay -> loyalty (public resolve + authed mgmt)
           const qrResponse = await handleQrRoute(request, env);
           if (qrResponse) return qrResponse;
+
+          // KE-QR platform config (public read of PSP id/MCC/city; admin PUT)
+          const keQrConfigResponse = await handleKeQrConfigRoute(request, env);
+          if (keQrConfigResponse) return keQrConfigResponse;
 
           // Inventory (stock, COGS, reorder) — retail vertical
           const inventoryResponse = await handleInventoryRoute(request, env);

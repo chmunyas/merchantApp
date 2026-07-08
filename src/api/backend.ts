@@ -186,7 +186,6 @@ export async function handleBackendRoute(
       }
       if (request.method === "POST") {
         const body = (await request.json()) as {
-          venue?: string;
           customerName?: string;
           phone?: string;
           covers?: number;
@@ -200,7 +199,7 @@ export async function handleBackendRoute(
         const [row] = await sql`
           INSERT INTO enquiries
             (venue_id, customer_name, phone, covers, date, time, notes, source)
-          VALUES (${body.venue ?? venue}, ${body.customerName.trim()},
+          VALUES (${venue}, ${body.customerName.trim()},
                   ${body.phone?.trim() || null}, ${Number(body.covers ?? 2)},
                   ${body.date || new Date().toISOString().slice(0, 10)},
                   ${body.time || "19:00"}, ${body.notes?.trim() || null}, 'web')

@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   LockKeyhole,
   Menu,
+  Settings,
   ShieldCheck,
   SlidersHorizontal,
   Store,
@@ -33,6 +34,7 @@ const navItems = [
   { to: "/admin", label: "Overview", icon: LayoutDashboard },
   { to: "/admin/merchants", label: "Merchants", icon: Store },
   { to: "/admin/features", label: "Feature Flags", icon: SlidersHorizontal },
+  { to: "/admin/settings", label: "Settings", icon: Settings },
   { to: "/admin/activity", label: "Audit Log", icon: Activity },
 ] as const;
 

@@ -5,6 +5,7 @@ import {
   clampShare,
   equalShares,
   remaining,
+  splitShares,
   validateCustom,
   type SplitLineItem,
 } from "../../src/lib/split-bill";
@@ -23,6 +24,37 @@ describe("equalShares", () => {
 
   it("guards party count", () => {
     expect(equalShares(500, 0)).toEqual([500]);
+  });
+});
+
+describe("splitShares", () => {
+  it("splits equally across parties and sums exactly", () => {
+    const { shares, error } = splitShares(1000, { parties: 3 });
+    expect(error).toBeUndefined();
+    expect(shares).toEqual([334, 333, 333]);
+    expect(shares.reduce((a, b) => a + b, 0)).toBe(1000);
+  });
+
+  it("accepts custom shares that sum to the total", () => {
+    const { shares, error } = splitShares(1000, { amounts: [600, 400] });
+    expect(error).toBeUndefined();
+    expect(shares).toEqual([600, 400]);
+  });
+
+  it("rejects custom shares that do not sum to the total", () => {
+    const { shares, error } = splitShares(1000, { amounts: [600, 300] });
+    expect(shares).toEqual([]);
+    expect(error).toMatch(/must sum to 1000/);
+  });
+
+  it("rejects non-positive custom shares", () => {
+    const { error } = splitShares(1000, { amounts: [1000, 0] });
+    expect(error).toMatch(/positive/);
+  });
+
+  it("requires parties >= 2 when no custom amounts given", () => {
+    expect(splitShares(1000, { parties: 1 }).error).toMatch(/parties >= 2/);
+    expect(splitShares(1000, {}).error).toMatch(/parties >= 2/);
   });
 });
 
