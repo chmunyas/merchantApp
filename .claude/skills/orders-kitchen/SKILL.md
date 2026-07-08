@@ -14,8 +14,11 @@ kitchen stay in sync, and staff can take payment against an order.
 
 ## Model (server-authoritative)
 - `orders(id, venue_id, table_id, staff_id, status, total, currency, created_at,
-  pay_token, pay_expires_at, paid_at, customer_phone)` — `db/18-orders.sql` +
-  `db/28-qr-pay-token.sql` (payment binding).
+  pay_token, pay_expires_at, paid_at, customer_phone, fulfillment_type,
+  scheduled_at)` — `db/18-orders.sql` + `db/28-qr-pay-token.sql` (payment binding)
+  + `db/43-order-fulfillment.sql` (**pre-order**: `fulfillment_type`
+  dine_in|collection|delivery, default dine_in; `scheduled_at` NULL = ASAP).
+  Helpers in `src/lib/fulfillment.ts` (`normalizeFulfillment`, `parseScheduledAt`).
 - `order_items(id, order_id, name, qty, price, notes)`.
 - API `/api/orders`: list (venue+status), create, `PATCH /:id` (status,
   `pickupAt`, `fulfilment`). Transitioning to `ready` sends a one-shot "order
