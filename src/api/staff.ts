@@ -1,6 +1,6 @@
 import { getSql } from "@/lib/db";
 import { requireAuth } from "@/api/auth";
-import { venueFromPayload } from "@/lib/tenancy";
+import { planLimit, planLimitMessage, planOf, venueFromPayload } from "@/lib/tenancy";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -45,6 +45,12 @@ export async function handleStaffRoute(
     };
     const name = String(body.name ?? "").trim();
     if (!name) return json({ error: "name required" }, 400);
+    const plan = planOf(payload);
+    const [{ n }] = await sql`
+      SELECT count(*)::int AS n FROM staff WHERE venue_id = ${venue}`;
+    if (Number(n) >= planLimit(plan, "staff")) {
+      return json({ error: planLimitMessage(plan, "staff") }, 402);
+    }
     const [row] = await sql`
       INSERT INTO staff (venue_id, name, role, phone)
       VALUES (${venue}, ${name}, ${body.role ?? "Server"}, ${body.phone ?? null})

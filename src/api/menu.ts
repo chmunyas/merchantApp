@@ -15,7 +15,7 @@ import {
 import { roleAtLeast } from "@/lib/rbac";
 import { menuProfitStats } from "@/lib/venue-stats";
 import { requireAuth, resolveVenue } from "@/api/auth";
-import { venueFromPayload } from "@/lib/tenancy";
+import { planLimit, planLimitMessage, planOf, venueFromPayload } from "@/lib/tenancy";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -162,6 +162,12 @@ export async function handleMenuRoute(
     };
     const name = String(body.name ?? "").trim();
     if (!name) return json({ error: "name required" }, 400);
+    const plan = planOf(payload);
+    const [{ n }] = await sql`
+      SELECT count(*)::int AS n FROM menu_items WHERE venue_id = ${venue}`;
+    if (Number(n) >= planLimit(plan, "menu_items")) {
+      return json({ error: planLimitMessage(plan, "menu_items") }, 402);
+    }
     const category = String(body.category ?? "Mains").trim() || "Mains";
     const price = Math.max(0, wholeNumber(body.price ?? 0, 0));
     const dietary = cleanTextArray(body.dietary);

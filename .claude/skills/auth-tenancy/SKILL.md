@@ -43,8 +43,11 @@ The security spine. Read `SECURITY.md` for the full posture.
   (e.g. changing the admin password).
 - **Rate limiting:** add new public endpoints to `RULES` in `rate-limit.ts` so the
   central gate in `server.ts` protects them (429 + Retry-After).
-- **Plan limits:** `planOf(payload)` + `PLAN_LIMITS`; tokens without a plan claim
-  are treated as `pro` (uncapped) so demo/admin flows aren't capped.
+- **Plan limits:** `planOf(payload)` + `planLimit(plan, entity)` / `planLimitMessage`;
+  tokens without a plan claim are treated as `pro` (uncapped) so demo/admin flows
+  aren't capped. Free-tier caps are **enforced on create** (count vs cap → 402) for
+  `recurring`, `staff`, `tables`, `menu_items`, `contacts`. Existing data is never
+  touched — a merchant at/over a cap simply cannot add more.
 - **DB on Workers:** every request runs inside `withRequestSql`; `getSql` returns
   the request-scoped client. Never reintroduce a long-lived module-level client
   for the Workers path (cross-request I/O is forbidden).

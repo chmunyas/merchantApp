@@ -1,6 +1,7 @@
 import { getAi, getSql, hasDatabase } from "@/lib/db";
 import { aiChat, activeProvider } from "@/lib/ai-providers";
 import { requireAuth, resolveVenue } from "@/api/auth";
+import { planLimit, planLimitMessage, planOf } from "@/lib/tenancy";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -127,7 +128,8 @@ export async function handleBackendRoute(
   }
 
   if (path === "/api/contacts") {
-    if (!(await requireAuth(request, env))) {
+    const authPayload = await requireAuth(request, env);
+    if (!authPayload) {
       return json({ error: "unauthorized" }, 401);
     }
     const sql = getSql(env);
@@ -149,6 +151,12 @@ export async function handleBackendRoute(
           tier?: string;
         };
         if (!body.name?.trim()) return json({ error: "name is required" }, 400);
+        const plan = planOf(authPayload);
+        const [{ n }] = await sql`
+          SELECT count(*)::int AS n FROM contacts WHERE venue_id = ${venue}`;
+        if (Number(n) >= planLimit(plan, "contacts")) {
+          return json({ error: planLimitMessage(plan, "contacts") }, 402);
+        }
         const [contact] = await sql`
           INSERT INTO contacts (venue_id, name, phone, email, tier)
           VALUES (${venue}, ${body.name.trim()}, ${body.phone ?? null},

@@ -1,6 +1,6 @@
 import { getSql } from "@/lib/db";
 import { requireAuth } from "@/api/auth";
-import { venueFromPayload } from "@/lib/tenancy";
+import { planLimit, planLimitMessage, planOf, venueFromPayload } from "@/lib/tenancy";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -52,6 +52,12 @@ export async function handleTablesRoute(
     };
     const label = String(body.label ?? "").trim();
     if (!label) return json({ error: "label required" }, 400);
+    const plan = planOf(payload);
+    const [{ n }] = await sql`
+      SELECT count(*)::int AS n FROM dining_tables WHERE venue_id = ${venue}`;
+    if (Number(n) >= planLimit(plan, "tables")) {
+      return json({ error: planLimitMessage(plan, "tables") }, 402);
+    }
     const seats = Math.max(1, wholeNumber(body.seats ?? 2, 2));
     const section =
       body.section == null || String(body.section).trim() === ""

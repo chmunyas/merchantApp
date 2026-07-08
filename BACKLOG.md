@@ -83,8 +83,14 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   floor-plan / menu-decoration structures into dedicated per-row tables.
 
 ## Tenancy & billing (#5)
-- **P2** A real **billing processor** (plans, metering, invoices), usage dashboards,
-  and hard quota enforcement across all entities (only recurring is capped today).
+- ✅ **DONE (quota enforcement)** Per-plan caps are enforced on create (count vs cap
+  → 402) for `recurring`, `staff`, `tables`, `menu_items` and `contacts`
+  (`planLimit`/`planLimitMessage` in `src/lib/tenancy.ts`). Free-tier defaults:
+  5 staff, 20 tables, 50 menu items, 25 recurring, 500 contacts. Demo/admin/pro
+  tokens are uncapped; existing data is never touched.
+- **P2** A real **billing processor** (Stripe/PesaSwap subscriptions: plan purchase,
+  metering, dunning, upgrade/downgrade) + usage dashboards. Enforcement + the plan
+  claim exist; the paid upgrade flow (moving a merchant from `free` → `pro`) does not.
 
 ## White-label & reseller (foundation shipped this session)
 - ✅ **DONE** Reseller **org layer** — `organizations` + `venues.org_id` +

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { clientIp } from "../../src/lib/rate-limit";
-import { planOf, venueFromPayload } from "../../src/lib/tenancy";
+import {
+  planLimit,
+  planLimitMessage,
+  planOf,
+  venueFromPayload,
+} from "../../src/lib/tenancy";
 
 describe("venueFromPayload (tenant isolation)", () => {
   const url = new URL("https://x/api/invoices?venue=queryVenue");
@@ -37,6 +42,23 @@ describe("planOf (tenant limits)", () => {
     expect(planOf(null)).toBe("pro");
     expect(planOf({ role: "merchant" })).toBe("pro");
     expect(planOf({ plan: "enterprise" })).toBe("pro");
+  });
+});
+
+describe("planLimit (per-entity quotas)", () => {
+  it("caps the free plan below pro across entities", () => {
+    expect(planLimit("free", "staff")).toBeLessThan(planLimit("pro", "staff"));
+    expect(planLimit("free", "menu_items")).toBe(50);
+    expect(planLimit("free", "tables")).toBe(20);
+  });
+
+  it("falls back to the pro cap for an unknown plan", () => {
+    expect(planLimit("enterprise", "staff")).toBe(planLimit("pro", "staff"));
+  });
+
+  it("builds an upgrade message naming the entity + cap", () => {
+    expect(planLimitMessage("free", "staff")).toMatch(/free plan/);
+    expect(planLimitMessage("free", "staff")).toMatch(/5 team members/);
   });
 });
 

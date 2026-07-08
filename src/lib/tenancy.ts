@@ -24,15 +24,62 @@ export function venueFromPayload(
 
 // Per-tenant plan limits. Tokens without a plan claim (admin/demo/session) are
 // treated as unlimited ("pro") so single-venue and demo flows are never capped.
-export const PLAN_LIMITS: Record<string, { recurring: number }> = {
-  free: { recurring: 25 },
-  pro: { recurring: 1000 },
+// Caps are per-VENUE row counts, enforced on create (existing data is never
+// touched — a merchant already at/over a cap simply cannot add more).
+export type PlanLimits = {
+  recurring: number;
+  staff: number;
+  tables: number;
+  menu_items: number;
+  campaigns: number;
+  contacts: number;
 };
+
+export const PLAN_LIMITS: Record<string, PlanLimits> = {
+  free: {
+    recurring: 25,
+    staff: 5,
+    tables: 20,
+    menu_items: 50,
+    campaigns: 3,
+    contacts: 500,
+  },
+  pro: {
+    recurring: 1000,
+    staff: 200,
+    tables: 500,
+    menu_items: 2000,
+    campaigns: 200,
+    contacts: 100000,
+  },
+};
+
+export type PlanEntity = keyof PlanLimits;
 
 export function planOf(payload: Record<string, unknown> | null): string {
   const plan =
     payload && typeof payload.plan === "string" ? payload.plan : null;
   return plan && plan in PLAN_LIMITS ? plan : "pro";
+}
+
+// The cap for one entity under a plan (falls back to the pro cap for an unknown
+// plan). Pure + unit-tested.
+export function planLimit(plan: string, entity: PlanEntity): number {
+  const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.pro;
+  return limits[entity] ?? PLAN_LIMITS.pro[entity];
+}
+
+// A consistent 402 message when a plan cap is reached.
+export function planLimitMessage(plan: string, entity: PlanEntity): string {
+  const nice: Record<PlanEntity, string> = {
+    recurring: "recurring schedules",
+    staff: "team members",
+    tables: "tables",
+    menu_items: "menu items",
+    campaigns: "campaigns",
+    contacts: "contacts",
+  };
+  return `Your ${plan} plan allows up to ${planLimit(plan, entity)} ${nice[entity]}. Upgrade to add more.`;
 }
 
 // Role hierarchy for RBAC gating. A higher rank inherits lower-rank abilities
