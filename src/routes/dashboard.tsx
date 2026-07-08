@@ -51,15 +51,17 @@ import { UserProfileMenu } from "@/components/auth/UserProfileMenu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { useAuth, ensureSessionToken, type UserRole } from "@/lib/auth";
+import { useAuth, ensureSessionToken, getToken, type UserRole } from "@/lib/auth";
 import { canAccessPath } from "@/lib/rbac";
 import {
   ensureMerchantDemoData,
   getCurrentVenue,
+  getCurrentVenueId,
   getPendingEnquiryCount,
   getVenues,
   hydrateMerchantState,
   setCurrentVenueId,
+  setVenues as persistVenues,
   type Venue,
 } from "@/lib/merchant-dashboard";
 import { cn } from "@/lib/utils";
@@ -237,6 +239,37 @@ function DashboardShell() {
     setVenues(getVenues());
     setCurrentVenue(getCurrentVenue());
   }, [pathname]);
+
+  // Serve the picker from Postgres (principal-scoped) so a real merchant sees their
+  // OWN venue(s), not the demo set. Additive: only overrides when the API returns
+  // venues (a venue-less demo/session token gets [] and keeps the local demo list).
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+    void (async () => {
+      try {
+        const res = await fetch("/api/venues", {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as { venues?: Venue[] };
+        if (!data.venues || data.venues.length === 0) return;
+        const list = data.venues.map((v) => ({
+          id: v.id,
+          name: v.name,
+          code: v.code ?? "",
+          active: v.active !== false,
+        }));
+        persistVenues(list);
+        setVenues(list);
+        const current =
+          list.find((v) => v.id === getCurrentVenueId()) ?? list[0];
+        if (current) setCurrentVenue(current);
+      } catch {
+        /* offline — keep the local venue list */
+      }
+    })();
+  }, []);
 
   const breadcrumb = useMemo(() => {
     const item = navItems.find(

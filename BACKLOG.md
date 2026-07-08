@@ -72,11 +72,15 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   into the localStorage snapshot on dashboard entry + after each edit, so the
   read-only views (overview, floor plan, bookings, customer table) share one source
   of truth. Gated to real merchants (demo keeps its rich local showcase).
-- **P2** Migrate the remaining localStorage-only sub-entities (**table combinations /
-  zones / floor-plan positions, menu modifiers / schedules**) to Postgres — these
-  are still client-only (no server columns). The core menu items + tables are done.
-- **P2** Serve the **venues list from Postgres** so a signed-up merchant sees their
-  own venue in the picker (not the demo venues).
+- ✅ **DONE (venues picker)** `GET /api/venues` serves the back-office picker from
+  Postgres, principal-scoped (merchant → own venue, reseller admin → org venues,
+  admin → all). The dashboard picker consumes it (additive; falls back to the local
+  list offline). `src/api/venues.ts`.
+- ✅ **DONE (sub-entity persistence)** Table combinations / zones / areas / floor-plan
+  and menu modifiers / schedules already persist server-side per-venue via the
+  `merchant_state` blob (`writeStorage` → `/api/state`, hydrated by
+  `hydrateMerchantState`). **Deferred (P3, low value):** normalising these nested
+  floor-plan / menu-decoration structures into dedicated per-row tables.
 
 ## Tenancy & billing (#5)
 - **P2** A real **billing processor** (plans, metering, invoices), usage dashboards,

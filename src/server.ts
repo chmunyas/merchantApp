@@ -15,6 +15,7 @@ import { handleTipsRoute } from "./api/tips";
 import { handleOrdersRoute } from "./api/orders";
 import { handleReportsRoute } from "./api/reports";
 import { handleTablesRoute } from "./api/tables";
+import { handleVenuesRoute } from "./api/venues";
 import { handleQrRoute } from "./api/qr";
 import { handleKeQrConfigRoute } from "./api/keqr";
 import { handleCopilotRoute } from "./api/copilot";
@@ -206,6 +207,10 @@ export default {
           // Server-authoritative dining tables (off the merchant_state blob)
           const tablesResponse = await handleTablesRoute(request, env);
           if (tablesResponse) return tablesResponse;
+
+          // Venue picker list (Postgres-backed, principal-scoped)
+          const venuesResponse = await handleVenuesRoute(request, env);
+          if (venuesResponse) return venuesResponse;
 
           // Unified QR: scan -> order -> pay -> loyalty (public resolve + authed mgmt)
           const qrResponse = await handleQrRoute(request, env);
