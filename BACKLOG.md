@@ -102,10 +102,13 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
 - **P1** **Apply branding to surfaces** — consume `/api/branding` in the app shell
   (dashboard header/sidebar, currently hardcoded "PesaSwap") and public pages
   (pay link, booking/enquiry) so the merchant/bank brand actually shows.
-- **P1** **Bank-admin portal UI** — a reseller dashboard to onboard/manage
-  merchants, edit org branding, and see aggregate analytics + revenue share.
-- **P1** **Org-scoped login** — a reseller-admin role + `org` claim on login (only
-  merchant *signup* carries the org claim today); RBAC for reseller vs merchant.
+- **P1** **Bank-admin portal UI** — `/reseller` route exists + reseller-admin can
+  onboard/list merchants (`/api/org/merchants`) and edit org branding (`PUT /api/org`).
+  Remaining: aggregate analytics + revenue-share views in the portal.
+- ✅ **DONE** **Org-scoped login** — login carries the `org` claim + `reseller_admin`
+  role (`src/api/auth.ts`); `getDefaultRouteForRole` routes them to `/reseller`;
+  RBAC separates reseller vs merchant. Verified: a reseller admin logs in and lists
+  only their org's merchants.
 - ✅ **DONE (co-branded signup)** `/get-started?org=<slug>` reads `GET /api/org`,
   shows the reseller's brand (logo + "{bank} × PesaSwap"), and links the new
   `venue.org_id` to the org on signup (`signup({..., org})`). **Remaining:** an
@@ -141,8 +144,10 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   Human-Agent-Tag / message-tag rules in `send`.
 - **P2** **SMS**: STOP/HELP auto-replies are enforced (shared consent pipeline);
   still to add **quiet hours** + **10DLC/TCR** registration before any outbound campaign.
-- **P2** **A2A hardening**: signed tokens / mTLS / peer allowlist + capability
-  scoping by caller on `POST /api/a2a`.
+- **P2** **A2A hardening**: ✅ **peer allowlist** (`A2A_PEER_ALLOWLIST`) +
+  **capability scoping** by caller (customer vs staff, returned in the response) +
+  signed intents (agent-intent). Remaining: mTLS (not available on Workers) /
+  rotating signed peer tokens.
 - **P3** Cross-channel **consent-to-switch** logging when moving a customer to a new
   channel.
 

@@ -100,7 +100,29 @@ export async function handleA2aRoute(
     const apiKey = envVar(env, "A2A_API_KEY") ?? envVar(env, "OMNI_API_KEY");
     const provided = request.headers.get("x-api-key") ?? "";
     const authorized = Boolean(apiKey) && provided === apiKey;
+
+    // Peer allowlist (hardening): when A2A_PEER_ALLOWLIST is set (comma-separated
+    // agent ids), only a trusted (api-key) caller OR a listed `x-agent-id` peer may
+    // call. Unset = open (back-compat). Blocks unknown agents entirely.
+    const allowRaw = envVar(env, "A2A_PEER_ALLOWLIST");
+    if (allowRaw) {
+      const allowed = allowRaw
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      const agentId = (request.headers.get("x-agent-id") ?? "").toLowerCase();
+      if (!authorized && !allowed.includes(agentId)) {
+        return json({ error: "agent not allowlisted" }, 403);
+      }
+    }
+
+    // Capability scoping by caller: a trusted key grants staff scope (bounded by
+    // the agent's own role gate); everyone else is customer-scoped.
     const role: AgentRole = authorized ? (body.role ?? "staff") : "customer";
+    const scopes =
+      role === "customer"
+        ? ["get_menu", "check_availability", "create_enquiry", "checkout", "book"]
+        : ["*"];
     const result = await runAgent(
       message,
       {
@@ -115,6 +137,8 @@ export async function handleA2aRoute(
       reply: result.reply,
       tool: result.tool ?? null,
       escalate: result.escalate ?? false,
+      scope: role,
+      capabilities: scopes,
     });
   }
 
