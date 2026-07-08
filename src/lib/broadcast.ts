@@ -2,6 +2,8 @@ import { getAdapter } from "@/lib/channels";
 import type { ChannelId } from "@/lib/channels/types";
 import { isSuppressed } from "@/lib/consent";
 import { getSql } from "@/lib/db";
+import { envVar } from "@/lib/env";
+import { hourAtOffset, withinQuietHours } from "@/lib/quiet-hours";
 
 type Sql = NonNullable<ReturnType<typeof getSql>>;
 
@@ -18,6 +20,7 @@ export type BroadcastResult = {
   simulated: number;
   failed: number;
   suppressed: number;
+  deferred: number;
   channel: string;
   segment: string;
   error?: string;
@@ -54,6 +57,27 @@ async function resolveRecipients(
       name: row.name ?? null,
     }));
   }
+  if (channel === "email") {
+    let rows;
+    if (segment === "gold_plus") {
+      rows = await sql`
+        SELECT name, email FROM contacts
+        WHERE venue_id = ${venue} AND email IS NOT NULL
+          AND tier IN ('Gold', 'Platinum')`;
+    } else if (segment === "lapsed") {
+      rows = await sql`
+        SELECT name, email FROM contacts
+        WHERE venue_id = ${venue} AND email IS NOT NULL AND visits <= 1`;
+    } else {
+      rows = await sql`
+        SELECT name, email FROM contacts
+        WHERE venue_id = ${venue} AND email IS NOT NULL`;
+    }
+    return rows.map((row) => ({
+      handle: String(row.email).toLowerCase(),
+      name: row.name ?? null,
+    }));
+  }
   const rows = await sql`
     SELECT pi.platform_user_id AS handle, p.display_name AS name
     FROM platform_identities pi
@@ -77,6 +101,7 @@ export async function sendBroadcast(
       simulated: 0,
       failed: 0,
       suppressed: 0,
+      deferred: 0,
       channel: params.channel,
       segment: params.segment,
       error: "database not configured",
@@ -86,6 +111,27 @@ export async function sendBroadcast(
   const adapter = getAdapter(channel);
   const recipients = await resolveRecipients(sql, venue, channel, segment);
 
+  // SMS quiet hours (compliance): defer a marketing batch sent outside the allowed
+  // window (only when SMS_QUIET_START/END are configured — otherwise unrestricted).
+  if (channel === "sms") {
+    const qs = Number(envVar(env, "SMS_QUIET_START"));
+    const qe = Number(envVar(env, "SMS_QUIET_END"));
+    if (Number.isFinite(qs) && Number.isFinite(qe)) {
+      const offset = Number(envVar(env, "SMS_TZ_OFFSET_MIN") ?? "180");
+      if (withinQuietHours(hourAtOffset(new Date(), offset), qs, qe)) {
+        return {
+          total: recipients.length,
+          sent: 0,
+          simulated: 0,
+          failed: 0,
+          suppressed: 0,
+          deferred: recipients.length,
+          channel,
+          segment,
+        };
+      }
+    }
+  }
   const [venueRow] = await sql`SELECT name FROM venues WHERE id = ${venue}`;
   const venueName = venueRow?.name ?? venue;
 
@@ -141,6 +187,7 @@ export async function sendBroadcast(
     simulated,
     failed,
     suppressed,
+    deferred: 0,
     channel,
     segment,
   };

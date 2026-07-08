@@ -136,14 +136,18 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   confirmation; suppressed contacts never receive unsolicited outbound.
 - **P2** Build the **to-build adapters** following the `parseInbound`/`send`/
   `verifyWebhook` pattern:
-  - **Email** — ESP send + inbound-parse webhook, SPF/DKIM/DMARC, one-click
-    `List-Unsubscribe`, suppression list.
-  - **TikTok** — via a Business Solution Provider; inbound-only, region-gated.
-  - **X (Twitter)** — API v2 DMs, paid tier, eligibility + rate-limit back-off.
+  - ✅ **Email** — DONE (`src/lib/channels/email.ts`): inbound-parse webhook
+    (`/api/email/inbound`, SendGrid/Mailgun shapes) → agent → reply; outbound via
+    **Resend** or **SendGrid**, gated on `EMAIL_FROM` + `RESEND_API_KEY`/
+    `SENDGRID_API_KEY` (simulated without keys). Marketing draws from `contacts.email`.
+  - **TikTok** — via a Business Solution Provider; inbound-only, region-gated. *(needs BSP creds)*
+  - **X (Twitter)** — API v2 DMs, paid tier, eligibility + rate-limit back-off. *(needs paid API)*
 - **P2** **Instagram**: wire the Meta webhook + page token; enforce the 24h / 7-day
   Human-Agent-Tag / message-tag rules in `send`.
-- **P2** **SMS**: STOP/HELP auto-replies are enforced (shared consent pipeline);
-  still to add **quiet hours** + **10DLC/TCR** registration before any outbound campaign.
+- **P2** **SMS**: STOP/HELP auto-replies are enforced (shared consent pipeline) and
+  **quiet hours** gate marketing sends (`SMS_QUIET_START`/`SMS_QUIET_END` +
+  `SMS_TZ_OFFSET_MIN`, default EAT; `src/lib/quiet-hours.ts`). Still needs
+  **10DLC/TCR** registration (carrier, external) before a US outbound campaign.
 - **P2** **A2A hardening**: ✅ **peer allowlist** (`A2A_PEER_ALLOWLIST`) +
   **capability scoping** by caller (customer vs staff, returned in the response) +
   signed intents (agent-intent). Remaining: mTLS (not available on Workers) /

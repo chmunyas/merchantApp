@@ -54,8 +54,8 @@ initiation rules, rate limits, opt-in and compliance. Summary:
 | [Instagram](./channels/instagram.md) | user DM opens 24h | 24h; **Human-Agent-Tag** → 7d (manual only); message tags | limited (tags only) | adapter present |
 | [Telegram](./channels/telegram.md) | user must `/start` the bot | none (no window) | only after /start (no cold DM) | **live** (Bot API poll/webhook) |
 | [TikTok](./channels/tiktok.md) | **inbound only** (no cold DM) | per-partner window | ❌ not for cold outreach; region-restricted | **to build** (via BSP) |
-| [Email](./channels/email.md) | consent | anytime with consent | yes (marketing needs opt-in) | **to build** |
-| [SMS](./channels/sms.md) | opt-in (TCPA) | anytime in quiet hours | yes, opt-in + 10DLC | adapter present |
+| [Email](./channels/email.md) | consent | anytime with consent | yes (marketing needs opt-in) | **adapter present** (Resend/SendGrid; inbound-parse webhook) |
+| [SMS](./channels/sms.md) | opt-in (TCPA) | anytime in quiet hours | yes, opt-in + 10DLC | **adapter present** (Africa's Talking; STOP + quiet hours enforced) |
 | [X (Twitter)](./channels/x-twitter.md) | user DM / follow rules | per API tier | paid API v2 tiers | **to build** |
 
 ## Handoff (seamless)

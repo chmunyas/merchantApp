@@ -7,7 +7,8 @@ export type ChannelId =
   | "web"
   | "telegram"
   | "instagram"
-  | "sms";
+  | "sms"
+  | "email";
 
 export type ChannelCapabilities = {
   canSendText: boolean;

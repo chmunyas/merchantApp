@@ -1,3 +1,4 @@
+import { emailAdapter } from "./email";
 import { instagramAdapter } from "./instagram";
 import { smsAdapter } from "./sms";
 import { telegramAdapter } from "./telegram";
@@ -14,6 +15,7 @@ const registry: Record<string, ChannelAdapter> = {
   [telegramAdapter.id]: telegramAdapter,
   [instagramAdapter.id]: instagramAdapter,
   [smsAdapter.id]: smsAdapter,
+  [emailAdapter.id]: emailAdapter,
 };
 
 export function getAdapter(channel: ChannelId | string): ChannelAdapter {

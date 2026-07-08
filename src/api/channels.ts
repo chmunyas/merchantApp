@@ -38,6 +38,10 @@ function buildSimHandle(
       return { handle: `ig:${from}`, uid: `ig:${from}` };
     case "web":
       return { handle: `web:${from}`, uid: from };
+    case "email": {
+      const addr = from.includes("@") ? from.toLowerCase() : `${from}@example.com`;
+      return { handle: addr, uid: addr };
+    }
     case "whatsapp":
     case "sms": {
       const phone = from.startsWith("+") ? from : `+${from}`;
@@ -56,6 +60,8 @@ function defaultFrom(channel: ChannelId): string {
       return "17900000001";
     case "web":
       return "sim-web";
+    case "email":
+      return "guest@example.com";
     default:
       return "+254712345678";
   }
@@ -98,9 +104,11 @@ export async function handleChannelRoute(
     return json(result);
   }
 
-  // Generic inbound webhook for Telegram / Instagram / SMS.
+  // Generic inbound webhook for Telegram / Instagram / SMS / Email.
   // (WhatsApp keeps its dedicated /api/whatsapp/webhook route.)
-  const match = path.match(/^\/api\/(telegram|instagram|sms)\/(webhook|inbound)$/);
+  const match = path.match(
+    /^\/api\/(telegram|instagram|sms|email)\/(webhook|inbound)$/,
+  );
   if (!match) return null;
   const channel = match[1] as ChannelId;
   const adapter = getAdapter(channel);
