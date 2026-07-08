@@ -55,8 +55,14 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   (`/api/staff`, `/api/orders`); `tips` attribution/pooling live (`/api/tips`,
   `payments.staff_id`+`tip_amount`, `tip_pools`, `tip_allocations`). **Reference pattern**.
 - ✅ **DONE (settings/branding)** `venue_branding` (logo/colour/name) via `/api/branding`.
+- ✅ **DONE (client per-venue isolation)** The merchant localStorage store is now
+  namespaced to the logged-in venue (login pins `currentVenue` to the JWT claim); a
+  real merchant (`v_*`) gets an EMPTY starter with their own business name instead of
+  the shared "Sade's Atelier" demo (`createMerchantStarterData`, `isDemoVenue`,
+  `getMerchantIdentity`). POS/KE-QR read the per-venue identity, not constants.
 - **P2** Migrate the remaining localStorage-blob entities (**menus, tables**) from
-  `merchant_state` to dedicated tables following the `staff`/`orders` pattern.
+  `merchant_state` to dedicated Postgres tables following the `staff`/`orders` pattern
+  (client isolation is done; server-authoritative persistence is the next step).
 - **P2** Serve the **venues list from Postgres** so a signed-up merchant sees their
   own venue in the picker (not the demo venues).
 

@@ -19,13 +19,23 @@ The security spine. Read `SECURITY.md` for the full posture.
 - `src/lib/rate-limit.ts` — `enforceRateLimit` (central gate) + `RULES`.
 - `src/lib/db.ts` — `withRequestSql` (per-request Postgres client) + `getSql`.
 - `src/lib/auth.ts` — client: `jwtLogin`, `signup`, `googleLogin`, `authFetch`,
-  `ensureSessionToken`.
+  `ensureSessionToken`; **pins the browser's active tenant** (`applyTenant` →
+  `setCurrentVenueId` + venues list) to the JWT `venue` on real login/signup.
+- `src/lib/merchant-dashboard.ts` — client tenant store: `isDemoVenue`,
+  `createMerchantStarterData`, `getMerchantIdentity`, venue-aware seeding.
+- `src/lib/use-merchant-identity.ts` — hook feeding POS/KE-QR the per-venue name+till.
 - `db/10-users.sql`, `db/11-ratelimit.sql`, `db/12-plan.sql`.
 
 ## Rules (do not regress)
 - **Tenant isolation:** venue-scoped handlers derive the venue via
   `resolveVenue(request, env, url)` — the JWT `venue` claim wins over `?venue=` /
   `body.venue`. Never trust `body.venue` for a tenant write.
+- **Client tenancy:** a real merchant's localStorage is namespaced by their venue
+  (login pins `currentVenue` to the JWT claim). Demo venues (`main`/`cbd`/`kisumu`)
+  seed the rich showcase; a real venue (`v_*`) gets an EMPTY starter with its own
+  business name (never the shared "Sade's Atelier" demo). Surface the tenant's
+  identity via `getMerchantIdentity()` / `useMerchantIdentity()`, not the
+  `MERCHANT_NAME` / `TILL_NUMBER` constants.
 - **Enforcement:** staff mutations are gated with `requireAuth`; **public**
   (pay/chat/enquiries/webhooks) and **service** (bridge sweeps `invoicing/run`,
   `sequences/run`, `bridge/inbound`) routes stay open.
