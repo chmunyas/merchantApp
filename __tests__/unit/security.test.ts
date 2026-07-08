@@ -50,6 +50,7 @@ describe("planLimit (per-entity quotas)", () => {
     expect(planLimit("free", "staff")).toBeLessThan(planLimit("pro", "staff"));
     expect(planLimit("free", "menu_items")).toBe(50);
     expect(planLimit("free", "tables")).toBe(20);
+    expect(planLimit("free", "stores")).toBe(2);
   });
 
   it("falls back to the pro cap for an unknown plan", () => {

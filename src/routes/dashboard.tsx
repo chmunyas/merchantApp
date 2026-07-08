@@ -51,7 +51,7 @@ import { UserProfileMenu } from "@/components/auth/UserProfileMenu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { useAuth, ensureSessionToken, getToken, type UserRole } from "@/lib/auth";
+import { useAuth, ensureSessionToken, getToken, switchVenue as apiSwitchVenue, addStore, type UserRole } from "@/lib/auth";
 import { canAccessPath } from "@/lib/rbac";
 import {
   ensureMerchantDemoData,
@@ -66,6 +66,7 @@ import {
 } from "@/lib/merchant-dashboard";
 import { cn } from "@/lib/utils";
 import { useBranding } from "@/lib/branding";
+import { toast } from "sonner";
 import { hydrateServerEntities } from "@/lib/server-sync";
 
 export const Route = createFileRoute("/dashboard")({
@@ -233,6 +234,8 @@ function DashboardShell() {
   const [currentVenue, setCurrentVenue] = useState<Venue | null>(null);
   const [venuePickerOpen, setVenuePickerOpen] = useState(false);
   const [venueSearch, setVenueSearch] = useState("");
+  const [newStoreName, setNewStoreName] = useState("");
+  const [addingStore, setAddingStore] = useState(false);
 
   useEffect(() => {
     setNewEnquiries(getPendingEnquiryCount(ensureMerchantDemoData().enquiries));
@@ -288,9 +291,30 @@ function DashboardShell() {
     );
   }, [venues, venueSearch]);
 
-  function switchVenue(id: string) {
-    setCurrentVenueId(id);
+  async function switchVenue(id: string) {
+    // Re-mint the JWT for the target store (server verifies membership), then
+    // reload so every panel re-scopes to it. Falls back to a local switch.
+    const ok = await apiSwitchVenue(id);
+    if (!ok) setCurrentVenueId(id);
     window.location.reload();
+  }
+
+  async function handleAddStore() {
+    const name = newStoreName.trim();
+    if (!name || addingStore) return;
+    setAddingStore(true);
+    try {
+      const result = await addStore(name);
+      if ("error" in result) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(`Store "${result.name}" created`);
+      await apiSwitchVenue(result.id);
+      window.location.reload();
+    } finally {
+      setAddingStore(false);
+    }
   }
 
   return (
@@ -498,6 +522,31 @@ function DashboardShell() {
                   </button>
                 );
               })}
+            </div>
+            <div className="mt-4 border-t border-slate-100 pt-4">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+                Add a store
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  value={newStoreName}
+                  onChange={(event) => setNewStoreName(event.target.value)}
+                  placeholder="New store name"
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void handleAddStore();
+                  }}
+                />
+                <Button
+                  onClick={() => void handleAddStore()}
+                  disabled={addingStore || !newStoreName.trim()}
+                >
+                  {addingStore ? "Adding…" : "Add store"}
+                </Button>
+              </div>
+              <p className="mt-2 text-xs text-slate-400">
+                Creates a new, empty store under your account — you'll switch into
+                it to set it up.
+              </p>
             </div>
           </div>
         </div>

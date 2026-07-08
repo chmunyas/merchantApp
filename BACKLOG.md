@@ -73,9 +73,14 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   read-only views (overview, floor plan, bookings, customer table) share one source
   of truth. Gated to real merchants (demo keeps its rich local showcase).
 - ✅ **DONE (venues picker)** `GET /api/venues` serves the back-office picker from
-  Postgres, principal-scoped (merchant → own venue, reseller admin → org venues,
+  Postgres, principal-scoped (merchant → member stores, reseller admin → org venues,
   admin → all). The dashboard picker consumes it (additive; falls back to the local
   list offline). `src/api/venues.ts`.
+- ✅ **DONE (multi-store)** One login can own **multiple stores** — `user_venues`
+  membership (`db/42`), `POST /api/venues` "add a store" (plan-capped),
+  `POST /api/auth/switch-venue` re-mints the JWT for a member store (server-verified),
+  and a store switcher + "Add a store" in the dashboard picker. Each store is fully
+  isolated; a user can never switch into a store they don't own.
 - ✅ **DONE (sub-entity persistence)** Table combinations / zones / areas / floor-plan
   and menu modifiers / schedules already persist server-side per-venue via the
   `merchant_state` blob (`writeStorage` → `/api/state`, hydrated by

@@ -245,6 +245,48 @@ export function authFetch(
   return fetch(input, { ...init, headers });
 }
 
+// Multi-store: switch the active store by re-minting the JWT for a venue the user
+// is a member of (server-verified), then pinning local state to it. Caller reloads.
+export async function switchVenue(venue: string): Promise<boolean> {
+  try {
+    const res = await authFetch("/api/auth/switch-venue", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ venue }),
+    });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { token?: string; user?: { venue?: string } };
+    if (data.token) setToken(data.token);
+    setCurrentVenueId(data.user?.venue ?? venue);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Multi-store: create a new store under the current account (becomes a member).
+export async function addStore(
+  name: string,
+): Promise<{ id: string; name: string } | { error: string }> {
+  try {
+    const res = await authFetch("/api/venues", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      venue?: { id: string; name: string };
+      error?: string;
+    };
+    if (!res.ok || !data.venue) {
+      return { error: data.error ?? "Could not create the store." };
+    }
+    return data.venue;
+  } catch {
+    return { error: "Network error. Please try again." };
+  }
+}
+
 // Bootstrap a dashboard session token. The SPA still uses demo-role logins that
 // carry no password, so protected endpoints would 401 without this. Skips when a
 // real token already exists (admin email / Google login) and no-ops silently in

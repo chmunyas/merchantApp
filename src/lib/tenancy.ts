@@ -33,6 +33,7 @@ export type PlanLimits = {
   menu_items: number;
   campaigns: number;
   contacts: number;
+  stores: number;
 };
 
 export const PLAN_LIMITS: Record<string, PlanLimits> = {
@@ -43,6 +44,7 @@ export const PLAN_LIMITS: Record<string, PlanLimits> = {
     menu_items: 50,
     campaigns: 3,
     contacts: 500,
+    stores: 2,
   },
   pro: {
     recurring: 1000,
@@ -51,6 +53,7 @@ export const PLAN_LIMITS: Record<string, PlanLimits> = {
     menu_items: 2000,
     campaigns: 200,
     contacts: 100000,
+    stores: 50,
   },
 };
 
@@ -78,6 +81,7 @@ export function planLimitMessage(plan: string, entity: PlanEntity): string {
     menu_items: "menu items",
     campaigns: "campaigns",
     contacts: "contacts",
+    stores: "stores",
   };
   return `Your ${plan} plan allows up to ${planLimit(plan, entity)} ${nice[entity]}. Upgrade to add more.`;
 }

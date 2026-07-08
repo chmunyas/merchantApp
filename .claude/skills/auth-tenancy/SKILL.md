@@ -13,8 +13,10 @@ The security spine. Read `SECURITY.md` for the full posture.
 
 ## Key files
 - `src/api/auth.ts` — `/api/auth/{login,signup,session,me,password,google,
-  google/config}`, plus `requireAuth`, `requireRole`, `resolveVenue`.
-- `src/lib/tenancy.ts` — pure helpers `venueFromPayload`, `planOf`, `PLAN_LIMITS`.
+  google/config,switch-venue}`, plus `requireAuth`, `requireRole`, `resolveVenue`.
+- `src/api/venues.ts` — `GET /api/venues` (member stores) + `POST /api/venues` (add a store).
+- `src/lib/tenancy.ts` — pure helpers `venueFromPayload`, `planOf`, `planLimit`, `PLAN_LIMITS`.
+- `db/42-user-venues.sql` — `user_venues` membership (multi-store).
 - `src/lib/jwt.ts` — HS256 sign/verify + PBKDF2 hashing.
 - `src/lib/rate-limit.ts` — `enforceRateLimit` (central gate) + `RULES`.
 - `src/lib/db.ts` — `withRequestSql` (per-request Postgres client) + `getSql`.
@@ -36,6 +38,12 @@ The security spine. Read `SECURITY.md` for the full posture.
   business name (never the shared "Sade's Atelier" demo). Surface the tenant's
   identity via `getMerchantIdentity()` / `useMerchantIdentity()`, not the
   `MERCHANT_NAME` / `TILL_NUMBER` constants.
+- **Multi-store:** one login can own several stores via `user_venues` (many-to-many;
+  `app_users.venue_id` stays the primary). `GET /api/venues` lists a merchant's member
+  stores; `POST /api/venues` adds one (plan-capped, `planLimit(plan,"stores")`);
+  `POST /api/auth/switch-venue` **re-mints the JWT** for a store the user is a member
+  of (membership verified server-side — a token can never be pointed at a store the
+  user doesn't own). Each store is fully isolated (all entities are `venue_id`-scoped).
 - **Enforcement:** staff mutations are gated with `requireAuth`; **public**
   (pay/chat/enquiries/webhooks) and **service** (bridge sweeps `invoicing/run`,
   `sequences/run`, `bridge/inbound`) routes stay open.

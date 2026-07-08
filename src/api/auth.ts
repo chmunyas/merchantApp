@@ -195,6 +195,52 @@ export async function handleAuthRoute(
     return json({ error: "invalid credentials" }, 401);
   }
 
+  // Multi-store: re-mint the JWT for another venue the user is a MEMBER of, so a
+  // chain owner can switch stores with one login. Membership is verified
+  // server-side, so a token can never be pointed at a venue the user doesn't own.
+  if (path === "/api/auth/switch-venue" && request.method === "POST") {
+    const payload = await requireAuth(request, env);
+    if (!payload) return json({ error: "unauthorized" }, 401);
+    const cfg = await getAuthConfig(env);
+    const sql = getSql(env);
+    if (!cfg || !sql) return json({ error: "auth unavailable" }, 503);
+    const body = (await request.json().catch(() => ({}))) as { venue?: string };
+    const target = String(body.venue ?? "").trim();
+    if (!target) return json({ error: "venue required" }, 400);
+    const email = String(payload.sub ?? "").toLowerCase();
+    const [member] = await sql`
+      SELECT uv.role, u.name, u.plan, u.org_id, v.name AS venue_name
+      FROM user_venues uv
+      JOIN app_users u ON u.id = uv.user_id
+      JOIN venues v ON v.id = uv.venue_id
+      WHERE lower(u.email) = ${email} AND uv.venue_id = ${target}
+      LIMIT 1`;
+    if (!member) return json({ error: "not a member of that venue" }, 403);
+    const token = await signJwt(
+      {
+        sub: email,
+        role: String(member.role ?? payload.role ?? "merchant"),
+        name: (member.name as string) ?? undefined,
+        venue: target,
+        plan: (member.plan as string) ?? "free",
+        org: (member.org_id as string) ?? undefined,
+      },
+      cfg.secret,
+    );
+    return json({
+      token,
+      user: {
+        email,
+        role: member.role,
+        name: member.name,
+        venue: target,
+        venueName: member.venue_name,
+        plan: (member.plan as string) ?? "free",
+        org: (member.org_id as string) ?? null,
+      },
+    });
+  }
+
   // Self-serve signup: creates a venue + merchant account and returns a JWT.
   if (path === "/api/auth/signup" && request.method === "POST") {
     if (truthyEnv(envVar(env, "AUTH_DISABLE_SIGNUP"))) {
@@ -252,10 +298,16 @@ export async function handleAuthRoute(
         INSERT INTO venues (id, name, code, active, org_id)
         VALUES (${venueId}, ${businessName}, ${code}, true, ${orgId})`;
       const passwordHash = await hashPassword(password);
-      await sql`
+      const [created] = await sql`
         INSERT INTO app_users (email, password_hash, name, phone, venue_id, role, plan, org_id)
         VALUES (${email}, ${passwordHash}, ${businessName},
-                ${body.phone?.trim() || null}, ${venueId}, 'merchant', 'free', ${orgId})`;
+                ${body.phone?.trim() || null}, ${venueId}, 'merchant', 'free', ${orgId})
+        RETURNING id`;
+      // Membership row so this owner can later add + switch to more stores.
+      await sql`
+        INSERT INTO user_venues (user_id, venue_id, role)
+        VALUES (${created.id}, ${venueId}, 'merchant')
+        ON CONFLICT DO NOTHING`;
       const token = await signJwt(
         {
           sub: email,
