@@ -34,6 +34,12 @@ The security spine. Read `SECURITY.md` for the full posture.
 - **Tenant isolation:** venue-scoped handlers derive the venue via
   `resolveVenue(request, env, url)` — the JWT `venue` claim wins over `?venue=` /
   `body.venue`. Never trust `body.venue` for a tenant write.
+- **`app_settings` is GLOBAL** (PK on `key` only, no `venue_id`). For per-venue
+  config, **namespace the key** as `<key>:<venue>` (e.g. `whatsapp_cloud:<venue>`,
+  `telegram:<venue>`, `push_latest:<venue>`) and read the venue key first with a
+  fallback to the global key + env. Platform-level keys (`auth`, `vapid`, `ke_qr`,
+  `public_base_url`) stay global. Inbound channel→venue routing is a separate
+  `channel_accounts(channel, account_id)->venue_id` table (`db/44`).
 - **Client tenancy:** a real merchant's localStorage is namespaced by their venue
   (login pins `currentVenue` to the JWT claim). Demo venues (`main`/`cbd`/`kisumu`)
   seed the rich showcase; a real venue (`v_*`) gets an EMPTY starter with its own

@@ -426,12 +426,15 @@ export async function runAgent(
     // AI, with fallback) when the breaker is closed. Degrades gracefully to the
     // rule-based closing reply when no provider is configured.
     if (!breakerOpen()) {
+      // Name the specific store so free-form replies are venue-specific (fetched
+      // lazily — only on the free-form path, never on a tool hit).
+      const [v] = await sql`SELECT name FROM venues WHERE id = ${venue} LIMIT 1`;
+      const venueName = (v?.name as string) || "the venue";
       const reply = await aiChat(
         [
           {
             role: "system",
-            content:
-              "You are a friendly WhatsApp assistant for a restaurant. Keep replies to 1-2 sentences. If the guest wants to book, ask for number of guests, date and time.",
+            content: `You are the friendly assistant for ${venueName}. Keep replies to 1-2 sentences. If the guest wants to book, ask for number of guests, date and time. If you can't help, say a team member will follow up.`,
           },
           { role: "user", content: text },
         ],

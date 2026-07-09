@@ -112,7 +112,12 @@ retained per policy, and erasable. Framework + per-channel duties in
 - Pay links can be invoice links or generic `/pay?r=<token>` ad-hoc links for
   Tap&Go, deposits, split-pay or one-off requests; share them via `/api/share` /
   `OmniShare` over WhatsApp, Telegram or SMS.
-- Channel config in `app_settings` (`whatsapp_cloud`, `telegram`, …).
+- Channel config in `app_settings`, **per-venue** by key suffix
+  (`whatsapp_cloud:<venue>`, `telegram:<venue>`) with a global default fallback —
+  so each store runs its OWN number/bot. Loaders take a venue
+  (`getWhatsappConfig(env, venue)`); outbound is venue-scoped via
+  `adapter.send(handle, text, env, venue)`. (The Baileys bridge is single-account
+  and reads the global config — Cloud API webhooks carry per-venue routing.)
 - Always 200 the provider fast; never block the webhook on slow work.
 
 ## Adding a channel (the pattern)
