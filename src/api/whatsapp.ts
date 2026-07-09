@@ -9,7 +9,11 @@ import { envVar } from "@/lib/env";
 import { processInbound } from "@/lib/inbound";
 import { verifyHubSignature, verifyToken } from "@/lib/webhook-verify";
 import { roleAtLeast } from "@/lib/rbac";
-import { requireAuth, resolveVenue } from "@/api/auth";
+import {
+  registerChannelAccount,
+  resolveVenueForAccount,
+} from "@/lib/venue-routing";
+import { requireAuth, resolveVenue, venueFromPayload } from "@/api/auth";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -127,6 +131,16 @@ export async function handleWhatsappRoute(
     await sql`
       INSERT INTO app_settings (key, value) VALUES ('whatsapp_cloud', ${sql.json(value)})
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
+    // Route inbound to this WhatsApp number to the configuring venue, so a
+    // customer messaging this store reaches this store's agent (multi-venue).
+    if (value.phoneId) {
+      await registerChannelAccount(
+        env,
+        "whatsapp",
+        value.phoneId,
+        venueFromPayload(cfgPayload, url),
+      );
+    }
     return json({ ok: true });
   }
 
@@ -183,10 +197,14 @@ export async function handleWhatsappRoute(
     }
     try {
       const body = JSON.parse(rawBody);
+      // Route each inbound to the venue that owns the RECEIVING number, so a
+      // customer messaging store A reaches store A (falls back to "main" when the
+      // number isn't registered — preserving single-venue behaviour).
+      const phoneNumberId =
+        body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id ?? null;
+      const venue = await resolveVenueForAccount(env, "whatsapp", phoneNumberId);
       for (const message of parseWhatsappInbound(body)) {
-        // Venue mapping (single-venue default). Extend by mapping the Meta
-        // phone_number_id -> venue when running multiple numbers.
-        await processInbound(message, "main", env);
+        await processInbound(message, venue, env);
       }
     } catch {
       // Always 200 so WhatsApp does not retry a malformed event.
