@@ -31,8 +31,11 @@ type ResellerBrand = {
 };
 
 export const Route = createFileRoute("/get-started")({
-  validateSearch: (search: Record<string, unknown>): { org?: string } => ({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { org?: string; invite?: string } => ({
     org: typeof search.org === "string" ? search.org : undefined,
+    invite: typeof search.invite === "string" ? search.invite : undefined,
   }),
   head: () => ({
     meta: [
@@ -54,7 +57,7 @@ const ORDER: Step[] = ["welcome", "business", "install", "done"];
 
 function GetStartedPage() {
   const navigate = useNavigate();
-  const { org } = Route.useSearch();
+  const { org, invite } = Route.useSearch();
   const existing = useMemo(() => ensureMerchantDemoData(), []);
   const [step, setStep] = useState<Step>("welcome");
   const [bizName, setBizName] = useState("");
@@ -120,6 +123,7 @@ function GetStartedPage() {
       password,
       phone: phone.trim() || undefined,
       org: org || undefined,
+      invite: invite || undefined,
     });
     if ("error" in result) {
       setError(result.error);

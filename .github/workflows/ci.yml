@@ -97,6 +97,10 @@ jobs:
     env:
       DATABASE_URL: postgres://pesaswap:pesaswap@localhost:5432/pesaswap
       CI: "true"
+      # Simulate payments without live PesaSwap credentials so the E2E can drive
+      # the full ledger path — including a DECLINED payment (metadata.simulate=
+      # "failed") — and assert every outcome is recorded clearly.
+      PAYMENTS_TEST_MODE: "1"
       # Use 127.0.0.1 (not localhost) so the health poll + the tests hit the IPv4
       # the dev server binds to — Node resolves "localhost" to IPv6 ::1 first,
       # where the server isn't listening.

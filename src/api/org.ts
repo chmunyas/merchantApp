@@ -137,7 +137,7 @@ export async function handleOrgRoute(
     const orgId = typeof payload.org === "string" ? payload.org : null;
     if (!orgId) return json({ error: "not a reseller account" }, 403);
     const [org] = await sql`
-      SELECT id, name, slug, branding FROM organizations WHERE id = ${orgId} LIMIT 1`;
+      SELECT id, name, slug, branding, require_invite FROM organizations WHERE id = ${orgId} LIMIT 1`;
     return json({ org: org ?? null });
   }
 
@@ -189,9 +189,15 @@ export async function handleOrgRoute(
       logoUrl?: string;
       primaryColor?: string;
       poweredBy?: string;
+      requireInvite?: boolean;
     };
     if (body.logoUrl && body.logoUrl.length > 512 * 1024) {
       return json({ error: "logo too large (max 512KB)" }, 413);
+    }
+    if (typeof body.requireInvite === "boolean") {
+      await sql`
+        UPDATE organizations SET require_invite = ${body.requireInvite}
+        WHERE id = ${orgId}`;
     }
     const [org] = await sql`
       SELECT branding FROM organizations WHERE id = ${orgId} LIMIT 1`;
@@ -261,6 +267,63 @@ export async function handleOrgRoute(
       merchants,
       total,
     });
+  }
+
+  // Reseller admin: my commission LEDGER — durable per-payment revenue-share posts
+  // (the audit trail behind the on-demand analytics).
+  if (url.pathname === "/api/org/ledger" && request.method === "GET") {
+    const payload = await requireAuth(request, env);
+    if (!payload) return json({ error: "unauthorized" }, 401);
+    const orgId = typeof payload.org === "string" ? payload.org : null;
+    if (!orgId) return json({ error: "not a reseller account" }, 403);
+    const [totals] = await sql`
+      SELECT count(*)::int AS n,
+             coalesce(sum(commission_amount), 0)::bigint AS total
+      FROM commission_ledger WHERE org_id = ${orgId}`;
+    const entries = await sql`
+      SELECT cl.id, cl.venue_id, v.name AS venue_name, cl.gross_amount,
+             cl.commission_amount, cl.commission_bps, cl.created_at
+      FROM commission_ledger cl
+      LEFT JOIN venues v ON v.id = cl.venue_id
+      WHERE cl.org_id = ${orgId}
+      ORDER BY cl.created_at DESC LIMIT 50`;
+    return json({
+      total: Number(totals?.total ?? 0),
+      count: Number(totals?.n ?? 0),
+      entries,
+    });
+  }
+
+  // Reseller admin: generate a single-use signup invite token (invite-only orgs).
+  if (url.pathname === "/api/org/invites" && request.method === "POST") {
+    const payload = await requireAuth(request, env);
+    if (!payload) return json({ error: "unauthorized" }, 401);
+    const orgId = typeof payload.org === "string" ? payload.org : null;
+    if (!orgId) return json({ error: "not a reseller account" }, 403);
+    const body = (await request.json().catch(() => ({}))) as {
+      email?: string;
+      days?: number;
+    };
+    const email = String(body.email ?? "").trim().toLowerCase() || null;
+    const days = Math.min(90, Math.max(1, Math.round(Number(body.days ?? 14)) || 14));
+    const token = crypto.randomUUID().replace(/-/g, "").slice(0, 20);
+    await sql`
+      INSERT INTO org_invites (token, org_id, email, expires_at)
+      VALUES (${token}, ${orgId}, ${email}, now() + make_interval(days => ${days}))`;
+    return json({ invite: { token, email, days } }, 201);
+  }
+
+  // Reseller admin: list my org's invites.
+  if (url.pathname === "/api/org/invites" && request.method === "GET") {
+    const payload = await requireAuth(request, env);
+    if (!payload) return json({ error: "unauthorized" }, 401);
+    const orgId = typeof payload.org === "string" ? payload.org : null;
+    if (!orgId) return json({ error: "not a reseller account" }, 403);
+    const invites = await sql`
+      SELECT token, email, used_at, used_venue, expires_at, created_at
+      FROM org_invites WHERE org_id = ${orgId}
+      ORDER BY created_at DESC LIMIT 100`;
+    return json({ invites });
   }
 
   return null;

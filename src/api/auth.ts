@@ -255,6 +255,7 @@ export async function handleAuthRoute(
       password?: string;
       phone?: string;
       org?: string;
+      invite?: string;
     };
     const email = String(body.email ?? "").trim().toLowerCase();
     const password = String(body.password ?? "");
@@ -281,14 +282,38 @@ export async function handleAuthRoute(
         );
       }
       // Optional reseller attach: a merchant signing up under a bank's slug is
-      // linked to that org (and inherits its co-brand via the branding join).
+      // linked to that org (and inherits its co-brand via the branding join). An
+      // invite-only org additionally requires a valid, unused, unexpired token.
       let orgId: string | null = null;
+      let inviteToken: string | null = null;
       if (body.org) {
         const [org] = await sql`
-          SELECT id FROM organizations
+          SELECT id, require_invite FROM organizations
           WHERE slug = ${String(body.org).toLowerCase()} AND active = true
           LIMIT 1`;
         orgId = (org?.id as string) ?? null;
+        if (org && org.require_invite) {
+          const inv = String(body.invite ?? "").trim();
+          if (!inv) {
+            return json(
+              { error: "This organization requires an invite to sign up." },
+              403,
+            );
+          }
+          const [row] = await sql`
+            SELECT token FROM org_invites
+            WHERE token = ${inv} AND org_id = ${org.id} AND used_at IS NULL
+              AND expires_at > now()
+              AND (email IS NULL OR lower(email) = ${email})
+            LIMIT 1`;
+          if (!row) {
+            return json(
+              { error: "That invite is invalid, already used or expired." },
+              403,
+            );
+          }
+          inviteToken = String(row.token);
+        }
       }
       const venueId = `v_${crypto.randomUUID().slice(0, 8)}`;
       const code =
@@ -297,6 +322,11 @@ export async function handleAuthRoute(
       await sql`
         INSERT INTO venues (id, name, code, active, org_id)
         VALUES (${venueId}, ${businessName}, ${code}, true, ${orgId})`;
+      if (inviteToken) {
+        await sql`
+          UPDATE org_invites SET used_at = now(), used_venue = ${venueId}
+          WHERE token = ${inviteToken}`;
+      }
       const passwordHash = await hashPassword(password);
       const [created] = await sql`
         INSERT INTO app_users (email, password_hash, name, phone, venue_id, role, plan, org_id)

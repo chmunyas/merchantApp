@@ -7,6 +7,7 @@
 // --- Environment Config ---
 
 import { getSql } from "@/lib/db";
+import { partnerIdForVenue, postCommission } from "@/lib/commission";
 import { requireAuth } from "@/api/auth";
 import { roleAtLeast } from "@/lib/rbac";
 import { venueFromPayload } from "@/lib/tenancy";
@@ -263,6 +264,16 @@ async function recordLedger(
     } catch {
       /* best-effort accounting */
     }
+  }
+
+  // Reseller commission: post the org's revenue share once per succeeded payment
+  // (best-effort, idempotent on payment_id).
+  if (firstSuccess && rec.venue) {
+    await postCommission(sql, {
+      venue: rec.venue,
+      paymentId: rec.id,
+      gross: Number(rec.amount),
+    });
   }
 
   // Accrue loyalty points to the contact identified by phone (upsert on the
@@ -771,6 +782,24 @@ async function handleCreatePayment(
     body.metadata = bmeta;
   }
 
+  // Reseller settlement routing: if the venue belongs to an org (bank), tag the
+  // payment with the org's PesaSwap partner id so settlement routes to the bank's
+  // partner account. Recorded on the payment now (and forwarded to PesaSwap once a
+  // real partner id is configured on the org).
+  {
+    const routeSql = getSql(workerEnv);
+    const routeVenue = String(
+      (body.metadata as Record<string, unknown>).venue ?? "main",
+    );
+    if (routeSql && routeVenue !== "main") {
+      const partnerId = await partnerIdForVenue(routeSql, routeVenue);
+      if (partnerId) {
+        (body.metadata as Record<string, unknown>).settlement_partner_id =
+          partnerId;
+      }
+    }
+  }
+
   const env = getEnv(workerEnv);
 
   // Split-pay guard: when charging against a shared order, never let a guest pay
@@ -831,6 +860,59 @@ async function handleCreatePayment(
     env.PAYMENTS_TEST_MODE.toLowerCase() !== "false";
   if (testMode) {
     const meta = (body.metadata ?? {}) as Record<string, unknown>;
+    // Test-mode DECLINE path: an explicit `simulate: "failed"` (never set by real
+    // flows) lets QA / E2E exercise a declined payment end-to-end. The failed
+    // attempt is still written to the durable ledger — with a decline reason — so
+    // it shows up in the merchant's payments list (status=failed), exactly like a
+    // real decline. This is how we prove "payments even if they fail are recorded".
+    const simulate = String(meta.simulate ?? meta.simulate_status ?? "")
+      .trim()
+      .toLowerCase();
+    if (["failed", "fail", "declined", "decline"].includes(simulate)) {
+      const failedId = `test_${crypto.randomUUID().replace(/-/g, "")}`;
+      const reason =
+        typeof meta.error_message === "string" && meta.error_message.trim()
+          ? meta.error_message.trim()
+          : "Simulated decline (test mode)";
+      const code =
+        typeof meta.error_code === "string" && meta.error_code.trim()
+          ? meta.error_code.trim()
+          : "TEST_DECLINED";
+      payments.set(failedId, {
+        id: failedId,
+        amount: body.amount,
+        currency: body.currency || "KES",
+        status: "failed",
+        metadata: meta,
+        created_at: new Date().toISOString(),
+        refunds: [],
+      });
+      await recordLedger(workerEnv, {
+        id: failedId,
+        amount: body.amount,
+        currency: body.currency || "KES",
+        status: "failed",
+        venue: typeof meta.venue === "string" ? meta.venue : null,
+        reference: typeof meta.till === "string" ? meta.till : null,
+        metadata: { ...meta, error_code: code, error_message: reason },
+      });
+      const failBody = {
+        payment_id: failedId,
+        client_secret: null,
+        status: "failed",
+        amount: body.amount,
+        currency: body.currency || "KES",
+        test_mode: true,
+        error: { code, message: reason },
+      };
+      if (idempotencyKey) {
+        idempotencyCache.set(idempotencyKey, {
+          response: failBody,
+          expires: Date.now() + 3_600_000,
+        });
+      }
+      return jsonResponse(failBody, 200);
+    }
     const paymentId = `test_${crypto.randomUUID().replace(/-/g, "")}`;
     payments.set(paymentId, {
       id: paymentId,

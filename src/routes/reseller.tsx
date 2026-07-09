@@ -44,6 +44,15 @@ type Org = {
     primaryColor?: string | null;
     poweredBy?: string | null;
   } | null;
+  require_invite?: boolean;
+};
+
+type Invite = {
+  token: string;
+  email: string | null;
+  used_at: string | null;
+  used_venue: string | null;
+  expires_at: string;
 };
 
 function ResellerPortal() {
@@ -51,6 +60,11 @@ function ResellerPortal() {
   const [org, setOrg] = useState<Org | null>(null);
   const [merchants, setMerchants] = useState<Merchant[]>([]);
   const [analytics, setAnalytics] = useState<OrgAnalytics | null>(null);
+  const [invites, setInvites] = useState<Invite[]>([]);
+  const [ledgerTotal, setLedgerTotal] = useState(0);
+  const [requireInvite, setRequireInvite] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [genBusy, setGenBusy] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const [mName, setMName] = useState("");
@@ -64,7 +78,7 @@ function ResellerPortal() {
   const [savingBrand, setSavingBrand] = useState(false);
 
   async function load() {
-    const [orgRes, merRes, anRes] = await Promise.all([
+    const [orgRes, merRes, anRes, invRes, ledRes] = await Promise.all([
       authFetch("/api/org/me")
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null),
@@ -74,6 +88,12 @@ function ResellerPortal() {
       authFetch("/api/org/analytics")
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null),
+      authFetch("/api/org/invites")
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null),
+      authFetch("/api/org/ledger")
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null),
     ]);
     if (orgRes?.org) {
       const o = orgRes.org as Org;
@@ -81,10 +101,51 @@ function ResellerPortal() {
       setPoweredBy(o.branding?.poweredBy ?? "");
       setPrimaryColor(o.branding?.primaryColor ?? "#2563eb");
       setLogoUrl(o.branding?.logoUrl ?? "");
+      setRequireInvite(Boolean(o.require_invite));
     }
     setMerchants((merRes?.merchants as Merchant[]) ?? []);
     setAnalytics((anRes as OrgAnalytics) ?? null);
+    setInvites((invRes?.invites as Invite[]) ?? []);
+    setLedgerTotal(Number((ledRes as { total?: number })?.total ?? 0));
     setLoading(false);
+  }
+
+  async function generateInvite() {
+    setGenBusy(true);
+    try {
+      const res = await authFetch("/api/org/invites", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: inviteEmail || undefined }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        invite?: { token: string };
+        error?: string;
+      };
+      if (res.ok && data.invite) {
+        toast.success("Invite created");
+        setInviteEmail("");
+        void load();
+      } else {
+        toast.error(data.error ?? "Could not create invite");
+      }
+    } finally {
+      setGenBusy(false);
+    }
+  }
+
+  async function toggleRequireInvite(next: boolean) {
+    setRequireInvite(next);
+    await authFetch("/api/org", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ requireInvite: next }),
+    }).catch(() => {});
+  }
+
+  function inviteLink(token: string) {
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    return `${origin}/get-started?org=${org?.slug ?? ""}&invite=${token}`;
   }
 
   useEffect(() => {
@@ -197,7 +258,7 @@ function ResellerPortal() {
       </header>
 
       {analytics ? (
-        <section className="grid gap-3 sm:grid-cols-3">
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard
             label="Processed volume (30d)"
             value={kes(analytics.total.gross)}
@@ -207,9 +268,13 @@ function ResellerPortal() {
             value={String(analytics.total.tx)}
           />
           <StatCard
-            label={`Your commission (${(analytics.commissionBps / 100).toFixed(2)}%)`}
+            label={`Commission (30d · ${(analytics.commissionBps / 100).toFixed(2)}%)`}
             value={kes(analytics.total.commission)}
             accent
+          />
+          <StatCard
+            label="Commission posted (all-time)"
+            value={kes(ledgerTotal)}
           />
         </section>
       ) : null}
@@ -311,6 +376,69 @@ function ResellerPortal() {
             ) : null}
           </tbody>
         </table>
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold">Signup invites</h2>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={requireInvite}
+              onChange={(e) => void toggleRequireInvite(e.target.checked)}
+            />
+            Invite-only signup (block open <code>?org={org.slug}</code>)
+          </label>
+        </div>
+        <div className="mt-4 flex flex-wrap items-end gap-2">
+          <Input
+            placeholder="Bind to email (optional)"
+            type="email"
+            value={inviteEmail}
+            onChange={(e) => setInviteEmail(e.target.value)}
+            className="max-w-xs"
+          />
+          <Button onClick={generateInvite} disabled={genBusy}>
+            {genBusy ? "Generating…" : "Generate invite"}
+          </Button>
+        </div>
+        {invites.length > 0 ? (
+          <ul className="mt-4 space-y-2 text-sm">
+            {invites.slice(0, 8).map((inv) => (
+              <li
+                key={inv.token}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border px-3 py-2"
+              >
+                <span className="truncate">
+                  {inv.email ?? "any email"} ·{" "}
+                  {inv.used_at ? (
+                    <span className="text-muted-foreground">used</span>
+                  ) : new Date(inv.expires_at) < new Date() ? (
+                    <span className="text-muted-foreground">expired</span>
+                  ) : (
+                    <span className="text-emerald-600">active</span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  disabled={Boolean(inv.used_at)}
+                  onClick={() => {
+                    void navigator.clipboard
+                      ?.writeText(inviteLink(inv.token))
+                      .then(() => toast.success("Signup link copied"));
+                  }}
+                  className="rounded-md border border-border px-2 py-1 text-xs disabled:opacity-40"
+                >
+                  Copy link
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-4 text-sm text-muted-foreground">
+            No invites yet. Generate one to share a private signup link.
+          </p>
+        )}
       </section>
     </div>
   );

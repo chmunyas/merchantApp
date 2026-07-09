@@ -67,6 +67,34 @@ async function logOutbound(
   }
 }
 
+// Cross-channel consent-to-switch audit: record that we're reaching this customer
+// on `channel`, noting the channel they were last seen on when it differs (a
+// switch). Compliance trail for moving a customer to a new channel. Best-effort.
+async function logConsentSwitch(
+  env: unknown,
+  venue: string,
+  handle: string,
+  channel: string,
+  kind: string,
+): Promise<void> {
+  const sql = getSql(env);
+  if (!sql) return;
+  try {
+    const [prev] = await sql`
+      SELECT channel FROM conversations
+      WHERE venue_id = ${venue} AND wa_id = ${handle}
+        AND channel IS NOT NULL AND channel <> ${channel}
+      ORDER BY last_message_at DESC NULLS LAST LIMIT 1`;
+    const fromChannel = prev?.channel ? String(prev.channel) : null;
+    await sql`
+      INSERT INTO consent_switch_log (id, venue_id, handle, channel, from_channel, kind)
+      VALUES (${`cs_${crypto.randomUUID().slice(0, 12)}`}, ${venue}, ${handle},
+              ${channel}, ${fromChannel}, ${kind})`;
+  } catch {
+    /* best-effort — never block outbound on the audit log */
+  }
+}
+
 // Merchant-initiated outbound share/send over any configured channel. Lets the
 // app push a payment link, QR link, invoice, booking or enquiry to a customer on
 // WhatsApp / Telegram / SMS using the venue's configured number + keys.
@@ -119,6 +147,7 @@ export async function handleShareRoute(
     message,
     body.kind ?? "share",
   );
+  await logConsentSwitch(env, venue, handle, channel, body.kind ?? "share");
 
   return json({ ok: true, channel, to: handle, delivery: result.delivery });
 }

@@ -153,11 +153,17 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   only their org's merchants.
 - ✅ **DONE (co-branded signup)** `/get-started?org=<slug>` reads `GET /api/org`,
   shows the reseller's brand (logo + "{bank} × PesaSwap"), and links the new
-  `venue.org_id` to the org on signup (`signup({..., org})`). **Remaining:** an
-  invite-token flow (vs open slug signup).
-- **P2** **Reseller settlement** — wire `organizations.pesaswap_partner_id` into
-  payment creation so a bank's merchants settle under its PesaSwap partner, plus a
-  revenue-share / commission ledger.
+  `venue.org_id` to the org on signup (`signup({..., org})`). **Invite-token flow
+  DONE:** `db/46` `org_invites` + `organizations.require_invite`; invite-only orgs
+  reject open signups (403) until a valid unused unexpired token is supplied
+  (`POST/GET /api/org/invites`, portal "Invite links" section). Verified live:
+  open→403, valid invite→201, reuse→403.
+- ✅ **DONE (P2)** **Reseller settlement + commission ledger** — `db/47`
+  `commission_ledger`; `src/lib/commission.ts` posts the org's revenue share once
+  per succeeded payment (idempotent on `payment_id`), and `handleCreatePayment`
+  tags `settlement_partner_id` from `organizations.pesaswap_partner_id` so a bank's
+  merchants settle under its PesaSwap partner. `GET /api/org/ledger` + a
+  "Commission posted" portal stat. Verified live: KES 600 (3% of 20,000) posted.
 - **P2** **Logo storage** — move inline data-URL logos (≤512KB) to Cloudflare R2 /
   Images; **per-merchant PWA manifest + icons** for a branded installable app.
 
@@ -166,7 +172,13 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   ephemeral Postgres service; green on GitHub Actions (curl health-poll on
   127.0.0.1 instead of wait-on).
 - **P2** Add **branch protection** on `main` requiring `CI / quality` + `CI / E2E`.
-- **P2** More **integration/E2E** coverage (payment webhook, campaigns, DLQ).
+- ✅ **DONE** More **integration/E2E** coverage (payment webhook, campaigns, DLQ)
+  — `__tests__/unit/payment-ledger.test.ts` proves a signed `payment_failed`
+  webhook is written to the ledger with its decline reason (and an unsigned one
+  never is); `__tests__/e2e/payments-campaigns-dlq.e2e.ts` drives a DECLINED +
+  a SUCCESSFUL payment (`PAYMENTS_TEST_MODE`, `metadata.simulate="failed"`),
+  asserts both are recorded + distinct in `/api/payments/list`, and smokes
+  broadcast/campaign history + the tenant-scoped DLQ (list + retry).
 
 ## Omnichannel channels (see `.claude/skills/omnichannel-agent/`)
 - ✅ **DONE** Enforce **consent + suppression in code** — the `suppressions` table
@@ -194,8 +206,12 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   **capability scoping** by caller (customer vs staff, returned in the response) +
   signed intents (agent-intent). Remaining: mTLS (not available on Workers) /
   rotating signed peer tokens.
-- **P3** Cross-channel **consent-to-switch** logging when moving a customer to a new
-  channel.
+- ✅ **DONE** Cross-channel **consent-to-switch** logging when moving a customer to
+  a new channel — `db/48` `consent_switch_log`; `src/api/share.ts` `logConsentSwitch`
+  records `(channel, from_channel, kind)` on every merchant-initiated share,
+  detecting the customer's last-seen channel from `conversations.channel`. Verified
+  live (dev + prod-local): an SMS share to a WhatsApp-last-seen handle logs
+  `from_channel='whatsapp'`.
 
 ## Integrations & config
 - **P2** **Google sign-in**: set `GOOGLE_CLIENT_ID` (+ optional
