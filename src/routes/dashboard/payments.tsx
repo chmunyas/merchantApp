@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { format, isSameDay, subDays } from "date-fns";
 import { Download, RefreshCw, RotateCcw, Search, Send } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -16,6 +17,7 @@ import {
 import {
   ensureMerchantDemoData,
   flattenTransactions,
+  getCurrentVenueId,
   loadMerchantSnapshot,
   saveMerchantTables,
   type MerchantPayment,
@@ -24,6 +26,7 @@ import {
 import { getBNPLTransactions, type BNPLTransaction } from "@/lib/coop-bnpl";
 import { pesaswapClient } from "@/lib/pesaswap-payments";
 import { authFetch } from "@/lib/auth";
+import { useAuthQuery } from "@/lib/use-auth-query";
 
 type LivePayment = {
   id: string;
@@ -77,51 +80,52 @@ function DashboardPaymentsPage() {
   const [bnplTransactions, setBnplTransactions] = useState<BNPLTransaction[]>(
     [],
   );
-  const [livePayments, setLivePayments] = useState<LivePayment[]>([]);
-  const [liveLoading, setLiveLoading] = useState(true);
+  const queryClient = useQueryClient();
 
-  // Real transactions from the durable ledger (every attempt, any status) — live
-  // PesaSwap / M-Pesa sales that don't live in the localStorage demo snapshot.
-  // This read is a PURE DB query (no PesaSwap round-trip) so the panel renders at
-  // DB speed. The authoritative PesaSwap reconcile runs OFF this path via a silent
-  // background sync (below), so the UI never blocks on the network.
-  const refreshLive = useCallback(async () => {
-    try {
-      const res = await authFetch("/api/payments/list?limit=100");
-      if (res.ok) {
-        const data = (await res.json()) as { payments: LivePayment[] };
-        setLivePayments(data.payments ?? []);
-      }
-    } catch {
-      /* ledger unavailable — the demo snapshot below still renders */
-    } finally {
-      setLiveLoading(false);
-    }
-  }, []);
+  // Real transactions from the durable ledger (every attempt, any status) — a PURE
+  // DB read (no PesaSwap round-trip) so the panel renders at DB speed. Cached +
+  // venue-scoped, so revisiting the page paints INSTANTLY from cache and then
+  // revalidates; it self-refreshes every 15s. The authoritative PesaSwap reconcile
+  // runs OFF this path (background sync below) and invalidates the cache when done,
+  // so the UI never blocks on the network.
+  const liveQuery = useAuthQuery<{ payments: LivePayment[] }, LivePayment[]>(
+    ["payments-list"],
+    "/api/payments/list?limit=100",
+    { select: (d) => d.payments ?? [], refetchInterval: 15000 },
+  );
+  const livePayments = liveQuery.data ?? [];
+  const liveLoading = liveQuery.isLoading;
 
-  // Silent background reconcile: pull refunds + stuck payments from PesaSwap into the
-  // DB, then re-read (fast). Fire-and-forget so it NEVER blocks a render.
+  const refreshLive = useCallback(
+    () =>
+      queryClient.invalidateQueries({
+        queryKey: [getCurrentVenueId(), "payments-list"],
+      }),
+    [queryClient],
+  );
+
+  // Silent background reconcile: pull refunds + stuck payments from PesaSwap into
+  // the DB, then invalidate the cached list. Fire-and-forget — never blocks render.
   const backgroundSync = useCallback(async () => {
     try {
       const res = await authFetch("/api/payments/sync", { method: "POST" });
-      if (res.ok) await refreshLive();
+      if (res.ok) {
+        await queryClient.invalidateQueries({
+          queryKey: [getCurrentVenueId(), "payments-list"],
+        });
+      }
     } catch {
       /* best-effort — the DB read still shows the latest known state */
     }
-  }, [refreshLive]);
+  }, [queryClient]);
 
   useEffect(() => {
-    // Instant DB read first, then a background reconcile — so the panel paints
-    // immediately and self-updates once PesaSwap has been polled.
-    void refreshLive();
+    // useQuery drives the fast DB refresh (refetchInterval); this only runs the
+    // slower PesaSwap reconcile.
     void backgroundSync();
-    const dbPoll = setInterval(refreshLive, 15000); // fast DB refresh
-    const syncPoll = setInterval(backgroundSync, 60000); // slower network reconcile
-    return () => {
-      clearInterval(dbPoll);
-      clearInterval(syncPoll);
-    };
-  }, [refreshLive, backgroundSync]);
+    const syncPoll = setInterval(backgroundSync, 60000);
+    return () => clearInterval(syncPoll);
+  }, [backgroundSync]);
 
   useEffect(() => {
     generateDemoData();

@@ -15,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { getCurrentVenueId } from "@/lib/merchant-dashboard";
 import { authFetch } from "@/lib/auth";
+import { useAuthQuery } from "@/lib/use-auth-query";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/dashboard/contacts")({
@@ -67,8 +68,13 @@ const CHANNEL_LABEL: Record<string, string> = {
 function DashboardContactsPage() {
   const venue = useMemo(() => getCurrentVenueId(), []);
   const [health, setHealth] = useState<Health | null>(null);
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [loading, setLoading] = useState(true);
+  const contactsQuery = useAuthQuery<{ contacts?: Contact[] }, Contact[]>(
+    ["contacts"],
+    `/api/contacts?venue=${venue}`,
+    { select: (d) => d.contacts ?? [] },
+  );
+  const contacts = contactsQuery.data ?? [];
+  const loading = contactsQuery.isLoading;
 
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -83,16 +89,6 @@ function DashboardContactsPage() {
   const [timelineChannels, setTimelineChannels] = useState<string[]>([]);
   const [timelineBusy, setTimelineBusy] = useState(false);
 
-  async function loadContacts() {
-    try {
-      const res = await authFetch(`/api/contacts?venue=${venue}`);
-      const data = (await res.json()) as { contacts?: Contact[] };
-      setContacts(data.contacts ?? []);
-    } catch {
-      setContacts([]);
-    }
-  }
-
   useEffect(() => {
     let active = true;
     (async () => {
@@ -103,14 +99,11 @@ function DashboardContactsPage() {
       } catch {
         if (active) setHealth({ ok: false });
       }
-      await loadContacts();
-      if (active) setLoading(false);
     })();
     return () => {
       active = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [venue]);
+  }, []);
 
   async function addContact() {
     if (!name.trim()) {
@@ -128,7 +121,7 @@ function DashboardContactsPage() {
       setName("");
       setPhone("");
       setEmail("");
-      await loadContacts();
+      await contactsQuery.refetch();
     } catch {
       toast.error("Could not add contact (cloud backend offline).");
     }
