@@ -410,11 +410,35 @@ export async function handleAuthRoute(
       ) {
         return json({ error: "email not permitted" }, 403);
       }
-      const role = info.email.toLowerCase() === cfg.adminEmail.toLowerCase()
-        ? "admin"
-        : "merchant";
+      // Admin email always wins. Otherwise hydrate role + venue + plan from the
+      // app_users row so an invited team member lands on THEIR store with THEIR
+      // account role; a brand-new Google user defaults to a venue-less merchant.
+      const isAdmin =
+        info.email.toLowerCase() === cfg.adminEmail.toLowerCase();
+      let role = isAdmin ? "admin" : "merchant";
+      let venue: string | undefined;
+      let plan = "free";
+      let org: string | undefined;
+      if (!isAdmin) {
+        const sql = getSql(env);
+        if (sql) {
+          try {
+            const [u] = await sql`
+              SELECT role, venue_id, plan, org_id
+              FROM app_users WHERE lower(email) = ${info.email.toLowerCase()} LIMIT 1`;
+            if (u) {
+              role = String(u.role);
+              venue = (u.venue_id as string) ?? undefined;
+              plan = (u.plan as string) ?? "free";
+              org = (u.org_id as string) ?? undefined;
+            }
+          } catch {
+            /* app_users not provisioned — keep defaults */
+          }
+        }
+      }
       const token = await signJwt(
-        { sub: info.email, role, name: info.name ?? info.email },
+        { sub: info.email, role, name: info.name ?? info.email, venue, plan, org },
         cfg.secret,
       );
       return json({
@@ -424,6 +448,8 @@ export async function handleAuthRoute(
           name: info.name,
           picture: info.picture,
           role,
+          venue: venue ?? null,
+          plan,
         },
       });
     } catch {

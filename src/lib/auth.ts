@@ -149,15 +149,17 @@ export async function googleLogin(idToken: string): Promise<AuthUser | null> {
     if (!res.ok) return null;
     const data = (await res.json()) as {
       token: string;
-      user: { email: string; name?: string; role?: string; picture?: string };
+      user: { email: string; name?: string; role?: string; picture?: string; venue?: string | null };
     };
     setToken(data.token);
+    if (data.user.venue) applyTenant(data.user.venue, data.user.name ?? "");
     const user: AuthUser = {
       id: data.user.email,
       name: data.user.name ?? data.user.email,
       email: data.user.email,
       role: (data.user.role as UserRole) ?? "merchant",
       avatar: data.user.picture,
+      merchantId: data.user.venue ?? undefined,
     };
     writeUser(DEMO_AUTH_KEY, user);
     return user;
