@@ -10,6 +10,9 @@ export const Route = createFileRoute("/reseller")({
   component: ResellerPortal,
 });
 
+const kes = (minor: number) =>
+  `KES ${(Number(minor) / 100).toLocaleString("en-KE", { maximumFractionDigits: 0 })}`;
+
 type Merchant = {
   id: string;
   name: string;
@@ -17,6 +20,19 @@ type Merchant = {
   active: boolean;
   created_at: string;
   users: number;
+};
+
+type OrgAnalytics = {
+  commissionBps: number;
+  currency: string;
+  merchants: Array<{
+    id: string;
+    name: string;
+    gross: number;
+    tx: number;
+    commission: number;
+  }>;
+  total: { gross: number; tx: number; commission: number };
 };
 
 type Org = {
@@ -34,6 +50,7 @@ function ResellerPortal() {
   const { user } = useAuth();
   const [org, setOrg] = useState<Org | null>(null);
   const [merchants, setMerchants] = useState<Merchant[]>([]);
+  const [analytics, setAnalytics] = useState<OrgAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [mName, setMName] = useState("");
@@ -47,11 +64,14 @@ function ResellerPortal() {
   const [savingBrand, setSavingBrand] = useState(false);
 
   async function load() {
-    const [orgRes, merRes] = await Promise.all([
+    const [orgRes, merRes, anRes] = await Promise.all([
       authFetch("/api/org/me")
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null),
       authFetch("/api/org/merchants")
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null),
+      authFetch("/api/org/analytics")
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null),
     ]);
@@ -63,6 +83,7 @@ function ResellerPortal() {
       setLogoUrl(o.branding?.logoUrl ?? "");
     }
     setMerchants((merRes?.merchants as Merchant[]) ?? []);
+    setAnalytics((anRes as OrgAnalytics) ?? null);
     setLoading(false);
   }
 
@@ -147,6 +168,10 @@ function ResellerPortal() {
       </div>
     );
 
+  const revById = new Map(
+    (analytics?.merchants ?? []).map((m) => [m.id, m] as const),
+  );
+
   return (
     <div className="mx-auto max-w-5xl space-y-8 p-6">
       <header
@@ -170,6 +195,24 @@ function ResellerPortal() {
           </div>
         </div>
       </header>
+
+      {analytics ? (
+        <section className="grid gap-3 sm:grid-cols-3">
+          <StatCard
+            label="Processed volume (30d)"
+            value={kes(analytics.total.gross)}
+          />
+          <StatCard
+            label="Transactions (30d)"
+            value={String(analytics.total.tx)}
+          />
+          <StatCard
+            label={`Your commission (${(analytics.commissionBps / 100).toFixed(2)}%)`}
+            value={kes(analytics.total.commission)}
+            accent
+          />
+        </section>
+      ) : null}
 
       <section className="grid gap-6 lg:grid-cols-2">
         <div className="rounded-2xl border border-border bg-card p-6">
@@ -236,21 +279,32 @@ function ResellerPortal() {
               <th className="py-2">Name</th>
               <th>Code</th>
               <th>Users</th>
+              <th className="text-right">Gross (30d)</th>
+              <th className="text-right">Commission</th>
               <th>Status</th>
             </tr>
           </thead>
           <tbody>
-            {merchants.map((m) => (
-              <tr key={m.id} className="border-t border-border">
-                <td className="py-2 font-medium">{m.name}</td>
-                <td>{m.code}</td>
-                <td>{m.users}</td>
-                <td>{m.active ? "Active" : "Inactive"}</td>
-              </tr>
-            ))}
+            {merchants.map((m) => {
+              const r = revById.get(m.id);
+              return (
+                <tr key={m.id} className="border-t border-border">
+                  <td className="py-2 font-medium">{m.name}</td>
+                  <td>{m.code}</td>
+                  <td>{m.users}</td>
+                  <td className="text-right tabular-nums">
+                    {r ? kes(r.gross) : "—"}
+                  </td>
+                  <td className="text-right tabular-nums">
+                    {r ? kes(r.commission) : "—"}
+                  </td>
+                  <td>{m.active ? "Active" : "Inactive"}</td>
+                </tr>
+              );
+            })}
             {merchants.length === 0 ? (
               <tr>
-                <td colSpan={4} className="py-4 text-muted-foreground">
+                <td colSpan={6} className="py-4 text-muted-foreground">
                   No merchants yet — onboard your first above.
                 </td>
               </tr>
@@ -258,6 +312,27 @@ function ResellerPortal() {
           </tbody>
         </table>
       </section>
+    </div>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+}) {
+  return (
+    <div
+      className={`rounded-2xl border bg-card p-4 ${accent ? "border-emerald-300" : "border-border"}`}
+    >
+      <p className="text-xs uppercase tracking-wider text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-1 text-xl font-semibold tabular-nums">{value}</p>
     </div>
   );
 }

@@ -376,7 +376,7 @@ function DashboardShell() {
             />
           ) : (
             <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
-              PesaSwap
+              {branding?.reseller?.name ?? "PesaSwap"}
             </p>
           )}
           <h1 className="mt-2 text-xl font-semibold">
@@ -415,7 +415,7 @@ function DashboardShell() {
                 />
               ) : (
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
-                  PesaSwap
+                  {branding?.reseller?.name ?? "PesaSwap"}
                 </p>
               )}
               <p className="mt-1 text-lg font-semibold">

@@ -21,6 +21,7 @@ import {
 } from "../lib/pesaswap-payments";
 import { tipSuggestions } from "@/lib/tip";
 import { loyaltyPointsFor } from "@/lib/loyalty";
+import { useBranding } from "@/lib/branding";
 import { QrScanner } from "@/components/QrScanner";
 import { QRCodeSVG } from "qrcode.react";
 
@@ -89,6 +90,9 @@ function PayPage() {
   const [scannerOpen, setScannerOpen] = useState(false);
   const startTimeRef = useRef<number>(0);
   const pendingInvoiceRef = useRef<string | null>(null);
+  // Public per-merchant branding (logo/name/reseller) for the venue being paid, so
+  // the customer sees WHO they're paying — not a generic PesaSwap screen.
+  const brand = useBranding(paymentData?.venue ?? undefined);
 
   // Preload HyperLoader on mount for faster checkout
   useEffect(() => {
@@ -406,10 +410,24 @@ function PayPage() {
       <div className="w-full max-w-sm">
         {/* Header */}
         <div className="text-center mb-6">
-          <div className="inline-flex items-center gap-2 rounded-full bg-foreground text-background px-4 py-2 mb-4">
+          {brand?.logoUrl ? (
+            <img
+              src={brand.logoUrl}
+              alt={brand.businessName}
+              className="mx-auto mb-3 h-9 w-auto max-w-[160px] object-contain"
+            />
+          ) : brand?.businessName ? (
+            <p className="mb-2 text-lg font-bold">{brand.businessName}</p>
+          ) : null}
+          <div className="inline-flex items-center gap-2 rounded-full bg-foreground text-background px-4 py-2 mb-2">
             <Zap className="size-4" />
-            <span className="text-sm font-bold font-mono">PesaSwap Tap&Go</span>
+            <span className="text-sm font-bold font-mono">Tap&Go</span>
           </div>
+          {brand?.reseller?.poweredBy ? (
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              {brand.reseller.poweredBy}
+            </p>
+          ) : null}
         </div>
 
         {linkLoading && <InvoiceLoadingState />}

@@ -15,6 +15,12 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
+function parseDate(value: string | null, fallback: number): number {
+  if (!value) return fallback;
+  const t = Date.parse(value);
+  return Number.isFinite(t) ? t : fallback;
+}
+
 // Reseller organizations (e.g. a bank that resells the app to its merchants).
 // - GET  /api/org?slug=…      public: reseller public brand (co-branded signup)
 // - POST /api/org             platform-admin: create a reseller
@@ -59,6 +65,7 @@ export async function handleOrgRoute(
       primaryColor?: string;
       poweredBy?: string;
       pesaswapPartnerId?: string;
+      commissionBps?: number;
       adminEmail?: string;
       adminPassword?: string;
     };
@@ -76,10 +83,14 @@ export async function handleOrgRoute(
       poweredBy: body.poweredBy ?? `Powered by ${name}`,
     };
     try {
+      const commissionBps = Math.min(
+        2000,
+        Math.max(0, Math.round(Number(body.commissionBps ?? 100)) || 0),
+      );
       await sql`
-        INSERT INTO organizations (id, name, slug, branding, pesaswap_partner_id)
+        INSERT INTO organizations (id, name, slug, branding, pesaswap_partner_id, commission_bps)
         VALUES (${id}, ${name}, ${slug}, ${sql.json(branding)},
-                ${body.pesaswapPartnerId ?? null})`;
+                ${body.pesaswapPartnerId ?? null}, ${commissionBps})`;
     } catch {
       return json({ error: "that slug is already taken" }, 409);
     }
@@ -195,6 +206,61 @@ export async function handleOrgRoute(
     };
     await sql`UPDATE organizations SET branding = ${sql.json(branding)} WHERE id = ${orgId}`;
     return json({ ok: true });
+  }
+
+  // Reseller admin: aggregate processed volume + revenue-share across my org's
+  // merchants (per-merchant + total, with the reseller's commission at
+  // organizations.commission_bps).
+  if (url.pathname === "/api/org/analytics" && request.method === "GET") {
+    const payload = await requireAuth(request, env);
+    if (!payload) return json({ error: "unauthorized" }, 401);
+    const orgId = typeof payload.org === "string" ? payload.org : null;
+    if (!orgId) return json({ error: "not a reseller account" }, 403);
+    const now = Date.now();
+    const from = parseDate(url.searchParams.get("from"), now - 30 * 86_400_000);
+    const to = parseDate(url.searchParams.get("to"), now + 86_400_000);
+    const [org] = await sql`
+      SELECT commission_bps FROM organizations WHERE id = ${orgId} LIMIT 1`;
+    const bps = Number(org?.commission_bps ?? 100);
+    const rows = await sql`
+      SELECT v.id, v.name,
+        COALESCE(sum(CASE WHEN p.status IN ('succeeded','paid','captured')
+          AND COALESCE(p.kind,'') <> 'refund' THEN p.amount ELSE 0 END),0)::bigint AS gross,
+        count(*) FILTER (WHERE p.status IN ('succeeded','paid','captured')
+          AND COALESCE(p.kind,'') <> 'refund') AS tx
+      FROM venues v
+      LEFT JOIN payments p ON p.venue_id = v.id
+        AND p.created_at >= ${new Date(from).toISOString()}
+        AND p.created_at < ${new Date(to).toISOString()}
+      WHERE v.org_id = ${orgId}
+      GROUP BY v.id, v.name
+      ORDER BY gross DESC`;
+    const merchants = rows.map((r) => {
+      const gross = Number(r.gross) || 0;
+      return {
+        id: String(r.id),
+        name: String(r.name),
+        gross,
+        tx: Number(r.tx) || 0,
+        commission: Math.round((gross * bps) / 10000),
+      };
+    });
+    const total = merchants.reduce(
+      (a, m) => ({
+        gross: a.gross + m.gross,
+        tx: a.tx + m.tx,
+        commission: a.commission + m.commission,
+      }),
+      { gross: 0, tx: 0, commission: 0 },
+    );
+    return json({
+      commissionBps: bps,
+      currency: "KES",
+      from: new Date(from).toISOString(),
+      to: new Date(to).toISOString(),
+      merchants,
+      total,
+    });
   }
 
   return null;
