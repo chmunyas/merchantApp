@@ -21,8 +21,18 @@ export type ToolResult = {
 
 const MUTATE_ROLES = new Set(["manager", "merchant", "admin"]);
 const canMutate = (role: string) => MUTATE_ROLES.has(role);
+
+// Owner-level roles that may READ sensitive data (money + PII): revenue, payment
+// amounts, settlement figures, customer spend and phone numbers. Restricted to the
+// merchant owner + platform/reseller admin — staff, supervisors and managers can
+// operate the venue but cannot pull financials or customer contact details.
+const SENSITIVE_ROLES = new Set(["merchant", "admin", "reseller_admin"]);
+export const canSeeSensitive = (role: string) => SENSITIVE_ROLES.has(role);
+
 const NEEDS_MANAGER =
   "That change needs a manager or owner login — I can't do it from a staff session.";
+const OWNER_ONLY =
+  "Sales, payment and customer-spend figures are owner-only. Please sign in as the merchant owner to see them.";
 
 const kes = (n: number) => `KES ${Number(n).toLocaleString("en-KE")}`;
 
@@ -95,6 +105,7 @@ async function toolSalesReport(
   message: string,
   ctx: ToolContext,
 ): Promise<ToolResult> {
+  if (!canSeeSensitive(ctx.role)) return { reply: OWNER_ONLY, tool: "sales_report" };
   const sql = getSql(ctx.env);
   if (!sql) return { reply: "Sales data is unavailable right now.", tool: "sales_report" };
   const { from, to, label } = periodRange(message);
@@ -120,6 +131,7 @@ async function toolTopCustomers(
   _message: string,
   ctx: ToolContext,
 ): Promise<ToolResult> {
+  if (!canSeeSensitive(ctx.role)) return { reply: OWNER_ONLY, tool: "top_customers" };
   const sql = getSql(ctx.env);
   if (!sql) return { reply: "Customer data is unavailable right now.", tool: "top_customers" };
   const rows = await sql`
@@ -175,6 +187,8 @@ async function toolSettlementStatus(
   _message: string,
   ctx: ToolContext,
 ): Promise<ToolResult> {
+  if (!canSeeSensitive(ctx.role))
+    return { reply: OWNER_ONLY, tool: "settlement_status" };
   const sql = getSql(ctx.env);
   if (!sql) return { reply: "Settlement data is unavailable right now.", tool: "settlement_status" };
   const [row] = await sql`
@@ -190,6 +204,58 @@ async function toolSettlementStatus(
       ? "Everything is settled — no unreconciled payments."
       : `${kes(unreconciled)} across ${n} payment${n === 1 ? "" : "s"} is unsettled. Run a settlement in the Settlement tab to batch it.`;
   return { reply, tool: "settlement_status", data: { unreconciled, count: n } };
+}
+
+async function toolBookingsToday(
+  _message: string,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const sql = getSql(ctx.env);
+  if (!sql)
+    return { reply: "Bookings are unavailable right now.", tool: "bookings_today" };
+  const [row] = await sql`
+    SELECT count(*)::int AS bookings, coalesce(sum(covers), 0)::int AS covers
+    FROM reservations
+    WHERE venue_id = ${ctx.venue}
+      AND date = CURRENT_DATE AND status <> 'cancelled'`;
+  const b = Number(row?.bookings ?? 0);
+  const c = Number(row?.covers ?? 0);
+  return {
+    reply:
+      b === 0
+        ? "No bookings for today yet."
+        : `Today: ${b} booking${b === 1 ? "" : "s"} for ${c} cover${c === 1 ? "" : "s"}.`,
+    tool: "bookings_today",
+    data: { bookings: b, covers: c },
+  };
+}
+
+async function toolOutstandingInvoices(
+  _message: string,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  if (!canSeeSensitive(ctx.role))
+    return { reply: OWNER_ONLY, tool: "outstanding_invoices" };
+  const sql = getSql(ctx.env);
+  if (!sql)
+    return {
+      reply: "Invoices are unavailable right now.",
+      tool: "outstanding_invoices",
+    };
+  const [row] = await sql`
+    SELECT count(*)::int AS n, coalesce(sum(amount), 0)::bigint AS total
+    FROM invoices
+    WHERE venue_id = ${ctx.venue} AND status NOT IN ('paid', 'void')`;
+  const n = Number(row?.n ?? 0);
+  const total = Number(row?.total ?? 0);
+  return {
+    reply:
+      n === 0
+        ? "No outstanding invoices — everything is settled."
+        : `${n} outstanding invoice${n === 1 ? "" : "s"} totalling ${kes(total)}.`,
+    tool: "outstanding_invoices",
+    data: { count: n, total },
+  };
 }
 
 async function toolReprice(
@@ -297,6 +363,12 @@ async function toolCreateBill(
   message: string,
   ctx: ToolContext,
 ): Promise<ToolResult> {
+  if (!canSeeSensitive(ctx.role))
+    return {
+      reply:
+        "Creating bills / payment links is owner-only in the copilot. Please sign in as the merchant owner.",
+      tool: "create_bill",
+    };
   const amount = targetNumber(message);
   if (amount == null) {
     return {
@@ -380,6 +452,22 @@ const ROUTES: Route[] = [
     run: toolTopCustomers,
   },
   {
+    name: "bookings_today",
+    describe: "today's bookings / covers / reservations",
+    test: (m) =>
+      /\b(bookings?|reservations?|covers?)\b/.test(m) &&
+      /\b(today|tonight|now|how many|got|have)\b/.test(m),
+    run: toolBookingsToday,
+  },
+  {
+    name: "outstanding_invoices",
+    describe: "outstanding / unpaid invoices + receivables (who owes us, how much)",
+    test: (m) =>
+      /\b(outstanding|unpaid|overdue|receivables?|owe|owes|owed)\b/.test(m) &&
+      /\b(invoice|bill|money|amount|customer|client|how much|us)\b/.test(m),
+    run: toolOutstandingInvoices,
+  },
+  {
     name: "reprice_item",
     describe: "change a menu item's price",
     test: (m) =>
@@ -452,7 +540,7 @@ function parseToolName(out: string): string | null {
     /* fall back to a scan */
   }
   const scan = cleaned.match(
-    /sales_report|top_customers|reprice_item|item_availability|add_menu_item|create_bill|draft_campaign/,
+    /sales_report|top_customers|bookings_today|outstanding_invoices|reprice_item|item_availability|add_menu_item|create_bill|draft_campaign/,
   );
   return scan ? scan[0] : null;
 }
