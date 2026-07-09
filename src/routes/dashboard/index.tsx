@@ -29,6 +29,7 @@ import {
   loadMerchantSnapshot,
   type MerchantSnapshot,
 } from "@/lib/merchant-dashboard";
+import { OnboardingChecklist } from "@/components/merchant/OnboardingChecklist";
 
 export const Route = createFileRoute("/dashboard/")({
   component: DashboardOverviewPage,
@@ -179,6 +180,7 @@ function DashboardOverviewPage() {
 
   return (
     <div className="space-y-6">
+      <OnboardingChecklist snapshot={snapshot} />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {kpis.map((item) => {
           const Icon = item.icon;
