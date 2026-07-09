@@ -1060,7 +1060,7 @@ function InvoiceDetailSheet({
               <option>Bank Transfer</option>
               <option>M-Pesa</option>
               <option>Cash</option>
-              <option>Wise</option>
+              <option>Coop Bank Kenya</option>
             </select>
             <div className="flex gap-2">
               <button
@@ -1237,7 +1237,7 @@ function InvoiceDetailSheet({
               "FX route",
               invoice.paidVia
                 ? `Settled · ${invoice.paidVia}`
-                : "Best rate · Wise",
+                : "Best rate · Coop Bank Kenya",
             ],
             ["Fee", "0.35 %"],
             ...(invoice.recurring
@@ -1388,10 +1388,7 @@ function SheetBtn({
 }
 
 const PROVIDERS = [
-  { id: "Wise", rate: 1.0842, fee: 0.0035 },
-  { id: "Currencycloud", rate: 1.0838, fee: 0.004 },
-  { id: "LMAX", rate: 1.0845, fee: 0.005 },
-  { id: "Verto", rate: 1.0831, fee: 0.003 },
+  { id: "Coop Bank Kenya", rate: 1.0842, fee: 0.0035 },
 ];
 
 function PaySheet({

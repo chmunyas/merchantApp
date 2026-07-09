@@ -32,7 +32,7 @@ const LOCAL_PAYMENT_METHODS: PaymentMethod[] = [
     region: ["US", "GB", "EU", "NG", "KE", "BR", "IN"],
   },
   { id: "ussd", name: "USSD", icon: "📞", region: ["NG"] },
-  { id: "wise", name: "Wise Transfer", icon: "🌍", region: ["US", "GB", "EU"] },
+  { id: "coop", name: "Coop Bank Kenya", icon: "🌍", region: ["US", "GB", "EU"] },
   { id: "paypal", name: "PayPal", icon: "🅿️", region: ["US", "GB", "EU"] },
 ];
 
@@ -206,7 +206,7 @@ export function timelineFor(invoice: Invoice) {
       at: paymentAt,
     });
     timeline = appendTimelineEvent(timeline, {
-      label: `Settled via ${invoice.paidVia ?? "Wise"}`,
+      label: `Settled via ${invoice.paidVia ?? "Coop Bank Kenya"}`,
       at: shiftTimestamp(paymentAt, 18),
     });
   }

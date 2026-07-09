@@ -328,7 +328,7 @@ function Row({ k, v, bold }: { k: string; v: string; bold?: boolean }) {
 }
 
 /* ============================================================
-   2. INVOICE LEDGER FLOW — Wise-style segmented list
+   2. INVOICE LEDGER FLOW — bank-grade segmented list
    ============================================================ */
 export function InvoiceLedgerFlow() {
   const [filter, setFilter] = useState<"All" | "Paid" | "Pending" | "Overdue">("All");
@@ -415,14 +415,11 @@ export function InvoiceLedgerFlow() {
 }
 
 /* ============================================================
-   3. SMART SETTLEMENT FLOW — provider routing, Wise-like clarity
+   3. SMART SETTLEMENT FLOW — provider routing, bank-grade clarity
    ============================================================ */
 export function SmartSettlementFlow() {
   const providers = [
-    { name: "Wise", rate: 1.0842, fee: 4.8, eta: "2 min", best: true },
-    { name: "Currencycloud", rate: 1.0836, fee: 6.2, eta: "8 min", best: false },
-    { name: "LMAX", rate: 1.0828, fee: 9.4, eta: "12 min", best: false },
-    { name: "Verto", rate: 1.0821, fee: 11.0, eta: "20 min", best: false },
+    { name: "Coop Bank Kenya", rate: 1.0842, fee: 4.8, eta: "Instant", best: true },
   ];
 
   return (
@@ -449,7 +446,7 @@ export function SmartSettlementFlow() {
         </div>
 
         <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground px-1">
-          Routing engine · 4 providers
+          Settlement · Coop Bank Kenya
         </p>
 
         <div className="space-y-2">
@@ -483,7 +480,7 @@ export function SmartSettlementFlow() {
         </div>
 
         <button className="w-full bg-foreground text-background py-3 rounded-xl text-sm font-semibold flex items-center justify-center gap-2">
-          <Zap className="size-4" /> Settle via Wise
+          <Zap className="size-4" /> Settle via Coop Bank Kenya
         </button>
       </div>
     </FlowShell>

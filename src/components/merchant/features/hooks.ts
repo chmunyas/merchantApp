@@ -12,13 +12,13 @@ const seed: Invoice[] = [
     currency: "USD",
     status: "Paid",
     date: "Oct 24",
-    paidVia: "Wise",
+    paidVia: "Coop Bank Kenya",
     paidAt: "2026-05-26T12:20:00.000Z",
     timeline: [
       { label: "Created", at: "2026-05-24T08:30:00.000Z" },
       { label: "QR shared", at: "2026-05-24T08:42:00.000Z" },
       { label: "Payment received", at: "2026-05-26T12:20:00.000Z" },
-      { label: "Settled via Wise", at: "2026-05-26T12:38:00.000Z" },
+      { label: "Settled via Coop Bank Kenya", at: "2026-05-26T12:38:00.000Z" },
     ],
   },
   {
@@ -55,7 +55,7 @@ const seed: Invoice[] = [
     currency: "USD",
     status: "Paid",
     date: "Oct 17",
-    paidVia: "Currencycloud",
+    paidVia: "Coop Bank Kenya",
   },
   {
     id: "INV-10233",

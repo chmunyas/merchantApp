@@ -2,7 +2,7 @@ const rows = [
   {
     id: "TXN-4920211",
     date: "Oct 24, 14:22",
-    type: "USD â EUR Swap (Wise)",
+    type: "USD â EUR Swap (Coop Bank Kenya)",
     dot: "bg-blue-500",
     amount: "$45,000.00",
     status: "Settled",
@@ -20,7 +20,7 @@ const rows = [
   {
     id: "TXN-4920201",
     date: "Oct 23, 18:40",
-    type: "GBP â NGN Swap (Verto)",
+    type: "GBP â NGN Swap (Coop Bank Kenya)",
     dot: "bg-emerald-500",
     amount: "Â£8,200.00",
     status: "Settled",

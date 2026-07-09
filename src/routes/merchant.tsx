@@ -43,7 +43,7 @@ function MerchantPage() {
               </h1>
               <p className="text-sm text-muted-foreground mt-4 leading-relaxed">
                 Four focused capabilities, one merchant app. Each flow is
-                purpose-built — Revolut-clean, Wise-precise.
+                purpose-built — Revolut-clean, bank-grade precise.
               </p>
             </div>
 
@@ -51,7 +51,7 @@ function MerchantPage() {
               {[
                 { i: QrCode, t: "QR invoicing", d: "Generate payable QR codes in seconds." },
                 { i: FileText, t: "Invoice ledger", d: "Track paid, pending and overdue receivables." },
-                { i: Zap, t: "Smart settlement", d: "Auto-route to the best FX provider." },
+                { i: Zap, t: "Smart settlement", d: "Settle straight to Coop Bank Kenya." },
                 { i: Smartphone, t: "PWA & mobile", d: "Installable, offline-first, biometric secure." },
               ].map(({ i: Icon, t, d }) => (
                 <a
@@ -105,7 +105,7 @@ function MerchantPage() {
           eyebrow="Capability · 02"
           title="Invoice ledger"
           headline="Every receivable, in one calm view."
-          body="The ledger filters by paid, pending and overdue with Wise-style clarity. Each row carries the customer, currency, settlement provider and timestamp — exportable to your accounting stack with one tap."
+          body="The ledger filters by paid, pending and overdue with bank-grade clarity. Each row carries the customer, currency, settlement provider and timestamp — exportable to your accounting stack with one tap."
           bullets={[
             "Segmented filters: Paid · Pending · Overdue",
             "Multi-currency totals with weekly settlement view",
@@ -120,11 +120,11 @@ function MerchantPage() {
           eyebrow="Capability · 03"
           title="Smart settlement"
           headline="Always the best route. Always transparent."
-          body="When a payment lands in EUR but you settle in USD, PesaSwap compares Wise, Currencycloud, LMAX and Verto live. It shows you mid-market, the spread, the fee and the ETA — then routes through the winner automatically."
+          body="When a payment lands in EUR but you settle in KES, PesaSwap settles straight to your Co-operative Bank of Kenya account. It shows you mid-market, the spread, the fee and the ETA — with funds settled to your Coop Bank account."
           bullets={[
-            "Live mid-market vs provider rates",
-            "Fee, spread and ETA shown per provider",
-            "Auto-route with manual override",
+            "Live mid-market and Coop Bank settlement rate",
+            "Fee, spread and ETA shown up front",
+            "Instant settlement to Coop Bank Kenya",
           ]}
           phone={<SmartSettlementFlow />}
         />

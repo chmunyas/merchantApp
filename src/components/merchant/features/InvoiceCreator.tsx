@@ -357,7 +357,7 @@ export function InvoiceCreator({
         <div className="rounded-xl bg-muted p-3 flex justify-between text-[11px]">
           <span className="text-muted-foreground">FX routing</span>
           <span className="font-mono font-semibold">
-            {lockFx ? `Locked · ${lockHours}h` : "Best rate · Wise"}
+            {lockFx ? `Locked · ${lockHours}h` : "Best rate · Coop Bank Kenya"}
           </span>
         </div>
         <div className="rounded-xl bg-muted p-3 flex justify-between text-[11px]">

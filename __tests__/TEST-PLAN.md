@@ -239,14 +239,14 @@
 ### Features
 - Multi-currency wallet balances
 - Transaction history generated from invoices
-- Settlement via Wise integration
+- Settlement via Coop Bank Kenya integration
 
 | # | Test Type | Test Case | Expected Result |
 |---|-----------|-----------|-----------------|
 | 9.1 | Smoke | Navigate to LEDGER tab | Wallet balances and transaction list render |
 | 9.2 | Unit | `generateWalletTransactions(invoices)` | Generates correct transaction entries from paid invoices |
 | 9.3 | UAT | View wallet with multiple currencies | All balances displayed with correct symbols |
-| 9.4 | UAT | "Settle via Wise" button | Opens settlement flow |
+| 9.4 | UAT | "Settle via Coop Bank Kenya" button | Opens settlement flow |
 
 ---
 
