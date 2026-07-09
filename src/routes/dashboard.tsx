@@ -239,6 +239,10 @@ function DashboardShell() {
   const [venueSearch, setVenueSearch] = useState("");
   const [newStoreName, setNewStoreName] = useState("");
   const [addingStore, setAddingStore] = useState(false);
+  const [switching, setSwitching] = useState(false);
+  // Bumped on a venue switch to remount the active page (refetch for the new
+  // store) WITHOUT a full-document reload — see the keyed Outlet below.
+  const [outletKey, setOutletKey] = useState(0);
 
   useEffect(() => {
     setNewEnquiries(getPendingEnquiryCount(ensureMerchantDemoData().enquiries));
@@ -295,11 +299,25 @@ function DashboardShell() {
   }, [venues, venueSearch]);
 
   async function switchVenue(id: string) {
-    // Re-mint the JWT for the target store (server verifies membership), then
-    // reload so every panel re-scopes to it. Falls back to a local switch.
-    const ok = await apiSwitchVenue(id);
-    if (!ok) setCurrentVenueId(id);
-    window.location.reload();
+    if (switching || id === currentVenue?.id) {
+      setVenuePickerOpen(false);
+      return;
+    }
+    setSwitching(true);
+    try {
+      // Re-mint the JWT for the target store (server verifies membership), pull
+      // its state, then remount the active page — seamless, no page reload.
+      const ok = await apiSwitchVenue(id);
+      if (!ok) setCurrentVenueId(id);
+      await hydrateMerchantState().catch(() => {});
+      const next = venues.find((v) => v.id === id) ?? null;
+      if (next) setCurrentVenue(next);
+      window.dispatchEvent(new Event("pesaswap:auth-changed"));
+      setOutletKey((k) => k + 1);
+    } finally {
+      setSwitching(false);
+      setVenuePickerOpen(false);
+    }
   }
 
   async function handleAddStore() {
@@ -313,8 +331,27 @@ function DashboardShell() {
         return;
       }
       toast.success(`Store "${result.name}" created`);
+      const newVenue: Venue = {
+        id: result.id,
+        name: result.name,
+        code:
+          result.name.replace(/[^A-Za-z]/g, "").slice(0, 3).toUpperCase() ||
+          "VEN",
+        active: true,
+      };
+      setVenues((prev) => {
+        const list = [...prev.filter((v) => v.id !== newVenue.id), newVenue];
+        persistVenues(list);
+        return list;
+      });
+      // Switch into the new store seamlessly (no reload).
       await apiSwitchVenue(result.id);
-      window.location.reload();
+      await hydrateMerchantState().catch(() => {});
+      setCurrentVenue(newVenue);
+      window.dispatchEvent(new Event("pesaswap:auth-changed"));
+      setOutletKey((k) => k + 1);
+      setNewStoreName("");
+      setVenuePickerOpen(false);
     } finally {
       setAddingStore(false);
     }
@@ -452,7 +489,9 @@ function DashboardShell() {
           {user && !canAccessPath(user.role, pathname) ? (
             <AccessDenied role={user.role} />
           ) : (
-            <Outlet />
+            <div key={outletKey} className="contents">
+              <Outlet />
+            </div>
           )}
         </main>
       </div>
