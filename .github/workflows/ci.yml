@@ -101,6 +101,10 @@ jobs:
       # the full ledger path — including a DECLINED payment (metadata.simulate=
       # "failed") — and assert every outcome is recorded clearly.
       PAYMENTS_TEST_MODE: "1"
+      # The whole suite (signup, login, payments…) runs from ONE IP in seconds, so
+      # the per-IP abuse limits would spuriously 429 legitimate test traffic.
+      # Never set in production.
+      DISABLE_RATE_LIMIT: "1"
       # Use 127.0.0.1 (not localhost) so the health poll + the tests hit the IPv4
       # the dev server binds to — Node resolves "localhost" to IPv6 ::1 first,
       # where the server isn't listening.

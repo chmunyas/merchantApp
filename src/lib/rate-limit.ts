@@ -57,6 +57,26 @@ export async function rateLimit(
 
 type Rule = { method: string; path: string; limit: number; window: number };
 
+// True only when DISABLE_RATE_LIMIT is explicitly set (on the Workers env binding
+// or, in Node dev, process.env). Used exclusively by the E2E job — production
+// leaves it unset, so the limits below always apply there.
+function rateLimitDisabled(env: unknown): boolean {
+  const e = (env ?? {}) as Record<string, unknown>;
+  const raw =
+    (typeof e.DISABLE_RATE_LIMIT === "string"
+      ? (e.DISABLE_RATE_LIMIT as string)
+      : undefined) ??
+    (typeof process !== "undefined"
+      ? process.env?.DISABLE_RATE_LIMIT
+      : undefined);
+  return (
+    raw != null &&
+    raw !== "" &&
+    raw !== "0" &&
+    String(raw).toLowerCase() !== "false"
+  );
+}
+
 // Public/unauthenticated endpoints that mutate or cost money/compute. Tight
 // limits blunt credential-stuffing, signup spam and AI/payment abuse.
 const RULES: Rule[] = [
@@ -78,6 +98,11 @@ export async function enforceRateLimit(
   request: Request,
   env: unknown,
 ): Promise<Response | null> {
+  // E2E / load-test escape hatch. The CI e2e job drives every public endpoint
+  // (signup, login, payments…) from a SINGLE IP in seconds, so the per-IP limits
+  // would spuriously 429 legitimate test traffic. Gated on an explicit env flag
+  // that is NEVER set in production, so real abuse protection is untouched.
+  if (rateLimitDisabled(env)) return null;
   const url = new URL(request.url);
   const rule = RULES.find(
     (r) => r.method === request.method && r.path === url.pathname,
