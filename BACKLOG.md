@@ -105,6 +105,16 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   `resolveVenueForAccount` — a customer messaging store A's WhatsApp number reaches
   store A's agent/menu/orders (falls back to `main`). Payments + orders are already
   `venue_id`-scoped in the DB, so each store's transactions are fully separated.
+- ✅ **DONE (per-venue outbound config)** Each store sends on its OWN number/bot —
+  channel config is namespaced `whatsapp_cloud:<venue>` / `telegram:<venue>` (global
+  default fallback, no migration), `getWhatsappConfig/getTelegramConfig(env, venue)`
+  and `adapter.send(handle, text, env, venue)` thread the venue through every
+  outbound path (agent reply, order notify, share, campaigns, sequences, invoices,
+  reminders, DLQ, staff reply). The agent's free-form reply names the specific store.
+  **Remaining (external creds only, can't build/test without accounts):** TikTok + X
+  (Twitter) adapters; live keys for SMS (Africa's Talking + 10DLC), Email
+  (Resend/SendGrid), and per-venue WhatsApp/Telegram numbers. The Baileys bridge is
+  single-account (one WhatsApp number) — multi-venue uses Cloud API webhooks.
 - ✅ **DONE (sub-entity persistence)** Table combinations / zones / areas / floor-plan
   and menu modifiers / schedules already persist server-side per-venue via the
   `merchant_state` blob (`writeStorage` → `/api/state`, hydrated by
