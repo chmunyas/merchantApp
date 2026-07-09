@@ -1,8 +1,10 @@
 import { requireAuth } from "@/api/auth";
-import { getSql } from "@/lib/db";
 import { getAdapter } from "@/lib/channels";
+import { isSuppressed } from "@/lib/consent";
+import { getSql } from "@/lib/db";
+import { normalizeFulfillment, type FulfillmentType } from "@/lib/fulfillment";
 import { getBaseUrl } from "@/lib/links";
-import { orderReadyMessage } from "@/lib/order-notify";
+import { orderStatusMessage } from "@/lib/order-notify";
 import { venueFromPayload } from "@/lib/tenancy";
 
 const corsHeaders = {
@@ -37,6 +39,76 @@ type OrderItemInput = {
 function wholeNumber(value: unknown, fallback: number): number {
   const next = Number(value);
   return Number.isFinite(next) ? Math.floor(next) : fallback;
+}
+
+// Normalise a customer phone into an E.164 handle (a bare leading 0 is treated
+// as Kenya, the primary M-Pesa market) for channel delivery.
+function toHandle(phone: string): string | null {
+  const digits = String(phone ?? "").replace(/[^\d+]/g, "");
+  if (!digits) return null;
+  if (digits.startsWith("+")) return digits;
+  if (digits.startsWith("0")) return `+254${digits.slice(1)}`;
+  if (digits.startsWith("254")) return `+${digits}`;
+  return `+${digits}`;
+}
+
+// Reflect an order notification into the customer's conversation thread so it
+// shows in the Inbox timeline (enterprise omnichannel). Best-effort.
+async function logOrderOutbound(
+  sql: NonNullable<ReturnType<typeof getSql>>,
+  venue: string,
+  handle: string,
+  body: string,
+): Promise<void> {
+  try {
+    const [conv] = await sql`
+      INSERT INTO conversations (venue_id, wa_id, name)
+      VALUES (${venue}, ${handle}, ${null})
+      ON CONFLICT (venue_id, wa_id)
+      DO UPDATE SET last_message_at = now()
+      RETURNING id`;
+    if (conv?.id) {
+      await sql`
+        INSERT INTO messages (conversation_id, direction, body, tool)
+        VALUES (${conv.id}, 'outbound', ${body}, 'order_update')`;
+    }
+  } catch {
+    /* best-effort — never block the status change on the log */
+  }
+}
+
+// Send the lifecycle notification to the order's customer on their channel,
+// honouring opt-out (consent) and logging to the timeline. Best-effort: returns
+// true only when the message was actually delivered.
+async function notifyOrderCustomer(
+  sql: NonNullable<ReturnType<typeof getSql>>,
+  env: unknown,
+  o: {
+    venue: string;
+    status: string;
+    phone: string;
+    fulfillment: FulfillmentType;
+    scheduledAt: string | null;
+  },
+): Promise<boolean> {
+  const handle = toHandle(o.phone);
+  if (!handle) return false;
+  const channel = "whatsapp";
+  try {
+    if (await isSuppressed(sql, o.venue, channel, handle)) return false;
+    const [v] = await sql`SELECT name FROM venues WHERE id = ${o.venue} LIMIT 1`;
+    const body = orderStatusMessage(o.status, {
+      venueName: (v?.name as string) ?? null,
+      fulfillment: o.fulfillment,
+      scheduledAt: o.scheduledAt,
+    });
+    if (!body) return false;
+    const out = await getAdapter(channel).send(handle, body, env);
+    await logOrderOutbound(sql, o.venue, handle, body);
+    return out.delivery === "sent";
+  } catch {
+    return false;
+  }
 }
 
 // Server-authoritative orders, venue-scoped + authed.
@@ -201,6 +273,13 @@ export async function handleOrdersRoute(
       ["dine_in", "takeaway", "collection"].includes(body.fulfilment)
         ? body.fulfilment
         : null;
+    // Prior state — for change detection (idempotent notifications) + the
+    // canonical fulfillment_type / scheduled_at columns the customer order carries.
+    const [prev] = await sql`
+      SELECT status, customer_phone, fulfillment_type, scheduled_at
+      FROM orders WHERE id = ${id} AND venue_id = ${venue} LIMIT 1`;
+    if (!prev) return json({ error: "not found" }, 404);
+
     const [updated] = await sql`
       UPDATE orders SET
         status = COALESCE(${body.status ?? null}, status),
@@ -211,28 +290,23 @@ export async function handleOrdersRoute(
       RETURNING id, status, customer_phone, pickup_at, ready_notified_at`;
     if (!updated) return json({ error: "not found" }, 404);
 
-    // One-shot "order ready" notification to the customer (best-effort).
+    // Notify the customer on a REAL status change (acknowledged → preparing →
+    // ready), fulfillment-aware, best-effort + timeline-logged. Change detection
+    // makes it idempotent, so a repeated PATCH to the same status never re-sends.
     let notified = false;
-    if (
-      updated.status === "ready" &&
-      updated.customer_phone &&
-      !updated.ready_notified_at
-    ) {
-      try {
-        const [v] = await sql`SELECT name FROM venues WHERE id = ${venue} LIMIT 1`;
-        const msg = orderReadyMessage(
-          (v?.name as string) || "your order",
-          updated.pickup_at as string | null,
-        );
-        const out = await getAdapter("whatsapp").send(
-          String(updated.customer_phone),
-          msg,
-          env,
-        );
+    const changed = Boolean(body.status) && body.status !== prev.status;
+    if (changed && updated.customer_phone) {
+      notified = await notifyOrderCustomer(sql, env, {
+        venue,
+        status: String(updated.status),
+        phone: String(updated.customer_phone),
+        fulfillment: normalizeFulfillment(prev.fulfillment_type),
+        scheduledAt:
+          (prev.scheduled_at as string | null) ??
+          (updated.pickup_at as string | null),
+      });
+      if (String(updated.status) === "ready" && !updated.ready_notified_at) {
         await sql`UPDATE orders SET ready_notified_at = now() WHERE id = ${id}`;
-        notified = out.delivery === "sent";
-      } catch {
-        /* best-effort — never block the status change on a notification */
       }
     }
     return json({ ok: true, notified });

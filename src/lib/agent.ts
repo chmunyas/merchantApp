@@ -87,6 +87,46 @@ export function parseBookingIntent(text: string): {
   return { covers, date, time };
 }
 
+// Natural-language answer for a customer's "where's my order?" — driven by the
+// live order status, fulfillment type and any scheduled (collection/eat-in) time.
+export function orderStatusReply(
+  status: string,
+  fulfillmentType?: string | null,
+  scheduledAt?: string | Date | null,
+): string {
+  const dineIn = fulfillmentType === "dine_in";
+  let time = "";
+  if (scheduledAt) {
+    const d = new Date(scheduledAt);
+    if (!Number.isNaN(d.getTime())) {
+      time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+  }
+  const slot = time
+    ? dineIn
+      ? ` Scheduled for ${time}.`
+      : ` Your collection slot is ${time}.`
+    : "";
+  switch (status) {
+    case "new":
+      return `We've received your order — it's awaiting confirmation.${slot}`;
+    case "accepted":
+      return `👍 Your order is confirmed and in the queue.${slot}`;
+    case "preparing":
+      return `👨‍🍳 Your order is being prepared right now.${slot}`;
+    case "ready":
+      return dineIn
+        ? `✅ Your order is ready — we're bringing it to your table.`
+        : `✅ Your order is ready for collection!${slot}`;
+    case "served":
+      return `Your order has been completed. Enjoy! 🙌`;
+    case "cancelled":
+      return `That order was cancelled. Please place a new one or ask a team member for help.`;
+    default:
+      return `Your order status is: ${status}.`;
+  }
+}
+
 const VENUE_CAPACITY = 60;
 
 // The agent: rule-based tool routing over Postgres, with a Workers AI fallback
@@ -132,6 +172,43 @@ export async function runAgent(
             item.dietary.length ? ` (${item.dietary.join(", ")})` : ""
           }.`,
           tool: "get_menu",
+        };
+      }
+    }
+
+    // Order status — "where's my order?" answered from THIS venue's orders,
+    // matched by the customer's phone (venue + store scoped).
+    if (
+      ctx.role === "customer" &&
+      /\b(my order|order status|where.?s?\s+my\s+order|is my order|order ready|ready yet|track(?:ing)?\s+(?:my\s+)?order|order\s+(?:done|yet))\b/.test(
+        t,
+      )
+    ) {
+      const digits = (ctx.from ?? "").replace(/\D/g, "");
+      const last9 = digits.slice(-9);
+      if (last9.length >= 7) {
+        const [order] = await sql`
+          SELECT status, fulfillment_type, scheduled_at
+          FROM orders
+          WHERE venue_id = ${venue}
+            AND regexp_replace(coalesce(customer_phone, ''), '\D', '', 'g') LIKE ${"%" + last9}
+          ORDER BY created_at DESC
+          LIMIT 1`;
+        if (order) {
+          return {
+            reply: orderStatusReply(
+              String(order.status),
+              order.fulfillment_type as string | null,
+              order.scheduled_at as string | null,
+            ),
+            tool: "get_order_status",
+            data: { status: order.status },
+          };
+        }
+        return {
+          reply:
+            "I couldn't find a recent order on this number. If you ordered at your table your server can help, or share your order number.",
+          tool: "get_order_status",
         };
       }
     }
