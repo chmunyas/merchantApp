@@ -1,8 +1,21 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Coins, Inbox, Receipt, Users, UtensilsCrossed } from "lucide-react";
+import {
+  Building2,
+  Coins,
+  Inbox,
+  Receipt,
+  Users,
+  UtensilsCrossed,
+} from "lucide-react";
 
-import { authFetch, useAuth } from "@/lib/auth";
+import {
+  authFetch,
+  staffMyVenues,
+  staffSwitchVenue,
+  useAuth,
+  type StaffVenue,
+} from "@/lib/auth";
 
 export const Route = createFileRoute("/staff-console")({
   component: StaffConsole,
@@ -19,6 +32,16 @@ function StaffConsole() {
   const { user } = useAuth();
   const [tips, setTips] = useState<TipRow[] | null>(null);
   const [openOrders, setOpenOrders] = useState<number | null>(null);
+  const [venues, setVenues] = useState<StaffVenue[]>([]);
+
+  useEffect(() => {
+    void staffMyVenues().then(setVenues);
+  }, []);
+
+  async function switchTo(id: string) {
+    const ok = await staffSwitchVenue(id);
+    if (ok) window.location.reload();
+  }
 
   useEffect(() => {
     authFetch("/api/tips?scope=team&period=today")
@@ -73,6 +96,35 @@ function StaffConsole() {
           {user?.role ?? "staff"} · take payment, manage orders, help guests
         </p>
       </header>
+
+      {venues.length > 0 ? (
+        <section className="rounded-2xl border border-border bg-card p-4">
+          <div className="flex items-center gap-2 text-sm">
+            <Building2 className="size-4 text-muted-foreground" />
+            <span className="text-muted-foreground">
+              {venues.length > 1 ? "Your stores" : "Working at"}
+            </span>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {venues.map((v) => (
+              <button
+                key={v.id}
+                type="button"
+                onClick={() => (v.current ? undefined : switchTo(v.id))}
+                disabled={v.current}
+                className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                  v.current
+                    ? "bg-foreground text-background"
+                    : "border border-border hover:border-foreground/40"
+                }`}
+              >
+                {v.name}
+                {v.current ? " · now" : ""}
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="grid gap-4 sm:grid-cols-2">
         {tiles.map((t) => (

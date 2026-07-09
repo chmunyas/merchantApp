@@ -478,6 +478,58 @@ export async function handleAuthRoute(
     return json({ token, user: { email: null, role, name: "Operator" } });
   }
 
+  // Staff multi-venue: switch to another store this staff member is assigned to
+  // (per-venue staff rows linked by phone). Re-mints the staff JWT for the target
+  // store's staff row; the assignment is verified server-side (same phone, active
+  // there), so a staff token can never be pointed at a store they don't work at.
+  if (path === "/api/auth/staff-switch-venue" && request.method === "POST") {
+    const payload = await requireAuth(request, env);
+    if (!payload || payload.role !== "staff") {
+      return json({ error: "unauthorized" }, 401);
+    }
+    const cfg = await getAuthConfig(env);
+    const sql = getSql(env);
+    if (!cfg || !sql) return json({ error: "auth unavailable" }, 503);
+    const staffId =
+      typeof payload.staff_id === "string" ? payload.staff_id : null;
+    if (!staffId) return json({ error: "not a staff session" }, 403);
+    const body = (await request.json().catch(() => ({}))) as { venue?: string };
+    const target = String(body.venue ?? "").trim();
+    if (!target) return json({ error: "venue required" }, 400);
+    const [me] = await sql`SELECT phone FROM staff WHERE id = ${staffId} LIMIT 1`;
+    const phone = me?.phone ? String(me.phone).trim() : "";
+    if (!phone) return json({ error: "no linked venues" }, 403);
+    const [targetStaff] = await sql`
+      SELECT s.id, s.name, v.name AS venue_name
+      FROM staff s JOIN venues v ON v.id = s.venue_id
+      WHERE s.phone = ${phone} AND s.venue_id = ${target} AND s.active = true
+      LIMIT 1`;
+    if (!targetStaff) {
+      return json({ error: "not assigned to that store" }, 403);
+    }
+    const token = await signJwt(
+      {
+        sub: `staff:${targetStaff.id}`,
+        role: "staff",
+        name: (targetStaff.name as string) ?? "Staff",
+        venue: target,
+        staff_id: targetStaff.id,
+      },
+      cfg.secret,
+    );
+    return json({
+      token,
+      user: {
+        email: null,
+        role: "staff",
+        name: targetStaff.name,
+        venue: target,
+        venueName: targetStaff.venue_name,
+        staffId: targetStaff.id,
+      },
+    });
+  }
+
   // Staff PIN login: verify a PIN against the staff table + mint a staff JWT
   // (role=staff, venue + staff_id) so authFetch works for staff. Not gated by
   // AUTH_REQUIRE_LOGIN — it IS a real credential check.

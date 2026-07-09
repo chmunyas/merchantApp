@@ -36,6 +36,14 @@ kitchen stay in sync, and staff can take payment against an order.
   `orders.paid_at` on success (one-time-use). See `payments` + `unified-qr`.
 - Realtime: keep the BroadcastChannel for UX; the DB is the source of truth.
 - **Agent (staff scope):** `open_orders`, `mark_order_ready`, `send_bill(table)`.
+- **Customer notifications (fulfillment-aware):** on a REAL status change to
+  `accepted` (acknowledged) / `preparing` (processed) / `ready`, `PATCH
+  /api/orders/:id` messages the order's customer on their channel — consent-checked
+  (`isSuppressed`) + logged to the conversation timeline — with eat-in vs
+  collection wording and the scheduled time. Copy is pure in
+  `src/lib/order-notify.ts` (`orderStatusMessage`); change-detection makes it
+  idempotent. A customer can also ask "where's my order?" — the agent's
+  `get_order_status` tool answers via `orderStatusReply` (venue + phone scoped).
 
 ## Guardrails
 - Venue-pinned + authed for staff writes; link `staff_id` for attribution/tips.

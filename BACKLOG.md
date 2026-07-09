@@ -90,6 +90,21 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   refunds/txns across every store the login manages (last 30 days), rendered at
   `/dashboard/chain`. Revenue is only shown for stores where the caller is
   manager+, so a staff-level membership never leaks another store's takings.
+- ✅ **DONE (multi-venue staff)** A staff member's per-venue `staff` rows are linked
+  by phone, so one PIN login can list (`GET /api/staff/my-venues`) + switch
+  (`POST /api/auth/staff-switch-venue`, re-mints the staff JWT, verified same-phone
+  + active there) between every store they work at — store switcher on
+  `/staff-console`. Switching to an unassigned store is 403.
+- ✅ **DONE (order lifecycle notifications)** On a real status change to accepted /
+  preparing / ready, `PATCH /api/orders/:id` notifies the customer on their channel
+  (consent-checked, timeline-logged), fulfillment-aware (eat-in vs collection) with
+  the scheduled time — `src/lib/order-notify.ts`. Customers can ask "where's my
+  order?" via the agent's `get_order_status` tool.
+- ✅ **DONE (venue-aware inbound)** Inbound is routed to the venue that owns the
+  receiving channel account (`channel_accounts`, `db/44`) via
+  `resolveVenueForAccount` — a customer messaging store A's WhatsApp number reaches
+  store A's agent/menu/orders (falls back to `main`). Payments + orders are already
+  `venue_id`-scoped in the DB, so each store's transactions are fully separated.
 - ✅ **DONE (sub-entity persistence)** Table combinations / zones / areas / floor-plan
   and menu modifiers / schedules already persist server-side per-venue via the
   `merchant_state` blob (`writeStorage` → `/api/state`, hydrated by

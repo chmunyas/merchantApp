@@ -30,6 +30,40 @@ export async function handleStaffRoute(
   const sql = getSql(env);
   if (!sql) return json({ error: "database not configured" }, 503);
 
+  // The venues THIS staff member is assigned to (multi-venue). Per-venue staff
+  // rows are linked by the staff member's phone, so one PIN login can see + switch
+  // between every store they work at. Staff-accessible (any authed staff session).
+  if (url.pathname === "/api/staff/my-venues" && request.method === "GET") {
+    const staffId =
+      typeof payload.staff_id === "string" ? payload.staff_id : null;
+    if (!staffId) {
+      // Non-staff (merchant/manager) session — report the current venue only.
+      const [v] = await sql`SELECT id, name FROM venues WHERE id = ${venue} LIMIT 1`;
+      return json({
+        venues: v ? [{ id: String(v.id), name: v.name, current: true }] : [],
+        current: venue,
+      });
+    }
+    const [me] = await sql`SELECT phone FROM staff WHERE id = ${staffId} LIMIT 1`;
+    const phone = me?.phone ? String(me.phone).trim() : "";
+    const rows = phone
+      ? await sql`
+          SELECT s.venue_id, v.name
+          FROM staff s JOIN venues v ON v.id = s.venue_id
+          WHERE s.phone = ${phone} AND s.active = true
+          ORDER BY v.name`
+      : await sql`
+          SELECT s.venue_id, v.name
+          FROM staff s JOIN venues v ON v.id = s.venue_id
+          WHERE s.id = ${staffId}`;
+    const venues = rows.map((r) => ({
+      id: String(r.venue_id),
+      name: (r.name as string) ?? "Store",
+      current: String(r.venue_id) === venue,
+    }));
+    return json({ venues, current: venue });
+  }
+
   if (url.pathname === "/api/staff" && request.method === "GET") {
     const staff = await sql`
       SELECT id, name, role, phone, active, created_at

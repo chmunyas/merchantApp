@@ -20,6 +20,11 @@ table 5 the bill", "how many covers today?", "who tipped tonight?".
 - Staff role is assigned via the demo **PIN login** (`src/routes/staff-login.tsx`
   → `getDemoStaffByPin`) **and** via the **WhatsApp allowlist** (`wa_allowlist`,
   `src/lib/inbound.ts`) — an allowlisted number is treated as `staff`/`admin`.
+- **Multi-venue staff:** a staff member's per-venue `staff` rows are linked by
+  **phone**, so one PIN login can list (`GET /api/staff/my-venues`) and switch
+  (`POST /api/auth/staff-switch-venue`, re-mints the staff JWT — verified same
+  phone + active there) between every store they work at. Surfaced as a store
+  switcher on `/staff-console`. Client: `staffMyVenues` / `staffSwitchVenue`.
 - `getDefaultRouteForRole('staff') → /merchant` (today a marketing page, not an
   ops console — see Gaps).
 

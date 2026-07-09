@@ -39,7 +39,8 @@ The agent doesn't guess — it calls real app functions and returns their result
 `get_menu` (menu skill), `create_enquiry` / `check_availability` (bookings),
 `create_invoice` + `pay_link` (invoicing/payments), `request_payment` (ad-hoc
 server-bound pay-link), `search_kb` (knowledge base), `get_todays_bookings` /
-`count_enquiries` / `search_contacts` (CRM/analytics), `escalate_to_human`
+`count_enquiries` / `search_contacts` (CRM/analytics), `get_order_status` (a
+customer's live order status, matched by phone + venue), `escalate_to_human`
 (handoff). Tools are venue-scoped and reuse the same libs the dashboard uses, so
 protecting the HTTP routes never breaks the agent. Add new capabilities as tools,
 not prompt text.
@@ -99,6 +100,12 @@ retained per policy, and erasable. Framework + per-channel duties in
 - **All inbound webhooks are public** — never add `requireAuth`; staff reply/config
   endpoints ARE gated (see auth-tenancy skill).
 - Everything flows through `processInbound`; capabilities are agent tools.
+- **Venue routing (multi-venue):** the inbound webhook resolves which venue owns
+  the receiving account via `resolveVenueForAccount(env, channel, accountId)`
+  (`src/lib/venue-routing.ts`, backed by `channel_accounts`) — e.g. the WhatsApp
+  `phone_number_id` — so a customer messaging store A reaches store A's agent.
+  Unknown accounts fall back to `"main"`. Saving a store's number registers its
+  route (`registerChannelAccount`).
 - Staff intent `request_payment` ("request payment / pay link / payment link
   [amount] [phone]") mints an ad-hoc pay-link via `createPayLink` and sends it to
   the customer on WhatsApp, falling back to returning the link for manual sharing.

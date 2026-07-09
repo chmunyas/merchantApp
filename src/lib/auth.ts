@@ -236,6 +236,43 @@ export async function staffLogin(pin: string): Promise<AuthUser | null> {
   }
 }
 
+// Multi-venue staff: the stores this staff member is assigned to (linked by their
+// phone across per-venue staff rows).
+export type StaffVenue = { id: string; name: string; current: boolean };
+
+export async function staffMyVenues(): Promise<StaffVenue[]> {
+  try {
+    const res = await authFetch("/api/staff/my-venues");
+    if (!res.ok) return [];
+    const data = (await res.json()) as { venues?: StaffVenue[] };
+    return data.venues ?? [];
+  } catch {
+    return [];
+  }
+}
+
+// Switch the staff session to another assigned store (server re-mints the staff
+// JWT for that store's staff row). Caller reloads to re-scope every panel.
+export async function staffSwitchVenue(venue: string): Promise<boolean> {
+  try {
+    const res = await authFetch("/api/auth/staff-switch-venue", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ venue }),
+    });
+    if (!res.ok) return false;
+    const data = (await res.json()) as {
+      token?: string;
+      user?: { venue?: string; name?: string };
+    };
+    if (data.token) setToken(data.token);
+    if (data.user?.venue) applyTenant(data.user.venue, data.user.name ?? "");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // fetch() that attaches the JWT — use for protected admin/config calls.
 export function authFetch(
   input: string,
