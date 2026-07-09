@@ -16,7 +16,10 @@ export type WhatsappConfig = {
 // take precedence, falling back to environment variables. The Baileys bridge
 // URL is infrastructure and only comes from the environment. `transport` selects
 // the active outbound path (auto = bridge -> cloud -> simulated).
-export async function getWhatsappConfig(env: unknown): Promise<WhatsappConfig> {
+export async function getWhatsappConfig(
+  env: unknown,
+  venue?: string,
+): Promise<WhatsappConfig> {
   let token = envVar(env, "WHATSAPP_TOKEN");
   let phoneId = envVar(env, "WHATSAPP_PHONE_ID");
   let verifyToken = envVar(env, "WHATSAPP_VERIFY_TOKEN") ?? "pesaswap-verify";
@@ -27,8 +30,12 @@ export async function getWhatsappConfig(env: unknown): Promise<WhatsappConfig> {
   try {
     const sql = getSql(env);
     if (sql) {
-      const [row] = await sql`SELECT value FROM app_settings WHERE key = 'whatsapp_cloud'`;
-      const value = row?.value as
+      // Per-venue config (whatsapp_cloud:<venue>) wins over the global default,
+      // so each store can run its own WhatsApp number.
+      const keys = venue
+        ? [`whatsapp_cloud:${venue}`, "whatsapp_cloud"]
+        : ["whatsapp_cloud"];
+      let value:
         | {
             token?: string;
             phoneId?: string;
@@ -36,6 +43,14 @@ export async function getWhatsappConfig(env: unknown): Promise<WhatsappConfig> {
             transport?: string;
           }
         | undefined;
+      for (const k of keys) {
+        const [row] = await sql`
+          SELECT value FROM app_settings WHERE key = ${k} LIMIT 1`;
+        if (row?.value) {
+          value = row.value as typeof value;
+          break;
+        }
+      }
       if (value) {
         if (value.token) token = value.token;
         if (value.phoneId) phoneId = value.phoneId;

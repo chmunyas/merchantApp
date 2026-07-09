@@ -88,7 +88,11 @@ export async function handleWhatsappRoute(
 
   // WhatsApp Cloud API config (dashboard connection wizard).
   if (path === "/api/whatsapp/config" && request.method === "GET") {
-    const cfg = await getWhatsappConfig(env);
+    // Optional auth: an authed merchant sees THEIR store's config; otherwise the
+    // global default (non-breaking for any unauthenticated caller).
+    const getPayload = await requireAuth(request, env);
+    const getVenue = getPayload ? venueFromPayload(getPayload, url) : undefined;
+    const cfg = await getWhatsappConfig(env, getVenue);
     return json({
       hasToken: Boolean(cfg.token),
       phoneId: cfg.phoneId ?? "",
@@ -107,13 +111,14 @@ export async function handleWhatsappRoute(
     }
     const sql = getSql(env);
     if (!sql) return json({ error: "database not configured" }, 503);
+    const venue = venueFromPayload(cfgPayload, url);
     const body = (await request.json()) as {
       token?: string;
       phoneId?: string;
       verifyToken?: string;
       transport?: string;
     };
-    const current = await getWhatsappConfig(env);
+    const current = await getWhatsappConfig(env, venue);
     const transport =
       body.transport === "auto" ||
       body.transport === "bridge" ||
@@ -128,28 +133,26 @@ export async function handleWhatsappRoute(
         : current.verifyToken,
       transport,
     };
+    // Store per-venue so each store runs its own WhatsApp number.
     await sql`
-      INSERT INTO app_settings (key, value) VALUES ('whatsapp_cloud', ${sql.json(value)})
+      INSERT INTO app_settings (key, value)
+      VALUES (${`whatsapp_cloud:${venue}`}, ${sql.json(value)})
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
     // Route inbound to this WhatsApp number to the configuring venue, so a
     // customer messaging this store reaches this store's agent (multi-venue).
     if (value.phoneId) {
-      await registerChannelAccount(
-        env,
-        "whatsapp",
-        value.phoneId,
-        venueFromPayload(cfgPayload, url),
-      );
+      await registerChannelAccount(env, "whatsapp", value.phoneId, venue);
     }
     return json({ ok: true });
   }
 
   // Verify the Cloud API credentials against Meta.
   if (path === "/api/whatsapp/test" && request.method === "POST") {
-    if (!(await requireAuth(request, env))) {
+    const testPayload = await requireAuth(request, env);
+    if (!testPayload) {
       return json({ error: "unauthorized" }, 401);
     }
-    const cfg = await getWhatsappConfig(env);
+    const cfg = await getWhatsappConfig(env, venueFromPayload(testPayload, url));
     if (!cfg.token || !cfg.phoneId) {
       return json({ ok: false, error: "Add a token and phone number ID first." });
     }
@@ -301,6 +304,7 @@ export async function handleWhatsappRoute(
         conversation.wa_id,
         body.text,
         env,
+        venue,
       );
       delivery = out.delivery;
     } catch {

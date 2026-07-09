@@ -110,7 +110,7 @@ export async function handleShareRoute(
     return json({ ok: false, delivery: "suppressed", to: handle });
   }
 
-  const result = await getAdapter(channel).send(handle, message, env);
+  const result = await getAdapter(channel).send(handle, message, env, venue);
   await logOutbound(
     env,
     venue,

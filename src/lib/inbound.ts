@@ -123,7 +123,7 @@ export async function processInbound(
       VALUES (${conversation.id}, 'outbound', ${confirm}, false, ${msg.channel})`;
     let optDelivery = "pull";
     try {
-      optDelivery = (await getAdapter(msg.channel).send(msg.handle, confirm, env))
+      optDelivery = (await getAdapter(msg.channel).send(msg.handle, confirm, env, venue))
         .delivery;
     } catch {
       optDelivery = "failed";
@@ -163,7 +163,7 @@ export async function processInbound(
   let failed = false;
   if (!suppressed) {
     try {
-      const out = await getAdapter(msg.channel).send(msg.handle, result.reply, env);
+      const out = await getAdapter(msg.channel).send(msg.handle, result.reply, env, venue);
       delivery = out.delivery;
     } catch {
       delivery = "failed";

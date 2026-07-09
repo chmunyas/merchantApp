@@ -153,7 +153,7 @@ export async function sendBroadcast(
     }
     const text = personalize(recipient.name);
     try {
-      const out = await adapter.send(recipient.handle, text, env);
+      const out = await adapter.send(recipient.handle, text, env, venue);
       if (out.delivery === "sent") sent += 1;
       else simulated += 1;
 

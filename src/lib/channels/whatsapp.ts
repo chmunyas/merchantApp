@@ -79,9 +79,9 @@ export const whatsappAdapter: ChannelAdapter = {
   //   auto   -> Baileys bridge -> official Cloud API -> simulated
   //   bridge -> Baileys bridge -> simulated
   //   cloud  -> official Cloud API -> simulated
-  async send(handle, text, env): Promise<OutboundResult> {
+  async send(handle, text, env, venue): Promise<OutboundResult> {
     const { token, phoneId, bridgeUrl, bridgeToken, transport } =
-      await getWhatsappConfig(env);
+      await getWhatsappConfig(env, venue);
 
     if (bridgeUrl && transport !== "cloud") {
       try {

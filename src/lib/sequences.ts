@@ -79,7 +79,7 @@ export async function runDueSteps(
       continue;
     }
     try {
-      await getAdapter(enrollment.channel).send(enrollment.handle, text, env);
+      await getAdapter(enrollment.channel).send(enrollment.handle, text, env, venue);
       sent += 1;
       const [conversation] = await sql`
         INSERT INTO conversations (venue_id, wa_id, name, role, channel)

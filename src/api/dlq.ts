@@ -67,7 +67,7 @@ export async function handleDlqRoute(
       }
       retried += 1;
       try {
-        const out = await getAdapter(event.channel).send(handle, text, env);
+        const out = await getAdapter(event.channel).send(handle, text, env, venue);
         await sql`
           UPDATE events SET status = ${out.delivery === "sent" ? "sent" : "retried"}
           WHERE id = ${event.id}`;

@@ -47,8 +47,8 @@ export const telegramAdapter: ChannelAdapter = {
   parseInbound(body) {
     return parseTelegramInbound(body);
   },
-  async send(handle, text, env): Promise<OutboundResult> {
-    const { botToken } = await getTelegramConfig(env);
+  async send(handle, text, env, venue): Promise<OutboundResult> {
+    const { botToken } = await getTelegramConfig(env, venue);
     if (!botToken) return { delivery: "simulated" };
     const chatId = handle.replace(/^tg:/, "");
     try {

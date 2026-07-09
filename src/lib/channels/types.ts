@@ -40,7 +40,14 @@ export type ChannelAdapter = {
   id: ChannelId;
   capabilities: ChannelCapabilities;
   // Deliver an outbound reply. "pull" channels persist only (handled upstream).
-  send(handle: string, text: string, env: unknown): Promise<OutboundResult>;
+  // `venue` selects that store's channel credentials (per-venue config) so each
+  // store sends on its OWN number; omit for the global/default config.
+  send(
+    handle: string,
+    text: string,
+    env: unknown,
+    venue?: string,
+  ): Promise<OutboundResult>;
   // Optional GET webhook verification handshake (Meta-style hub.challenge).
   verifyWebhook?(url: URL, env: unknown): Response | null;
   // Optional inbound normalizer for this channel's webhook payload.

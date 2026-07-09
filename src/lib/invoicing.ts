@@ -79,7 +79,7 @@ export async function sendReminder(
 
   let delivery = "failed";
   try {
-    const out = await getAdapter(channel).send(handle, message, env);
+    const out = await getAdapter(channel).send(handle, message, env, venue);
     delivery = out.delivery;
     const [conversation] = await sql`
       INSERT INTO conversations (venue_id, wa_id, name, role, channel)

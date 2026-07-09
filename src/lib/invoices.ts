@@ -108,7 +108,7 @@ export async function createInvoice(
       dueDate: input.dueDate,
     });
     try {
-      const out = await getAdapter(channel).send(handle, message, env);
+      const out = await getAdapter(channel).send(handle, message, env, input.venue);
       delivery = out.delivery;
       const [conversation] = await sql`
         INSERT INTO conversations (venue_id, wa_id, name, role, channel)

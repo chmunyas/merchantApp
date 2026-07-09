@@ -103,7 +103,7 @@ async function notifyOrderCustomer(
       scheduledAt: o.scheduledAt,
     });
     if (!body) return false;
-    const out = await getAdapter(channel).send(handle, body, env);
+    const out = await getAdapter(channel).send(handle, body, env, o.venue);
     await logOrderOutbound(sql, o.venue, handle, body);
     return out.delivery === "sent";
   } catch {

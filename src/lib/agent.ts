@@ -315,7 +315,7 @@ export async function runAgent(
           let sent = false;
           if (phone) {
             try {
-              const out = await getAdapter("whatsapp").send(phone, msg, env);
+              const out = await getAdapter("whatsapp").send(phone, msg, env, venue);
               sent = out.delivery === "sent";
             } catch {
               /* best-effort send */
