@@ -287,6 +287,104 @@ export async function addStore(
   }
 }
 
+// --- Multi-store team (owner/manager per store) -----------------------------
+export type TeamMember = {
+  email: string;
+  name: string | null;
+  role: string;
+  you?: boolean;
+};
+
+export async function listMembers(
+  venue: string,
+): Promise<{ members: TeamMember[]; callerRole: string } | null> {
+  try {
+    const res = await authFetch(
+      `/api/venues/members?venue=${encodeURIComponent(venue)}`,
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as { members: TeamMember[]; callerRole: string };
+  } catch {
+    return null;
+  }
+}
+
+export async function saveMember(
+  venue: string,
+  email: string,
+  role: string,
+  name?: string,
+): Promise<{ invited: boolean } | { error: string }> {
+  try {
+    const res = await authFetch(
+      `/api/venues/members?venue=${encodeURIComponent(venue)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, role, name }),
+      },
+    );
+    const data = (await res.json().catch(() => ({}))) as {
+      member?: { invited: boolean };
+      error?: string;
+    };
+    if (!res.ok || !data.member) {
+      return { error: data.error ?? "Could not save the team member." };
+    }
+    return { invited: data.member.invited };
+  } catch {
+    return { error: "Network error. Please try again." };
+  }
+}
+
+export async function removeMember(
+  venue: string,
+  email: string,
+): Promise<{ ok: true } | { error: string }> {
+  try {
+    const res = await authFetch(
+      `/api/venues/members?venue=${encodeURIComponent(
+        venue,
+      )}&email=${encodeURIComponent(email)}`,
+      { method: "DELETE" },
+    );
+    if (res.ok) return { ok: true };
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    return { error: data.error ?? "Could not remove the team member." };
+  } catch {
+    return { error: "Network error. Please try again." };
+  }
+}
+
+// --- Multi-store chain rollup ------------------------------------------------
+export type ChainStore = {
+  id: string;
+  name: string;
+  gross: number;
+  tips: number;
+  refunds: number;
+  net: number;
+  txns: number;
+};
+
+export async function chainRollup(): Promise<{
+  currency: string;
+  stores: ChainStore[];
+  total: Omit<ChainStore, "id" | "name">;
+} | null> {
+  try {
+    const res = await authFetch("/api/venues/rollup");
+    if (!res.ok) return null;
+    return (await res.json()) as {
+      currency: string;
+      stores: ChainStore[];
+      total: Omit<ChainStore, "id" | "name">;
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Bootstrap a dashboard session token. The SPA still uses demo-role logins that
 // carry no password, so protected endpoints would 401 without this. Skips when a
 // real token already exists (admin email / Google login) and no-ops silently in

@@ -81,6 +81,15 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   `POST /api/auth/switch-venue` re-mints the JWT for a member store (server-verified),
   and a store switcher + "Add a store" in the dashboard picker. Each store is fully
   isolated; a user can never switch into a store they don't own.
+- ✅ **DONE (store roles + team)** Owner/manager-per-store — `GET/POST/DELETE
+  /api/venues/members` (`src/api/multistore.ts`) with per-store RBAC: a manager+
+  may invite/re-role/remove members up to their own rank (no privilege
+  escalation), find-or-creates the invitee's `app_users` row, is plan-capped on
+  team size, and never orphans a store's last owner. Surfaced at `/dashboard/team`.
+- ✅ **DONE (chain rollup)** `GET /api/venues/rollup` aggregates net/gross/tips/
+  refunds/txns across every store the login manages (last 30 days), rendered at
+  `/dashboard/chain`. Revenue is only shown for stores where the caller is
+  manager+, so a staff-level membership never leaks another store's takings.
 - ✅ **DONE (sub-entity persistence)** Table combinations / zones / areas / floor-plan
   and menu modifiers / schedules already persist server-side per-venue via the
   `merchant_state` blob (`writeStorage` → `/api/state`, hydrated by

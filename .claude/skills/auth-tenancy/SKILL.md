@@ -15,6 +15,8 @@ The security spine. Read `SECURITY.md` for the full posture.
 - `src/api/auth.ts` — `/api/auth/{login,signup,session,me,password,google,
   google/config,switch-venue}`, plus `requireAuth`, `requireRole`, `resolveVenue`.
 - `src/api/venues.ts` — `GET /api/venues` (member stores) + `POST /api/venues` (add a store).
+- `src/api/multistore.ts` — `GET/POST/DELETE /api/venues/members` (per-store team +
+  roles) + `GET /api/venues/rollup` (cross-store revenue rollup).
 - `src/lib/tenancy.ts` — pure helpers `venueFromPayload`, `planOf`, `planLimit`, `PLAN_LIMITS`.
 - `db/42-user-venues.sql` — `user_venues` membership (multi-store).
 - `src/lib/jwt.ts` — HS256 sign/verify + PBKDF2 hashing.
@@ -44,6 +46,18 @@ The security spine. Read `SECURITY.md` for the full posture.
   `POST /api/auth/switch-venue` **re-mints the JWT** for a store the user is a member
   of (membership verified server-side — a token can never be pointed at a store the
   user doesn't own). Each store is fully isolated (all entities are `venue_id`-scoped).
+- **Store roles (per-store RBAC):** `user_venues.role` is the **authoritative
+  per-store** role (not the token's current-venue claim). `GET/POST/DELETE
+  /api/venues/members` (`src/api/multistore.ts`) let a **manager+ at that store**
+  invite/re-role/remove members. Guards are pure + unit-tested in `tenancy.ts`:
+  `canGrantRole` (target role ≤ caller rank, known team role only — never `admin`/
+  `customer`) and `canRemoveMember` (never remove someone who outranks you); the API
+  also plan-caps team size and refuses to remove a store's **last owner**. Inviting
+  an unknown email find-or-creates an `app_users` row with an **unusable password**
+  (they gain access via Google or a reset — no shared secret is issued).
+- **Chain rollup:** `GET /api/venues/rollup` aggregates net/gross/tips/refunds/txns
+  across every store the login is **manager+** of (revenue never leaks to a
+  staff-level membership). UI: `/dashboard/chain`; team UI: `/dashboard/team`.
 - **Enforcement:** staff mutations are gated with `requireAuth`; **public**
   (pay/chat/enquiries/webhooks) and **service** (bridge sweeps `invoicing/run`,
   `sequences/run`, `bridge/inbound`) routes stay open.

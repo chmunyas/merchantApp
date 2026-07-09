@@ -39,6 +39,7 @@ import {
   Smartphone,
   Star,
   Users,
+  UsersRound,
   UtensilsCrossed,
   Wallet,
   X,
@@ -82,6 +83,7 @@ const navGroups = [
       { to: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
       { to: "/dashboard/forecast", label: "Forecast", icon: CalendarClock },
       { to: "/dashboard/pricing", label: "Pricing", icon: Tags },
+      { to: "/dashboard/chain", label: "Chain", icon: Building2 },
     ],
   },
   {
@@ -134,6 +136,7 @@ const navGroups = [
       { to: "/dashboard/menu", label: "Menu", icon: UtensilsCrossed },
       { to: "/dashboard/qr", label: "QR codes", icon: QrCode },
       { to: "/dashboard/staff", label: "Staff", icon: Users },
+      { to: "/dashboard/team", label: "Team", icon: UsersRound },
       { to: "/dashboard/whatsapp", label: "WhatsApp", icon: Smartphone },
       { to: "/dashboard/telegram", label: "Telegram", icon: Send },
       { to: "/dashboard/settings", label: "Settings", icon: Settings },

@@ -16,6 +16,7 @@ import { handleOrdersRoute } from "./api/orders";
 import { handleReportsRoute } from "./api/reports";
 import { handleTablesRoute } from "./api/tables";
 import { handleVenuesRoute } from "./api/venues";
+import { handleMultiStoreRoute } from "./api/multistore";
 import { handleQrRoute } from "./api/qr";
 import { handleKeQrConfigRoute } from "./api/keqr";
 import { handleCopilotRoute } from "./api/copilot";
@@ -211,6 +212,10 @@ export default {
           // Venue picker list (Postgres-backed, principal-scoped)
           const venuesResponse = await handleVenuesRoute(request, env);
           if (venuesResponse) return venuesResponse;
+
+          // Multi-store: per-store team (members/roles) + cross-store rollup
+          const multiStoreResponse = await handleMultiStoreRoute(request, env);
+          if (multiStoreResponse) return multiStoreResponse;
 
           // Unified QR: scan -> order -> pay -> loyalty (public resolve + authed mgmt)
           const qrResponse = await handleQrRoute(request, env);

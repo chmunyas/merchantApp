@@ -106,3 +106,38 @@ export function roleAtLeast(
     payload && typeof payload.role === "string" ? payload.role : "customer";
   return (ROLE_RANK[role] ?? 0) >= (ROLE_RANK[min] ?? 99);
 }
+
+// The per-store team roles an owner/manager may assign to a member. Excludes
+// `customer` and platform roles (`admin`) — a merchant can only ever create
+// roles up to their own within their own store(s).
+export const MANAGEABLE_ROLES = [
+  "staff",
+  "supervisor",
+  "manager",
+  "merchant",
+] as const;
+export type ManageableRole = (typeof MANAGEABLE_ROLES)[number];
+
+export function isManageableRole(role: string): role is ManageableRole {
+  return (MANAGEABLE_ROLES as readonly string[]).includes(role);
+}
+
+// True when a principal holding `callerRole` at a venue may grant `targetRole`
+// to a member there. Pure so it is trivially unit-tested and reused by the API:
+// the caller must be manager+, the target must be a known team role, and it may
+// never outrank the caller (no privilege escalation).
+export function canGrantRole(callerRole: string, targetRole: string): boolean {
+  const callerRank = ROLE_RANK[callerRole] ?? 0;
+  if (callerRank < ROLE_RANK.manager) return false;
+  if (!isManageableRole(targetRole)) return false;
+  return (ROLE_RANK[targetRole] ?? 99) <= callerRank;
+}
+
+// True when a member holding `callerRole` may remove a member holding
+// `targetRole` from the same store (manager+, and never someone who outranks
+// them). Owner-of-last-resort protection is enforced separately in the API.
+export function canRemoveMember(callerRole: string, targetRole: string): boolean {
+  const callerRank = ROLE_RANK[callerRole] ?? 0;
+  if (callerRank < ROLE_RANK.manager) return false;
+  return (ROLE_RANK[targetRole] ?? 0) <= callerRank;
+}

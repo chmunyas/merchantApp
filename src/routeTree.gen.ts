@@ -35,6 +35,7 @@ import { Route as QCodeRouteImport } from './routes/q.$code'
 import { Route as MeTokenRouteImport } from './routes/me.$token'
 import { Route as DashboardWhatsappRouteImport } from './routes/dashboard/whatsapp'
 import { Route as DashboardTelegramRouteImport } from './routes/dashboard/telegram'
+import { Route as DashboardTeamRouteImport } from './routes/dashboard/team'
 import { Route as DashboardTablesRouteImport } from './routes/dashboard/tables'
 import { Route as DashboardStaffRouteImport } from './routes/dashboard/staff'
 import { Route as DashboardSettlementRouteImport } from './routes/dashboard/settlement'
@@ -63,6 +64,7 @@ import { Route as DashboardEnquiriesRouteImport } from './routes/dashboard/enqui
 import { Route as DashboardDepositsRouteImport } from './routes/dashboard/deposits'
 import { Route as DashboardCopilotRouteImport } from './routes/dashboard/copilot'
 import { Route as DashboardContactsRouteImport } from './routes/dashboard/contacts'
+import { Route as DashboardChainRouteImport } from './routes/dashboard/chain'
 import { Route as DashboardBookingsRouteImport } from './routes/dashboard/bookings'
 import { Route as DashboardAutomationsRouteImport } from './routes/dashboard/automations'
 import { Route as DashboardAnalyticsRouteImport } from './routes/dashboard/analytics'
@@ -201,6 +203,11 @@ const DashboardWhatsappRoute = DashboardWhatsappRouteImport.update({
 const DashboardTelegramRoute = DashboardTelegramRouteImport.update({
   id: '/telegram',
   path: '/telegram',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardTeamRoute = DashboardTeamRouteImport.update({
+  id: '/team',
+  path: '/team',
   getParentRoute: () => DashboardRoute,
 } as any)
 const DashboardTablesRoute = DashboardTablesRouteImport.update({
@@ -343,6 +350,11 @@ const DashboardContactsRoute = DashboardContactsRouteImport.update({
   path: '/contacts',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardChainRoute = DashboardChainRouteImport.update({
+  id: '/chain',
+  path: '/chain',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardBookingsRoute = DashboardBookingsRouteImport.update({
   id: '/bookings',
   path: '/bookings',
@@ -417,6 +429,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/analytics': typeof DashboardAnalyticsRoute
   '/dashboard/automations': typeof DashboardAutomationsRoute
   '/dashboard/bookings': typeof DashboardBookingsRoute
+  '/dashboard/chain': typeof DashboardChainRoute
   '/dashboard/contacts': typeof DashboardContactsRoute
   '/dashboard/copilot': typeof DashboardCopilotRoute
   '/dashboard/deposits': typeof DashboardDepositsRoute
@@ -445,6 +458,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/settlement': typeof DashboardSettlementRoute
   '/dashboard/staff': typeof DashboardStaffRoute
   '/dashboard/tables': typeof DashboardTablesRoute
+  '/dashboard/team': typeof DashboardTeamRoute
   '/dashboard/telegram': typeof DashboardTelegramRoute
   '/dashboard/whatsapp': typeof DashboardWhatsappRoute
   '/me/$token': typeof MeTokenRoute
@@ -480,6 +494,7 @@ export interface FileRoutesByTo {
   '/dashboard/analytics': typeof DashboardAnalyticsRoute
   '/dashboard/automations': typeof DashboardAutomationsRoute
   '/dashboard/bookings': typeof DashboardBookingsRoute
+  '/dashboard/chain': typeof DashboardChainRoute
   '/dashboard/contacts': typeof DashboardContactsRoute
   '/dashboard/copilot': typeof DashboardCopilotRoute
   '/dashboard/deposits': typeof DashboardDepositsRoute
@@ -508,6 +523,7 @@ export interface FileRoutesByTo {
   '/dashboard/settlement': typeof DashboardSettlementRoute
   '/dashboard/staff': typeof DashboardStaffRoute
   '/dashboard/tables': typeof DashboardTablesRoute
+  '/dashboard/team': typeof DashboardTeamRoute
   '/dashboard/telegram': typeof DashboardTelegramRoute
   '/dashboard/whatsapp': typeof DashboardWhatsappRoute
   '/me/$token': typeof MeTokenRoute
@@ -546,6 +562,7 @@ export interface FileRoutesById {
   '/dashboard/analytics': typeof DashboardAnalyticsRoute
   '/dashboard/automations': typeof DashboardAutomationsRoute
   '/dashboard/bookings': typeof DashboardBookingsRoute
+  '/dashboard/chain': typeof DashboardChainRoute
   '/dashboard/contacts': typeof DashboardContactsRoute
   '/dashboard/copilot': typeof DashboardCopilotRoute
   '/dashboard/deposits': typeof DashboardDepositsRoute
@@ -574,6 +591,7 @@ export interface FileRoutesById {
   '/dashboard/settlement': typeof DashboardSettlementRoute
   '/dashboard/staff': typeof DashboardStaffRoute
   '/dashboard/tables': typeof DashboardTablesRoute
+  '/dashboard/team': typeof DashboardTeamRoute
   '/dashboard/telegram': typeof DashboardTelegramRoute
   '/dashboard/whatsapp': typeof DashboardWhatsappRoute
   '/me/$token': typeof MeTokenRoute
@@ -613,6 +631,7 @@ export interface FileRouteTypes {
     | '/dashboard/analytics'
     | '/dashboard/automations'
     | '/dashboard/bookings'
+    | '/dashboard/chain'
     | '/dashboard/contacts'
     | '/dashboard/copilot'
     | '/dashboard/deposits'
@@ -641,6 +660,7 @@ export interface FileRouteTypes {
     | '/dashboard/settlement'
     | '/dashboard/staff'
     | '/dashboard/tables'
+    | '/dashboard/team'
     | '/dashboard/telegram'
     | '/dashboard/whatsapp'
     | '/me/$token'
@@ -676,6 +696,7 @@ export interface FileRouteTypes {
     | '/dashboard/analytics'
     | '/dashboard/automations'
     | '/dashboard/bookings'
+    | '/dashboard/chain'
     | '/dashboard/contacts'
     | '/dashboard/copilot'
     | '/dashboard/deposits'
@@ -704,6 +725,7 @@ export interface FileRouteTypes {
     | '/dashboard/settlement'
     | '/dashboard/staff'
     | '/dashboard/tables'
+    | '/dashboard/team'
     | '/dashboard/telegram'
     | '/dashboard/whatsapp'
     | '/me/$token'
@@ -741,6 +763,7 @@ export interface FileRouteTypes {
     | '/dashboard/analytics'
     | '/dashboard/automations'
     | '/dashboard/bookings'
+    | '/dashboard/chain'
     | '/dashboard/contacts'
     | '/dashboard/copilot'
     | '/dashboard/deposits'
@@ -769,6 +792,7 @@ export interface FileRouteTypes {
     | '/dashboard/settlement'
     | '/dashboard/staff'
     | '/dashboard/tables'
+    | '/dashboard/team'
     | '/dashboard/telegram'
     | '/dashboard/whatsapp'
     | '/me/$token'
@@ -988,6 +1012,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardTelegramRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/team': {
+      id: '/dashboard/team'
+      path: '/team'
+      fullPath: '/dashboard/team'
+      preLoaderRoute: typeof DashboardTeamRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/tables': {
       id: '/dashboard/tables'
       path: '/tables'
@@ -1184,6 +1215,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardContactsRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/chain': {
+      id: '/dashboard/chain'
+      path: '/chain'
+      fullPath: '/dashboard/chain'
+      preLoaderRoute: typeof DashboardChainRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/bookings': {
       id: '/dashboard/bookings'
       path: '/bookings'
@@ -1273,6 +1311,7 @@ interface DashboardRouteChildren {
   DashboardAnalyticsRoute: typeof DashboardAnalyticsRoute
   DashboardAutomationsRoute: typeof DashboardAutomationsRoute
   DashboardBookingsRoute: typeof DashboardBookingsRoute
+  DashboardChainRoute: typeof DashboardChainRoute
   DashboardContactsRoute: typeof DashboardContactsRoute
   DashboardCopilotRoute: typeof DashboardCopilotRoute
   DashboardDepositsRoute: typeof DashboardDepositsRoute
@@ -1301,6 +1340,7 @@ interface DashboardRouteChildren {
   DashboardSettlementRoute: typeof DashboardSettlementRoute
   DashboardStaffRoute: typeof DashboardStaffRoute
   DashboardTablesRoute: typeof DashboardTablesRoute
+  DashboardTeamRoute: typeof DashboardTeamRoute
   DashboardTelegramRoute: typeof DashboardTelegramRoute
   DashboardWhatsappRoute: typeof DashboardWhatsappRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
@@ -1311,6 +1351,7 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardAnalyticsRoute: DashboardAnalyticsRoute,
   DashboardAutomationsRoute: DashboardAutomationsRoute,
   DashboardBookingsRoute: DashboardBookingsRoute,
+  DashboardChainRoute: DashboardChainRoute,
   DashboardContactsRoute: DashboardContactsRoute,
   DashboardCopilotRoute: DashboardCopilotRoute,
   DashboardDepositsRoute: DashboardDepositsRoute,
@@ -1339,6 +1380,7 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardSettlementRoute: DashboardSettlementRoute,
   DashboardStaffRoute: DashboardStaffRoute,
   DashboardTablesRoute: DashboardTablesRoute,
+  DashboardTeamRoute: DashboardTeamRoute,
   DashboardTelegramRoute: DashboardTelegramRoute,
   DashboardWhatsappRoute: DashboardWhatsappRoute,
   DashboardIndexRoute: DashboardIndexRoute,

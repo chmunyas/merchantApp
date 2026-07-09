@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { clientIp } from "../../src/lib/rate-limit";
 import {
+  canGrantRole,
+  canRemoveMember,
   planLimit,
   planLimitMessage,
   planOf,
@@ -60,6 +62,39 @@ describe("planLimit (per-entity quotas)", () => {
   it("builds an upgrade message naming the entity + cap", () => {
     expect(planLimitMessage("free", "staff")).toMatch(/free plan/);
     expect(planLimitMessage("free", "staff")).toMatch(/5 team members/);
+  });
+});
+
+describe("canGrantRole / canRemoveMember (multi-store RBAC)", () => {
+  it("lets an owner grant any team role including owner", () => {
+    expect(canGrantRole("merchant", "staff")).toBe(true);
+    expect(canGrantRole("merchant", "manager")).toBe(true);
+    expect(canGrantRole("merchant", "merchant")).toBe(true);
+  });
+
+  it("stops a manager from granting a higher (owner) role", () => {
+    expect(canGrantRole("manager", "staff")).toBe(true);
+    expect(canGrantRole("manager", "manager")).toBe(true);
+    expect(canGrantRole("manager", "merchant")).toBe(false);
+  });
+
+  it("forbids sub-manager roles from granting anything", () => {
+    expect(canGrantRole("supervisor", "staff")).toBe(false);
+    expect(canGrantRole("staff", "staff")).toBe(false);
+  });
+
+  it("rejects unknown / platform roles as grant targets", () => {
+    expect(canGrantRole("merchant", "admin")).toBe(false);
+    expect(canGrantRole("merchant", "customer")).toBe(false);
+    expect(canGrantRole("merchant", "wizard")).toBe(false);
+  });
+
+  it("never lets a member remove someone who outranks them", () => {
+    expect(canRemoveMember("manager", "staff")).toBe(true);
+    expect(canRemoveMember("manager", "manager")).toBe(true);
+    expect(canRemoveMember("manager", "merchant")).toBe(false);
+    expect(canRemoveMember("merchant", "merchant")).toBe(true);
+    expect(canRemoveMember("staff", "staff")).toBe(false);
   });
 });
 
