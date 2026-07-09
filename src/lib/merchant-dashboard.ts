@@ -1962,7 +1962,7 @@ export function writeStorage<T>(key: string, value: T) {
   // share one source of truth (venue selection + schema markers stay local).
   if (
     !suppressStateSync &&
-    key.startsWith("fxengine.") &&
+    (key.startsWith("fxengine.") || key.startsWith("pesaswap.services.")) &&
     !key.endsWith("schemaVersion") &&
     !key.endsWith("currentVenue")
   ) {
@@ -3933,68 +3933,102 @@ export function getCreditAging(customers: CreditCustomer[]) {
   return { customers: customerAging, totals };
 }
 
-export function ensureRetailDemoData() {
-  if (!canUseStorage()) return generateRetailDemoData();
+// Empty per-tenant retail starter — a real venue creates its OWN catalogue rather
+// than inheriting the demo store. Mirrors baseSnapshotForCurrentVenue (menu/tables).
+export function emptyRetailSnapshot(): RetailSnapshot {
+  const identity = currentMerchantIdentity();
+  return {
+    storeProfile: {
+      id: getCurrentVenueId(),
+      name: identity.name,
+      location: "",
+      phone: "",
+      tillNumber: identity.till,
+      whatsapp: "",
+      receiptFooter: "Thank you for your purchase.",
+    },
+    products: [],
+    sales: [],
+    adjustments: [],
+    creditCustomers: [],
+    suppliers: [],
+    purchaseOrders: [],
+  };
+}
 
-  const demo = generateRetailDemoData();
+// The retail base for the CURRENT venue: rich demo for a demo venue, empty starter
+// for a real tenant (so a new merchant never inherits the sample store).
+function baseRetailSnapshot(): RetailSnapshot {
+  return isDemoVenue(getCurrentVenueId())
+    ? generateRetailDemoData()
+    : emptyRetailSnapshot();
+}
+
+export function ensureRetailDemoData() {
+  if (!canUseStorage()) return baseRetailSnapshot();
+
+  const base = baseRetailSnapshot();
   (
     Object.entries(RETAIL_STORAGE_KEYS) as Array<
       [keyof typeof RETAIL_STORAGE_KEYS, string]
     >
   ).forEach(([name, key]) => {
-    if (!window.localStorage.getItem(key)) writeStorage(key, demo[name]);
+    if (!window.localStorage.getItem(mkey(key))) writeStorage(mkey(key), base[name]);
   });
 
   return loadRetailSnapshot();
 }
 
 export function loadRetailSnapshot(): RetailSnapshot {
-  const fallback = generateRetailDemoData();
+  const fallback = baseRetailSnapshot();
   return {
     storeProfile: readStorage(
-      RETAIL_STORAGE_KEYS.storeProfile,
+      mkey(RETAIL_STORAGE_KEYS.storeProfile),
       fallback.storeProfile,
     ),
-    products: readStorage(RETAIL_STORAGE_KEYS.products, fallback.products),
-    sales: readStorage(RETAIL_STORAGE_KEYS.sales, fallback.sales),
+    products: readStorage(mkey(RETAIL_STORAGE_KEYS.products), fallback.products),
+    sales: readStorage(mkey(RETAIL_STORAGE_KEYS.sales), fallback.sales),
     adjustments: readStorage(
-      RETAIL_STORAGE_KEYS.adjustments,
+      mkey(RETAIL_STORAGE_KEYS.adjustments),
       fallback.adjustments,
     ),
     creditCustomers: readStorage(
-      RETAIL_STORAGE_KEYS.creditCustomers,
+      mkey(RETAIL_STORAGE_KEYS.creditCustomers),
       fallback.creditCustomers,
     ).map((customer) => ({
       ...customer,
       balance: balanceCreditEntries(customer.entries),
     })),
-    suppliers: readStorage(RETAIL_STORAGE_KEYS.suppliers, fallback.suppliers),
+    suppliers: readStorage(
+      mkey(RETAIL_STORAGE_KEYS.suppliers),
+      fallback.suppliers,
+    ),
     purchaseOrders: readStorage(
-      RETAIL_STORAGE_KEYS.purchaseOrders,
+      mkey(RETAIL_STORAGE_KEYS.purchaseOrders),
       fallback.purchaseOrders,
     ),
   };
 }
 
 export function saveRetailStoreProfile(storeProfile: RetailStoreProfile) {
-  writeStorage(RETAIL_STORAGE_KEYS.storeProfile, storeProfile);
+  writeStorage(mkey(RETAIL_STORAGE_KEYS.storeProfile), storeProfile);
 }
 
 export function saveRetailProducts(products: RetailProduct[]) {
-  writeStorage(RETAIL_STORAGE_KEYS.products, products);
+  writeStorage(mkey(RETAIL_STORAGE_KEYS.products), products);
 }
 
 export function saveRetailSales(sales: RetailSale[]) {
-  writeStorage(RETAIL_STORAGE_KEYS.sales, sales);
+  writeStorage(mkey(RETAIL_STORAGE_KEYS.sales), sales);
 }
 
 export function saveStockAdjustments(adjustments: StockAdjustment[]) {
-  writeStorage(RETAIL_STORAGE_KEYS.adjustments, adjustments);
+  writeStorage(mkey(RETAIL_STORAGE_KEYS.adjustments), adjustments);
 }
 
 export function saveCreditCustomers(creditCustomers: CreditCustomer[]) {
   writeStorage(
-    RETAIL_STORAGE_KEYS.creditCustomers,
+    mkey(RETAIL_STORAGE_KEYS.creditCustomers),
     creditCustomers.map((customer) => ({
       ...customer,
       balance: balanceCreditEntries(customer.entries),
@@ -4003,11 +4037,11 @@ export function saveCreditCustomers(creditCustomers: CreditCustomer[]) {
 }
 
 export function saveRetailSuppliers(suppliers: Supplier[]) {
-  writeStorage(RETAIL_STORAGE_KEYS.suppliers, suppliers);
+  writeStorage(mkey(RETAIL_STORAGE_KEYS.suppliers), suppliers);
 }
 
 export function savePurchaseOrders(purchaseOrders: PurchaseOrder[]) {
-  writeStorage(RETAIL_STORAGE_KEYS.purchaseOrders, purchaseOrders);
+  writeStorage(mkey(RETAIL_STORAGE_KEYS.purchaseOrders), purchaseOrders);
 }
 
 export function getRetailStoreSlug(profile?: RetailStoreProfile) {
@@ -4906,21 +4940,63 @@ export function generateServicesDemoData(now = new Date()): ServicesSnapshot {
   };
 }
 
+// Empty per-tenant services starter — a real venue builds its OWN catalogue.
+export function emptyServicesSnapshot(): ServicesSnapshot {
+  const identity = currentMerchantIdentity();
+  const labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  return {
+    business: {
+      id: getCurrentVenueId(),
+      name: identity.name,
+      type: "general",
+      description: "",
+      location: "",
+      phone: "",
+      whatsapp: "",
+      email: "",
+      tillNumber: identity.till,
+      logoUrl: "",
+      website: "",
+      operatingHours: labels.map((label, day) => ({
+        day,
+        label,
+        start: "09:00",
+        end: "17:00",
+      })),
+    },
+    staff: [],
+    categories: [
+      { id: "general", name: "General", icon: "Wrench", color: "#2563eb" },
+    ],
+    services: [],
+    packages: [],
+    clients: [],
+    bookings: [],
+    jobCards: [],
+  };
+}
+
+function baseServicesSnapshot(): ServicesSnapshot {
+  return isDemoVenue(getCurrentVenueId())
+    ? generateServicesDemoData()
+    : emptyServicesSnapshot();
+}
+
 export function ensureServicesDemoData() {
-  if (!canUseStorage()) return generateServicesDemoData();
-  if (!window.localStorage.getItem(SERVICES_STORAGE_KEY)) {
-    writeStorage(SERVICES_STORAGE_KEY, generateServicesDemoData());
+  if (!canUseStorage()) return baseServicesSnapshot();
+  if (!window.localStorage.getItem(mkey(SERVICES_STORAGE_KEY))) {
+    writeStorage(mkey(SERVICES_STORAGE_KEY), baseServicesSnapshot());
   }
   return loadServicesSnapshot();
 }
 
 export function loadServicesSnapshot(): ServicesSnapshot {
-  const fallback = generateServicesDemoData();
-  return readStorage(SERVICES_STORAGE_KEY, fallback);
+  const fallback = baseServicesSnapshot();
+  return readStorage(mkey(SERVICES_STORAGE_KEY), fallback);
 }
 
 export function saveServicesSnapshot(snapshot: ServicesSnapshot) {
-  writeStorage(SERVICES_STORAGE_KEY, snapshot);
+  writeStorage(mkey(SERVICES_STORAGE_KEY), snapshot);
 }
 
 export function getAvailableSlots(
