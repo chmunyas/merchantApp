@@ -4,7 +4,6 @@ import {
   Zap,
   CheckCircle2,
   ShieldCheck,
-  Fingerprint,
   Smartphone,
   Clock3,
   QrCode,
@@ -48,7 +47,7 @@ export const Route = createFileRoute("/pay")({
   component: PayPage,
 });
 
-type PaymentState = "idle" | "scanned" | "confirming" | "pin" | "processing" | "success" | "error";
+type PaymentState = "idle" | "scanned" | "confirming" | "processing" | "success" | "error";
 
 type OrderLineItem = { name: string; qty: number; price: number };
 
@@ -74,8 +73,6 @@ type PaymentData = {
 function PayPage() {
   const [state, setState] = useState<PaymentState>("idle");
   const [paymentData, setPaymentData] = useState<PaymentData | null>(null);
-  const [pin, setPin] = useState("");
-  const [useBiometric, setUseBiometric] = useState(false);
   const [customerPhone, setCustomerPhone] = useState("");
   const [paymentId, setPaymentId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
@@ -173,7 +170,13 @@ function PayPage() {
     }
     setPayTip(opts?.tip ?? 0);
     setPayStaffId(opts?.staffId ?? null);
-    setState("pin");
+    // Skip the PIN/fingerprint gate — trigger the M-Pesa payment immediately.
+    // (Authorization happens on the customer's phone via the M-Pesa STK prompt.)
+    void processRealPayment(phone, {
+      amount: opts?.amount,
+      tip: opts?.tip ?? 0,
+      staffId: opts?.staffId ?? null,
+    });
   }
 
   // Resolve a server-bound QR order token to its authoritative amount + merchant.
@@ -248,21 +251,14 @@ function PayPage() {
     }
   }
 
-  async function submitPin() {
-    if (pin.length < 4 || !paymentData) return;
-    await processRealPayment(customerPhone);
-  }
-
-  async function useBiometricAuth() {
-    setUseBiometric(true);
-    if (!paymentData) return;
-    await processRealPayment(customerPhone);
-  }
-
-  async function processRealPayment(phone: string, amountOverride?: number) {
+  async function processRealPayment(
+    phone: string,
+    opts?: { amount?: number; tip?: number; staffId?: string | null },
+  ) {
     if (!paymentData) return;
     setState("processing");
     setErrorMsg("");
+    const tip = opts?.tip ?? payTip;
 
     const metadata = buildPaymentMetadata({
       merchant: { name: paymentData.merchant, till: paymentData.till },
@@ -271,13 +267,13 @@ function PayPage() {
     });
     // Attribute the payment + tip to the serving staff: the invoice creator, or the
     // server the guest picked in the tip flow.
-    const attributedStaff = payStaffId ?? paymentData.staffId ?? null;
+    const attributedStaff = opts?.staffId ?? payStaffId ?? paymentData.staffId ?? null;
     if (attributedStaff) {
       (metadata as Record<string, unknown>).staff_id = attributedStaff;
     }
     // A gratuity rides on top of the bill; tip_amount is stored in minor units.
-    if (payTip > 0) {
-      (metadata as Record<string, unknown>).tip_amount = Math.round(payTip * 100);
+    if (tip > 0) {
+      (metadata as Record<string, unknown>).tip_amount = Math.round(tip * 100);
     }
     if (paymentData.venue) {
       (metadata as Record<string, unknown>).venue = paymentData.venue;
@@ -299,7 +295,7 @@ function PayPage() {
     (metadata as Record<string, unknown>).till = paymentData.till;
 
     const result = await executePayment({
-      amount: (amountOverride ?? payAmount ?? paymentData.amount) + payTip,
+      amount: (opts?.amount ?? payAmount ?? paymentData.amount) + tip,
       currency: "KES",
       metadata,
       phone,
@@ -335,8 +331,6 @@ function PayPage() {
   function reset() {
     setState("idle");
     setPaymentData(null);
-    setPin("");
-    setUseBiometric(false);
     setCustomerPhone("");
     setPayAmount(null);
     setPayTip(0);
@@ -356,13 +350,12 @@ function PayPage() {
     if (paymentData && customerPhone) {
       if (typeof overrideAmount === "number" && overrideAmount > 0) {
         setPayAmount(overrideAmount);
-        void processRealPayment(customerPhone, overrideAmount);
+        void processRealPayment(customerPhone, { amount: overrideAmount });
       } else {
         void processRealPayment(customerPhone);
       }
     } else {
       setState("scanned");
-      setPin("");
     }
   }
 
@@ -370,7 +363,6 @@ function PayPage() {
   // remaining balance and push their own share on their own number.
   function payNextShare() {
     setNextRemaining(null);
-    setPin("");
     setErrorMsg("");
     setPayAmount(null);
     setPayTip(0);
@@ -451,16 +443,7 @@ function PayPage() {
         {state === "scanned" && paymentData && (
           <ScannedState data={paymentData} onConfirm={confirmPayment} onCancel={reset} />
         )}
-        {state === "pin" && paymentData && (
-          <PinState
-            data={paymentData}
-            pin={pin}
-            setPin={setPin}
-            onSubmit={submitPin}
-            onBiometric={useBiometricAuth}
-          />
-        )}
-        {state === "processing" && <ProcessingState biometric={useBiometric} />}
+        {state === "processing" && <ProcessingState />}
         {state === "error" && (
           <ErrorState
             message={errorMsg}
@@ -1027,93 +1010,12 @@ function ScannedState({
   );
 }
 
-function PinState({
-  data,
-  pin,
-  setPin,
-  onSubmit,
-  onBiometric,
-}: {
-  data: PaymentData;
-  pin: string;
-  setPin: (v: string) => void;
-  onSubmit: () => void;
-  onBiometric: () => void;
-}) {
-  return (
-    <div className="space-y-5">
-      <div className="text-center">
-        <p className="text-sm text-muted-foreground">Paying</p>
-        <p className="text-2xl font-bold font-mono">KES {data.amount.toLocaleString()}</p>
-        <p className="text-sm text-muted-foreground">to {data.merchant}</p>
-      </div>
-
-      {/* Biometric option */}
-      <button
-        onClick={onBiometric}
-        className="w-full rounded-2xl border-2 border-foreground p-5 flex flex-col items-center gap-3 hover:bg-muted transition-colors"
-      >
-        <Fingerprint className="size-12 text-foreground" />
-        <div className="text-center">
-          <p className="text-sm font-bold">Use fingerprint</p>
-          <p className="text-[10px] text-muted-foreground">Fastest — one touch to pay</p>
-        </div>
-      </button>
-
-      <div className="flex items-center gap-3">
-        <div className="flex-1 h-px bg-border" />
-        <span className="text-[10px] font-mono uppercase text-muted-foreground">or enter PIN</span>
-        <div className="flex-1 h-px bg-border" />
-      </div>
-
-      {/* PIN dots */}
-      <div className="flex justify-center gap-3">
-        {[0, 1, 2, 3].map((i) => (
-          <div
-            key={i}
-            className={`size-4 rounded-full border-2 transition-colors ${
-              i < pin.length ? "bg-foreground border-foreground" : "border-border"
-            }`}
-          />
-        ))}
-      </div>
-
-      {/* PIN pad */}
-      <div className="grid grid-cols-3 gap-2">
-        {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"].map((key) => (
-          <button
-            key={key || "empty"}
-            disabled={!key}
-            onClick={() => {
-              if (key === "⌫") setPin(pin.slice(0, -1));
-              else if (pin.length < 4) {
-                const newPin = pin + key;
-                setPin(newPin);
-                if (newPin.length === 4) {
-                  setTimeout(onSubmit, 300);
-                }
-              }
-            }}
-            className={`py-4 rounded-xl text-xl font-mono font-bold transition-colors ${
-              key ? "bg-card border border-border hover:bg-muted active:bg-foreground active:text-background" : ""
-            }`}
-          >
-            {key}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ProcessingState({ biometric }: { biometric: boolean }) {
+function ProcessingState() {
   return (
     <div className="flex flex-col items-center justify-center py-20 space-y-4">
       <div className="size-16 rounded-full border-4 border-foreground border-t-transparent animate-spin" />
       <div className="text-center">
-        <p className="text-sm font-semibold">
-          {biometric ? "Fingerprint verified" : "Processing payment..."}
-        </p>
+        <p className="text-sm font-semibold">Processing payment...</p>
         <p className="text-[11px] text-muted-foreground mt-1">
           Confirming via PesaSwap — check your phone for M-Pesa prompt
         </p>
