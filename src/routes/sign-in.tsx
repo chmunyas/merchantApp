@@ -30,7 +30,7 @@ export const Route = createFileRoute("/sign-in")({
   component: SignInPage,
 });
 
-type View = "picker" | "login" | "otp" | "forgot" | "reset-sent";
+type View = "picker" | "login" | "otp" | "sso" | "forgot" | "reset-sent";
 
 // Google Identity Services sign-in. Renders the official button when a
 // GOOGLE_CLIENT_ID is configured; otherwise shows a disabled hint.
@@ -115,6 +115,20 @@ function SignInPage() {
   const [needTotp, setNeedTotp] = useState(false);
   const [devHint, setDevHint] = useState<string | null>(null);
   const [captcha, setCaptcha] = useState("");
+  const [ssoSlug, setSsoSlug] = useState(() =>
+    typeof window !== "undefined"
+      ? (new URLSearchParams(window.location.search).get("org") ?? "")
+      : "",
+  );
+
+  function startSso() {
+    const slug = ssoSlug.trim().toLowerCase();
+    if (!slug) {
+      setError("Enter your organization");
+      return;
+    }
+    window.location.href = `/api/auth/sso/${encodeURIComponent(slug)}/start`;
+  }
 
   // Enterprise SSO handoff: the IdP callback returns the app JWT in the URL
   // fragment (never sent to a server). Consume it, then route to the right home.
@@ -359,6 +373,64 @@ function SignInPage() {
                 </Link>
               </p>
             </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Enterprise SSO (enter organization → redirect to their IdP)
+  if (view === "sso") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 p-4">
+        <div className="w-full max-w-md">
+          <div className="rounded-2xl border bg-white p-8 shadow-xl">
+            <button
+              onClick={() => {
+                setView("picker");
+                setError("");
+              }}
+              className="mb-4 flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 transition"
+            >
+              <ArrowLeft className="h-4 w-4" /> Back
+            </button>
+            <div className="mb-6 text-center">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-900">
+                <Building2 className="h-7 w-7 text-white" />
+              </div>
+              <h1 className="text-2xl font-bold text-slate-900">
+                Company single sign-on
+              </h1>
+              <p className="mt-2 text-sm text-slate-500">
+                Enter your organization to continue to your identity provider.
+              </p>
+            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                startSso();
+              }}
+              className="space-y-4"
+            >
+              <Input
+                value={ssoSlug}
+                onChange={(e) => setSsoSlug(e.target.value)}
+                className="h-11 rounded-xl"
+                placeholder="your-organization"
+                autoFocus
+              />
+              {error && (
+                <p className="rounded-lg bg-red-50 border border-red-200 p-2 text-sm text-red-600">
+                  {error}
+                </p>
+              )}
+              <Button
+                type="submit"
+                className="h-11 w-full rounded-xl bg-slate-900 hover:bg-slate-800"
+              >
+                Continue with SSO
+              </Button>
+            </form>
           </div>
         </div>
       </div>
@@ -733,6 +805,17 @@ function SignInPage() {
           <div className="mt-3">
             <GoogleSignInButton />
           </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setError("");
+              setView("sso");
+            }}
+            className="mt-3 w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+          >
+            Sign in with company SSO
+          </button>
 
           {/* Footer */}
           <div className="mt-6 space-y-3 text-center">

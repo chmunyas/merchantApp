@@ -77,8 +77,26 @@ function ResellerPortal() {
   const [logoUrl, setLogoUrl] = useState("");
   const [savingBrand, setSavingBrand] = useState(false);
 
+  // Enterprise OIDC SSO connection for this org.
+  const [sso, setSso] = useState<{
+    issuer?: string;
+    enabled?: boolean;
+    email_domain?: string | null;
+  } | null>(null);
+  const [ssoForm, setSsoForm] = useState({
+    issuer: "",
+    clientId: "",
+    clientSecret: "",
+    authorizeUrl: "",
+    tokenUrl: "",
+    jwksUrl: "",
+    emailDomain: "",
+    defaultRole: "reseller_admin",
+  });
+  const [savingSso, setSavingSso] = useState(false);
+
   async function load() {
-    const [orgRes, merRes, anRes, invRes, ledRes] = await Promise.all([
+    const [orgRes, merRes, anRes, invRes, ledRes, ssoRes] = await Promise.all([
       authFetch("/api/org/me")
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null),
@@ -94,6 +112,9 @@ function ResellerPortal() {
       authFetch("/api/org/ledger")
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null),
+      authFetch("/api/org/sso")
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null),
     ]);
     if (orgRes?.org) {
       const o = orgRes.org as Org;
@@ -107,7 +128,41 @@ function ResellerPortal() {
     setAnalytics((anRes as OrgAnalytics) ?? null);
     setInvites((invRes?.invites as Invite[]) ?? []);
     setLedgerTotal(Number((ledRes as { total?: number })?.total ?? 0));
+    const conn = (ssoRes as { connection?: Record<string, unknown> })?.connection;
+    setSso(conn ? (conn as typeof sso) : null);
+    if (conn) {
+      setSsoForm((f) => ({
+        ...f,
+        issuer: (conn.issuer as string) ?? "",
+        clientId: (conn.client_id as string) ?? "",
+        authorizeUrl: (conn.authorize_url as string) ?? "",
+        tokenUrl: (conn.token_url as string) ?? "",
+        jwksUrl: (conn.jwks_url as string) ?? "",
+        emailDomain: (conn.email_domain as string) ?? "",
+        defaultRole: (conn.default_role as string) ?? "reseller_admin",
+      }));
+    }
     setLoading(false);
+  }
+
+  async function saveSso() {
+    setSavingSso(true);
+    try {
+      const res = await authFetch("/api/org/sso", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(ssoForm),
+      });
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as { error?: string };
+        toast.error(d.error ?? "Could not save SSO connection.");
+        return;
+      }
+      toast.success("SSO connection saved.");
+      await load();
+    } finally {
+      setSavingSso(false);
+    }
   }
 
   async function generateInvite() {
@@ -232,6 +287,7 @@ function ResellerPortal() {
   const revById = new Map(
     (analytics?.merchants ?? []).map((m) => [m.id, m] as const),
   );
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
 
   return (
     <div className="mx-auto max-w-5xl space-y-8 p-6">
@@ -439,6 +495,89 @@ function ResellerPortal() {
             No invites yet. Generate one to share a private signup link.
           </p>
         )}
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold">Enterprise SSO (OIDC)</h2>
+          {sso ? (
+            <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
+              {sso.enabled === false ? "Configured (disabled)" : "Active"}
+            </span>
+          ) : (
+            <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+              Not configured
+            </span>
+          )}
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Connect your identity provider (Okta, Entra ID, Google Workspace, Auth0…)
+          so your team signs in with corporate credentials.
+        </p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          {[
+            ["Issuer", "issuer", "https://your-idp.com"],
+            ["Client ID", "clientId", "client id"],
+            ["Client secret", "clientSecret", sso ? "•••••• (unchanged)" : "client secret"],
+            ["Authorize URL", "authorizeUrl", "https://your-idp.com/authorize"],
+            ["Token URL", "tokenUrl", "https://your-idp.com/token"],
+            ["JWKS URL", "jwksUrl", "https://your-idp.com/jwks"],
+            ["Email domain (optional)", "emailDomain", "company.com"],
+          ].map(([label, key, placeholder]) => (
+            <label key={key} className="block space-y-1 text-sm">
+              <span className="text-muted-foreground">{label}</span>
+              <Input
+                type={key === "clientSecret" ? "password" : "text"}
+                value={(ssoForm as Record<string, string>)[key]}
+                onChange={(e) =>
+                  setSsoForm((f) => ({ ...f, [key]: e.target.value }))
+                }
+                placeholder={placeholder}
+              />
+            </label>
+          ))}
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">Role for SSO users</span>
+            <select
+              value={ssoForm.defaultRole}
+              onChange={(e) =>
+                setSsoForm((f) => ({ ...f, defaultRole: e.target.value }))
+              }
+              className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm"
+            >
+              <option value="reseller_admin">Reseller admin</option>
+              <option value="manager">Manager</option>
+              <option value="staff">Staff</option>
+            </select>
+          </label>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Button onClick={saveSso} disabled={savingSso}>
+            {savingSso ? "Saving…" : sso ? "Update SSO" : "Save SSO"}
+          </Button>
+        </div>
+        <div className="mt-4 space-y-2 rounded-lg border border-border bg-muted/40 p-3 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-muted-foreground">
+              Redirect URI (register at your IdP):
+            </span>
+            <code className="break-all">{origin}/api/auth/sso/callback</code>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-muted-foreground">Staff sign-in link:</span>
+            <button
+              type="button"
+              onClick={() =>
+                void navigator.clipboard
+                  ?.writeText(`${origin}/api/auth/sso/${org.slug}/start`)
+                  .then(() => toast.success("SSO link copied"))
+              }
+              className="break-all text-left underline decoration-dotted"
+            >
+              {origin}/api/auth/sso/{org.slug}/start
+            </button>
+          </div>
+        </div>
       </section>
     </div>
   );

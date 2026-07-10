@@ -36,8 +36,10 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   **verifies the id_token (RS256 against the IdP JWKS, `src/lib/oidc.ts`)** +
   checks iss/aud/exp/nonce + email-domain, then find-or-provisions the user
   (attached to the org) and hands the SPA a session via the URL fragment
-  (`completeSso`). Config via `GET/POST /api/org/sso` (reseller-admin). Verified
-  start→IdP redirect + callback error handling on all tiers; RS256 verify
+  (`completeSso`). **Self-service**: a `/reseller` SSO settings form (GET/POST
+  `/api/org/sso`, shows the redirect + staff sign-in URLs) + a **"company SSO"
+  entry on `/sign-in`** (org slug → start). Verified start→IdP redirect + callback
+  error handling + config-save (secret never returned) on all tiers; RS256 verify
   unit-tested. **Remaining:** SAML (heavier; OIDC covers Okta/Entra/Google/Auth0).
 - ✅ **DONE (partial)** Rate limiting: **per-account** limits
   (`enforceAccountRateLimit`/`isAccountRateLimited`, `/api/copilot` 30/min,
