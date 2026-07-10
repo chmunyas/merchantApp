@@ -13,7 +13,9 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { TurnstileWidget } from "@/components/auth/TurnstileWidget";
 import {
+  completeSso,
   demoLogin,
   getDefaultRouteForRole,
   googleLogin,
@@ -112,6 +114,27 @@ function SignInPage() {
   const [totp, setTotp] = useState("");
   const [needTotp, setNeedTotp] = useState(false);
   const [devHint, setDevHint] = useState<string | null>(null);
+  const [captcha, setCaptcha] = useState("");
+
+  // Enterprise SSO handoff: the IdP callback returns the app JWT in the URL
+  // fragment (never sent to a server). Consume it, then route to the right home.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const m = window.location.hash.match(/sso_token=([^&]+)/);
+    if (m) {
+      const done = completeSso(decodeURIComponent(m[1]));
+      window.history.replaceState(null, "", window.location.pathname);
+      if (done) {
+        void navigate({ to: getDefaultRouteForRole(done.role) });
+        return;
+      }
+      toast.error("Single sign-on failed. Please try again.");
+    }
+    if (new URLSearchParams(window.location.search).get("sso_error")) {
+      toast.error("Single sign-on failed. Please try again.");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // If already signed in, redirect
   if (isSignedIn && user) {
@@ -172,7 +195,7 @@ function SignInPage() {
     }
     setError("");
     setLoading(true);
-    const r = await requestOtp("email", email.trim());
+    const r = await requestOtp("email", email.trim(), captcha || undefined);
     setLoading(false);
     if (!r.sent) {
       setError(r.error ?? "Could not send the code.");
@@ -384,6 +407,7 @@ function SignInPage() {
                   placeholder="you@business.com"
                   autoFocus
                 />
+                <TurnstileWidget onToken={setCaptcha} />
                 {error && (
                   <p className="rounded-lg bg-red-50 border border-red-200 p-2 text-sm text-red-600">
                     {error}

@@ -4,6 +4,7 @@ import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 import { handlePaymentRoute } from "./api/payments";
 import { handleAuthRoute } from "./api/auth";
+import { handleSsoRoute } from "./api/sso";
 import { withRequestSql } from "./lib/db";
 import { enforceRateLimit } from "./lib/rate-limit";
 import { resolveCorsOrigin } from "./lib/cors";
@@ -186,6 +187,10 @@ export default {
           // Handle PesaSwap API routes first
           const apiResponse = await handlePaymentRoute(request, env);
           if (apiResponse) return apiResponse;
+
+          // Enterprise OIDC SSO (before auth/org so it owns /api/auth/sso/* + /api/org/sso)
+          const ssoResponse = await handleSsoRoute(request, env);
+          if (ssoResponse) return ssoResponse;
 
           // Authentication (JWT login / verify)
           const authResponse = await handleAuthRoute(request, env);

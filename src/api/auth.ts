@@ -139,6 +139,17 @@ export async function requireRole(
   return role && roles.includes(role) ? payload : null;
 }
 
+// Mint an app JWT with the configured secret — for external login flows (SSO)
+// that provision/resolve a user out-of-band and then hand back a session.
+export async function mintToken(
+  env: unknown,
+  claims: Record<string, unknown>,
+): Promise<string | null> {
+  const cfg = await getAuthConfig(env);
+  if (!cfg) return null;
+  return signJwt(claims, cfg.secret);
+}
+
 // Passwordless provisioning: create a venue + owner app_user with NO password, so
 // an OTP-verified identity gets a full merchant account. Mirrors signup's core
 // (venue + app_users + user_venues) minus password / org / invite.
@@ -722,6 +733,11 @@ export async function handleAuthRoute(
   // Public: the Google client id for the sign-in button (null if unconfigured).
   if (path === "/api/auth/google/config" && request.method === "GET") {
     return json({ clientId: envVar(env, "GOOGLE_CLIENT_ID") ?? null });
+  }
+
+  // Public: the Turnstile site key for the CAPTCHA widget (null if unconfigured).
+  if (path === "/api/auth/turnstile/config" && request.method === "GET") {
+    return json({ siteKey: envVar(env, "TURNSTILE_SITE_KEY") ?? null });
   }
 
   // Exchange a verified Google ID token for our JWT.

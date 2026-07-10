@@ -30,11 +30,21 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   **password + TOTP** 2FA (`/api/auth/totp/{setup,enable,disable}`, RFC 6238
   `src/lib/totp.ts`, enforced on both OTP + password login), `POST /api/auth/password/set`.
   Passwordless email OTP is the default on `/sign-in`. `password_hash` is now nullable.
+- ✅ **DONE** **Enterprise OIDC SSO** — per-reseller-org connection (`db/52
+  sso_connections` + `sso_states`); `GET /api/auth/sso/:slug/start` →
+  authorization-code redirect, `GET /api/auth/sso/callback` exchanges the code +
+  **verifies the id_token (RS256 against the IdP JWKS, `src/lib/oidc.ts`)** +
+  checks iss/aud/exp/nonce + email-domain, then find-or-provisions the user
+  (attached to the org) and hands the SPA a session via the URL fragment
+  (`completeSso`). Config via `GET/POST /api/org/sso` (reseller-admin). Verified
+  start→IdP redirect + callback error handling on all tiers; RS256 verify
+  unit-tested. **Remaining:** SAML (heavier; OIDC covers Okta/Entra/Google/Auth0).
 - ✅ **DONE (partial)** Rate limiting: **per-account** limits
   (`enforceAccountRateLimit`/`isAccountRateLimited`, `/api/copilot` 30/min,
   `/api/broadcast` 6/min) + OTP request 5/hour/destination + **Turnstile CAPTCHA**
-  on signup + OTP request (`src/lib/turnstile.ts`, gated on `TURNSTILE_SECRET`).
-  **Remaining P2:** Cloudflare WAF/bot rules (dashboard config).
+  on signup + OTP request (`src/lib/turnstile.ts`, gated on `TURNSTILE_SECRET`),
+  with the client widget wired into `/sign-in` + `/get-started` (renders only when
+  `TURNSTILE_SITE_KEY` is set). **Remaining P2:** Cloudflare WAF/bot rules (dashboard config).
 - ✅ **DONE (hook)** **APM / error tracking** — `src/lib/observability.ts`
   `captureException`, wired into the server error handler; sends to Sentry when
   `SENTRY_DSN` is set (no-op otherwise). **Remaining:** uptime/alerting config.

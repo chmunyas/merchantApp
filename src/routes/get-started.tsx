@@ -15,6 +15,7 @@ import { InstallButton } from "@/components/InstallButton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { signup } from "@/lib/auth";
+import { TurnstileWidget } from "@/components/auth/TurnstileWidget";
 import { useEffect } from "react";
 import {
   ensureMerchantDemoData,
@@ -66,6 +67,7 @@ function GetStartedPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [captcha, setCaptcha] = useState("");
   const [reseller, setReseller] = useState<ResellerBrand | null>(null);
 
   // Co-branded signup: a merchant arriving via a bank's /get-started?org=<slug>
@@ -124,6 +126,7 @@ function GetStartedPage() {
       phone: phone.trim() || undefined,
       org: org || undefined,
       invite: invite || undefined,
+      turnstileToken: captcha || undefined,
     });
     if ("error" in result) {
       setError(result.error);
@@ -266,6 +269,7 @@ function GetStartedPage() {
                   className="h-11 rounded-xl border-slate-700 bg-slate-900 text-white placeholder:text-slate-500"
                 />
               </label>
+              <TurnstileWidget onToken={setCaptcha} />
               {error && <p className="text-sm text-red-400">{error}</p>}
             </div>
           </StepShell>

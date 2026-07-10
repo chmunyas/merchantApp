@@ -144,17 +144,49 @@ export async function jwtLogin(
 
 export type OtpChannel = "email" | "whatsapp" | "sms";
 
+// Complete an OIDC SSO handoff: the IdP callback redirects back with the app JWT
+// in the URL fragment. Decode its claims, store the token + user, and return the
+// role so the caller can route the user to the right home.
+export function completeSso(token: string): { role: UserRole } | null {
+  try {
+    const payloadB64 = token.split(".")[1];
+    if (!payloadB64) return null;
+    const b64 = payloadB64.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), "=");
+    const claims = JSON.parse(atob(padded)) as {
+      sub?: string;
+      role?: string;
+      name?: string;
+      venue?: string;
+    };
+    setToken(token);
+    const user: AuthUser = {
+      id: claims.sub ?? "",
+      name: claims.name ?? claims.sub ?? "",
+      email: claims.sub ?? "",
+      role: (claims.role as UserRole) ?? "reseller_admin",
+      merchantId: claims.venue,
+    };
+    if (claims.venue) applyTenant(claims.venue, claims.name ?? "");
+    writeUser(DEMO_AUTH_KEY, user);
+    return { role: user.role };
+  } catch {
+    return null;
+  }
+}
+
 // Passwordless: request a one-time code over a channel. `devCode` is returned only
 // in non-production so dev/demo can complete the flow without a live ESP/WhatsApp.
 export async function requestOtp(
   channel: OtpChannel,
   destination: string,
+  turnstileToken?: string,
 ): Promise<{ sent: boolean; devCode?: string; error?: string }> {
   try {
     const res = await fetch("/api/auth/otp/request", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ channel, destination }),
+      body: JSON.stringify({ channel, destination, turnstileToken }),
     });
     const data = (await res.json().catch(() => ({}))) as {
       sent?: boolean;
@@ -245,6 +277,7 @@ export async function signup(input: {
   phone?: string;
   org?: string;
   invite?: string;
+  turnstileToken?: string;
 }): Promise<{ user: AuthUser; venue?: string } | { error: string }> {
   try {
     const res = await fetch("/api/auth/signup", {
