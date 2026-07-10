@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import { MerchantApp } from "@/components/merchant/MerchantApp";
-import { ensureSessionToken } from "@/lib/auth";
+import { adoptLaunchToken, ensureSessionToken } from "@/lib/auth";
 
 // pesaswapApp — the MerchantApp repackaged as a standalone, installable web app.
 // Full-screen on mobile (a real PWA), centred app-card on desktop.
@@ -34,9 +34,11 @@ export const Route = createFileRoute("/pesaswapApp")({
 });
 
 function PesaSwapAppPage() {
-  // Bootstrap a scoped merchant session so in-app actions (e.g. omnichannel
-  // share via /api/share) are authenticated.
+  // Adopt a session handed off from the dashboard "Launch app" button (#token=…)
+  // so the app opens signed in as the logged-in merchant, THEN fall back to a
+  // scoped session only if there's still no token (so /api/share etc. are authed).
   useEffect(() => {
+    adoptLaunchToken();
     void ensureSessionToken("merchant");
   }, []);
 

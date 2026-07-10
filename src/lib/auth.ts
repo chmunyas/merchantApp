@@ -566,6 +566,36 @@ export async function ensureSessionToken(
   }
 }
 
+// Launch handoff: when the standalone app is opened from the dashboard with the
+// session in the URL fragment (#token=…), adopt it so an installed/standalone PWA
+// starts ALREADY SIGNED IN — even if it doesn't share storage with the tab that
+// launched it. The fragment is stripped immediately (never hits a server).
+export function adoptLaunchToken(): void {
+  if (typeof window === "undefined") return;
+  const m = window.location.hash.match(/token=([^&]+)/);
+  if (!m) return;
+  try {
+    const token = decodeURIComponent(m[1]);
+    if (token) setToken(token);
+  } catch {
+    /* ignore a malformed token */
+  }
+  window.history.replaceState(
+    null,
+    "",
+    window.location.pathname + window.location.search,
+  );
+}
+
+// A launch URL for the standalone app that carries the CURRENT session, so it
+// opens already signed in with the logged-in merchant's account.
+export function launchAppUrl(): string {
+  const token = getToken();
+  return token
+    ? `/pesaswapApp#token=${encodeURIComponent(token)}`
+    : "/pesaswapApp";
+}
+
 export function getDefaultRouteForRole(role: UserRole) {
   switch (role) {
     case "admin":
