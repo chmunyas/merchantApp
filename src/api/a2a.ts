@@ -1,5 +1,6 @@
 import { runAgent, type AgentRole } from "@/lib/agent";
 import { envVar } from "@/lib/env";
+import { verifyPeerSignature } from "@/lib/webhook-verify";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -99,7 +100,20 @@ export async function handleA2aRoute(
     // so an anonymous caller cannot self-assign a staff role via the body.
     const apiKey = envVar(env, "A2A_API_KEY") ?? envVar(env, "OMNI_API_KEY");
     const provided = request.headers.get("x-api-key") ?? "";
-    const authorized = Boolean(apiKey) && provided === apiKey;
+    // A caller earns trusted (staff) scope two ways: a shared api-key, OR a valid
+    // ROTATING SIGNED PEER TOKEN — HMAC(A2A_PEER_SECRET, `${agentId}.${ts}`) in
+    // x-agent-signature, bounded to a 5-minute window so it expires + rotates.
+    // The secret is optional (unset = api-key only), so this is back-compatible.
+    const peerSecret = envVar(env, "A2A_PEER_SECRET");
+    const signedPeer = peerSecret
+      ? await verifyPeerSignature(
+          request.headers.get("x-agent-id"),
+          request.headers.get("x-agent-timestamp"),
+          request.headers.get("x-agent-signature"),
+          peerSecret,
+        )
+      : false;
+    const authorized = (Boolean(apiKey) && provided === apiKey) || signedPeer;
 
     // Peer allowlist (hardening): when A2A_PEER_ALLOWLIST is set (comma-separated
     // agent ids), only a trusted (api-key) caller OR a listed `x-agent-id` peer may

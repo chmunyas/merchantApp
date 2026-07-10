@@ -6,9 +6,11 @@ import { handlePaymentRoute } from "./api/payments";
 import { handleAuthRoute } from "./api/auth";
 import { withRequestSql } from "./lib/db";
 import { enforceRateLimit } from "./lib/rate-limit";
+import { resolveCorsOrigin } from "./lib/cors";
 import { handleBackendRoute } from "./api/backend";
 import { handleStateRoute } from "./api/state";
 import { handleBrandingRoute } from "./api/branding";
+import { handleManifestRoute } from "./api/manifest";
 import { handleOrgRoute } from "./api/org";
 import { handleStaffRoute } from "./api/staff";
 import { handleTipsRoute } from "./api/tips";
@@ -131,7 +133,11 @@ async function normalizeCatastrophicSsrResponse(
 // upgrades, whose 101 response cannot be reconstructed without losing the
 // socket). Tighten CORS to known origins in production if served from a fixed
 // domain.
-function withSecurityHeaders(response: Response): Response {
+function withSecurityHeaders(
+  response: Response,
+  request: Request,
+  env: unknown,
+): Response {
   if (
     response.status === 101 ||
     (response as { webSocket?: unknown }).webSocket
@@ -147,6 +153,16 @@ function withSecurityHeaders(response: Response): Response {
     "max-age=31536000; includeSubDomains",
   );
   headers.set("Permissions-Policy", "geolocation=(), microphone=(), camera=(self)");
+  // Lock cross-origin access to the app's own domain(s) when configured. Only
+  // rewrites responses that already advertise CORS (an API "*"); leaves the
+  // default open behavior untouched when CORS_ALLOWED_ORIGIN is unset.
+  if (headers.has("Access-Control-Allow-Origin")) {
+    const allowed = resolveCorsOrigin(request, env);
+    if (allowed) {
+      headers.set("Access-Control-Allow-Origin", allowed);
+      if (allowed !== "*") headers.append("Vary", "Origin");
+    }
+  }
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -184,6 +200,10 @@ export default {
           // Per-tenant branding (merchant logo/colors + reseller co-brand)
           const brandingResponse = await handleBrandingRoute(request, env);
           if (brandingResponse) return brandingResponse;
+
+          // Per-merchant PWA manifest (branded installable app)
+          const manifestResponse = await handleManifestRoute(request, env);
+          if (manifestResponse) return manifestResponse;
 
           // Reseller organizations (bank white-label)
           const orgResponse = await handleOrgRoute(request, env);
@@ -353,6 +373,6 @@ export default {
         }
       },
     );
-    return withSecurityHeaders(response);
+    return withSecurityHeaders(response, request, env);
   },
 };

@@ -2,6 +2,7 @@ import { requireAuth } from "@/api/auth";
 import { runAgent } from "@/lib/agent";
 import { canSeeSensitive, runCopilotTools } from "@/lib/copilot-tools";
 import { getSql } from "@/lib/db";
+import { isAccountRateLimited } from "@/lib/rate-limit";
 import { venueFromPayload } from "@/lib/tenancy";
 
 const corsHeaders = {
@@ -112,6 +113,14 @@ export async function handleCopilotRoute(
     }
 
     const venue = venueFromPayload(payload, url);
+    // Per-account guard: the copilot runs the LLM agent on every message, so cap
+    // how fast one venue can call it (independent of IP). Replies in-shape so the
+    // chat UI shows a friendly nudge rather than an error.
+    if (await isAccountRateLimited(env, venue, "copilot", 30, 60)) {
+      return json({
+        reply: "You're sending messages very fast — give me a moment and try again.",
+      });
+    }
     const role = String((payload as { role?: string }).role ?? "staff");
     const sensitive = canSeeSensitive(role);
     const body = (await request.json().catch(() => ({}))) as {

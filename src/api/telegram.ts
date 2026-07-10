@@ -1,5 +1,6 @@
 import { getTelegramConfig } from "@/lib/channels/telegram-config";
 import { getSql } from "@/lib/db";
+import { envVar } from "@/lib/env";
 import { roleAtLeast } from "@/lib/rbac";
 import { requireAuth, venueFromPayload } from "@/api/auth";
 
@@ -99,9 +100,16 @@ export async function handleTelegramRoute(
     if (!cfg.botToken) return json({ ok: false, error: "No bot token set." });
     const webhookUrl = `${url.origin}/api/telegram/webhook`;
     try {
-      const res = await fetch(
-        `https://api.telegram.org/bot${cfg.botToken}/setWebhook?url=${encodeURIComponent(webhookUrl)}`,
-      );
+      // When TELEGRAM_WEBHOOK_SECRET is configured, register it as Telegram's
+      // secret_token so every inbound carries X-Telegram-Bot-Api-Secret-Token —
+      // which the inbound route verifies. Without this, setting the secret would
+      // (correctly) reject all inbound because Telegram never sends the header.
+      const secret = envVar(env, "TELEGRAM_WEBHOOK_SECRET");
+      const setUrl =
+        `https://api.telegram.org/bot${cfg.botToken}/setWebhook` +
+        `?url=${encodeURIComponent(webhookUrl)}` +
+        (secret ? `&secret_token=${encodeURIComponent(secret)}` : "");
+      const res = await fetch(setUrl);
       const data = (await res.json()) as { ok?: boolean; description?: string };
       return json({ ok: data.ok === true, description: data.description, webhookUrl });
     } catch {

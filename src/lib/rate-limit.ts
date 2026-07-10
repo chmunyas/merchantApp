@@ -128,3 +128,59 @@ export async function enforceRateLimit(
     },
   );
 }
+
+// Per-account (tenant) limiter for AUTHENTICATED, expensive endpoints (AI calls,
+// bulk sends), keyed by the account id (venue/org) rather than the IP — so one
+// tenant hammering an endpoint can't exhaust it for everyone, and a shared-office
+// IP isn't collectively throttled. Returns a 429 Response when over the limit,
+// else null. Honors the same DISABLE_RATE_LIMIT E2E escape hatch. Fails open.
+export async function enforceAccountRateLimit(
+  env: unknown,
+  account: string,
+  action: string,
+  limit: number,
+  windowSeconds: number,
+): Promise<Response | null> {
+  const limited = await isAccountRateLimited(
+    env,
+    account,
+    action,
+    limit,
+    windowSeconds,
+  );
+  if (!limited) return null;
+  return new Response(
+    JSON.stringify({
+      error: "This account is sending too fast. Please slow down.",
+    }),
+    {
+      status: 429,
+      headers: {
+        "content-type": "application/json",
+        "retry-after": "30",
+        "access-control-allow-origin": "*",
+      },
+    },
+  );
+}
+
+// Boolean form of the per-account limiter, for callers that render their own
+// over-limit response (e.g. the copilot chat, which must always reply in its own
+// { reply } shape). Fails open and honors the DISABLE_RATE_LIMIT escape hatch.
+export async function isAccountRateLimited(
+  env: unknown,
+  account: string,
+  action: string,
+  limit: number,
+  windowSeconds: number,
+): Promise<boolean> {
+  if (rateLimitDisabled(env)) return false;
+  if (!account) return false;
+  const result = await rateLimit(
+    env,
+    `acct:${action}:${account}`,
+    limit,
+    windowSeconds,
+  );
+  return result.limited;
+}

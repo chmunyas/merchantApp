@@ -97,7 +97,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       ],
       links: [
         { rel: "stylesheet", href: appCss },
-        { rel: "manifest", href: "/manifest.webmanifest" },
+        { rel: "manifest", href: "/api/manifest" },
         {
           rel: "icon",
           type: "image/png",
@@ -198,6 +198,28 @@ function RootComponent() {
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
   }, []);
+
+  // Brand the installable app per merchant: point the manifest at the logged-in
+  // venue so an install carries ITS name/colour/logo. Falls back to the generic
+  // manifest when no venue is known. Progressive enhancement — never blocks.
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("fxengine.merchant.currentVenue");
+      if (!raw) return;
+      let venue = raw;
+      try {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed === "string") venue = parsed;
+      } catch {
+        /* raw was a plain string */
+      }
+      if (!/^[\w-]{2,64}$/.test(venue)) return;
+      const link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
+      if (link) link.setAttribute("href", `/api/manifest?venue=${encodeURIComponent(venue)}`);
+    } catch {
+      /* ignore — keep the default manifest */
+    }
+  }, [pathname]);
 
   const isStandaloneLayout =
     pathname.startsWith("/dashboard") ||

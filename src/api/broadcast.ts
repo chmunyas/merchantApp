@@ -1,5 +1,6 @@
 import { sendBroadcast, type BroadcastParams } from "@/lib/broadcast";
 import { getSql } from "@/lib/db";
+import { enforceAccountRateLimit } from "@/lib/rate-limit";
 import { requireAuth, resolveVenue } from "@/api/auth";
 
 const corsHeaders = {
@@ -29,6 +30,11 @@ export async function handleBroadcastRoute(
     if (!(await requireAuth(request, env))) {
       return json({ error: "unauthorized" }, 401);
     }
+    // Per-account cap: a broadcast fans out to every contact in a segment, so
+    // limit how many campaigns a single venue can fire per minute (independent
+    // of IP). Prevents a runaway loop from spamming customers + burning quota.
+    const limited = await enforceAccountRateLimit(env, venue, "broadcast", 6, 60);
+    if (limited) return limited;
     const body = (await request.json()) as Partial<BroadcastParams>;
     if (!body.message?.trim()) return json({ error: "message required" }, 400);
     const result = await sendBroadcast(env, {

@@ -1,10 +1,11 @@
 import { getSql } from "@/lib/db";
+import { roleAtLeast } from "@/lib/rbac";
 import { requireAuth } from "@/api/auth";
 import { venueFromPayload } from "@/lib/tenancy";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
@@ -25,10 +26,14 @@ function serializeDispute(row: Record<string, unknown>) {
     reason: row.reason ?? null,
     connectorDisputeId: row.connector_dispute_id ?? null,
     evidenceDueBy: row.evidence_due_by ?? null,
+    evidence: row.evidence ?? null,
+    evidenceSubmittedAt: row.evidence_submitted_at ?? null,
+    resolution: row.resolution ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
+
 
 // Disputes / chargebacks + the payment webhook-event audit trail. Both are
 // venue-scoped reads (gated) — the write path is the trusted webhook in
@@ -84,12 +89,14 @@ export async function handleDisputeRoute(
     const rows = status
       ? await sql`
           SELECT id, payment_id, amount, currency, status, reason,
-                 connector_dispute_id, evidence_due_by, created_at, updated_at
+                 connector_dispute_id, evidence_due_by, evidence,
+                 evidence_submitted_at, resolution, created_at, updated_at
           FROM disputes WHERE venue_id = ${venue} AND status = ${status}
           ORDER BY created_at DESC LIMIT 200`
       : await sql`
           SELECT id, payment_id, amount, currency, status, reason,
-                 connector_dispute_id, evidence_due_by, created_at, updated_at
+                 connector_dispute_id, evidence_due_by, evidence,
+                 evidence_submitted_at, resolution, created_at, updated_at
           FROM disputes WHERE venue_id = ${venue}
           ORDER BY created_at DESC LIMIT 200`;
     const [counts] = await sql`
@@ -111,8 +118,51 @@ export async function handleDisputeRoute(
   if (idMatch && request.method === "GET") {
     const [row] = await sql`
       SELECT id, payment_id, amount, currency, status, reason,
-             connector_dispute_id, evidence_due_by, created_at, updated_at
+             connector_dispute_id, evidence_due_by, evidence,
+             evidence_submitted_at, resolution, created_at, updated_at
       FROM disputes WHERE venue_id = ${venue} AND id = ${idMatch[1]} LIMIT 1`;
+    if (!row) return json({ error: "not found" }, 404);
+    return json({ dispute: serializeDispute(row) });
+  }
+
+  // --- Response tooling (contest / concede a chargeback) — money action, so
+  // gated manager+. The provider submission itself runs when a PesaSwap key is
+  // configured; either way the merchant's response + outcome are recorded here so
+  // the dispute timeline is auditable and the agent/dashboard can act on it.
+  const evidenceMatch = path.match(/^\/api\/disputes\/([^/]+)\/evidence$/);
+  if (evidenceMatch && request.method === "POST") {
+    if (!roleAtLeast(payload, "manager")) {
+      return json({ error: "forbidden" }, 403);
+    }
+    const body = (await request.json().catch(() => ({}))) as { evidence?: string };
+    const evidence = String(body.evidence ?? "").trim();
+    if (!evidence) return json({ error: "evidence required" }, 400);
+    const [row] = await sql`
+      UPDATE disputes
+      SET evidence = ${evidence},
+          evidence_submitted_at = now(),
+          status = CASE WHEN status IN ('open') THEN 'under_review' ELSE status END,
+          updated_at = now()
+      WHERE venue_id = ${venue} AND id = ${evidenceMatch[1]}
+      RETURNING id, payment_id, amount, currency, status, reason,
+                connector_dispute_id, evidence_due_by, evidence,
+                evidence_submitted_at, resolution, created_at, updated_at`;
+    if (!row) return json({ error: "not found" }, 404);
+    return json({ dispute: serializeDispute(row) });
+  }
+
+  const acceptMatch = path.match(/^\/api\/disputes\/([^/]+)\/accept$/);
+  if (acceptMatch && request.method === "POST") {
+    if (!roleAtLeast(payload, "manager")) {
+      return json({ error: "forbidden" }, 403);
+    }
+    const [row] = await sql`
+      UPDATE disputes
+      SET status = 'accepted', resolution = 'accepted', updated_at = now()
+      WHERE venue_id = ${venue} AND id = ${acceptMatch[1]}
+      RETURNING id, payment_id, amount, currency, status, reason,
+                connector_dispute_id, evidence_due_by, evidence,
+                evidence_submitted_at, resolution, created_at, updated_at`;
     if (!row) return json({ error: "not found" }, 404);
     return json({ dispute: serializeDispute(row) });
   }

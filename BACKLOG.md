@@ -14,12 +14,19 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
 - ✅ **DONE** **Read gating** — `requireAuth` now on `/api/state`, `/api/dlq`,
   `/api/analytics/agent`, `/api/kb`, `/api/recurring`; `/api/state` + invoice
   activity client calls moved to `authFetch`. (No more unauthenticated tenant reads.)
-- **P1** **Provider webhook signatures** — verify `X-Hub-Signature-256` (WhatsApp)
-  + Telegram/Instagram/SMS; require a shared secret on
-  `/api/whatsapp/bridge/inbound` and `/api/invoicing/run` (Alert 7).
-- **P2** Tighten **CORS** from `*` to the app origin once on a fixed domain.
-- **P2** Rate limiting: per-account (not just per-IP) limits, WAF/bot rules, and a
-  CAPTCHA on signup.
+- ✅ **DONE** **Provider webhook signatures** — inbound is signature-verified per
+  channel, gated on each secret: WhatsApp + Instagram `X-Hub-Signature-256`
+  (`WHATSAPP_APP_SECRET`/`INSTAGRAM_APP_SECRET`), Telegram
+  `X-Telegram-Bot-Api-Secret-Token` (now also **registered** on `webhook/set` so
+  Telegram actually sends it), SMS/bridge shared secret. See
+  `src/lib/webhook-verify.ts`, `src/api/channels.ts`, `src/api/whatsapp.ts`.
+- ✅ **DONE** Configurable **CORS** origin — `src/lib/cors.ts` + a single rewrite in
+  `server.ts` `withSecurityHeaders`. Set `CORS_ALLOWED_ORIGIN` (single origin,
+  comma-list, or `*`) to lock cross-origin access; unset keeps the open default.
+- ✅ **DONE (partial)** Rate limiting: **per-account** limits added
+  (`enforceAccountRateLimit`/`isAccountRateLimited` in `src/lib/rate-limit.ts`;
+  applied to `/api/copilot` 30/min and `/api/broadcast` 6/min per venue).
+  **Remaining P2:** WAF/bot rules + a CAPTCHA on signup (Cloudflare/infra).
 - **P2** **APM / error tracking** (e.g. Sentry) + uptime + alerting (only basic
   `console.error` capture today).
 - **P2** **CI auto-deploy** — create a scoped API token (Workers Scripts:Edit +
@@ -43,9 +50,11 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   `disputes` (`db/41`) from the payment's `disputes[]` or a dispute event, with
   `GET /api/disputes` + `GET /api/payment-events` reads. **Settlement/payout
   reconciliation** is live (`/api/settlement/*`, batches + fees/net + GL posting).
-- **P2** Dispute / chargeback **response tooling** (submit evidence, accept) — the
-  disputes are now recorded + surfaced via API; the merchant-facing evidence-upload
-  UI + a provider "submit evidence" call remain.
+- ✅ **DONE (API)** Dispute / chargeback **response tooling** — `db/49` adds
+  `evidence`/`evidence_submitted_at`/`resolution`; `POST /api/disputes/:id/evidence`
+  (contest → `under_review`) and `POST /api/disputes/:id/accept` (concede) gated
+  manager+. **Remaining P3:** a dashboard page to drive it (the API + agent can
+  already act).
 - **P1 (external dependency)** **KE-QR interoperability — CBK-directory PSP id.**
   KE-QR codes (EMVCo MPM TLV, `src/lib/ke-qr.ts`) are structurally valid +
   CRC-verified but not yet routable by other banks until an acquiring-PSP
@@ -164,8 +173,11 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   tags `settlement_partner_id` from `organizations.pesaswap_partner_id` so a bank's
   merchants settle under its PesaSwap partner. `GET /api/org/ledger` + a
   "Commission posted" portal stat. Verified live: KES 600 (3% of 20,000) posted.
-- **P2** **Logo storage** — move inline data-URL logos (≤512KB) to Cloudflare R2 /
-  Images; **per-merchant PWA manifest + icons** for a branded installable app.
+- ✅ **DONE (per-merchant manifest)** + **P2** **Logo storage** — a dynamic
+  `GET /api/manifest?venue=|org=` (`src/api/manifest.ts`) serves each merchant a
+  branded installable app (name/colour/logo icon); `__root.tsx` points at it and
+  swaps in the logged-in venue. **Remaining:** move inline data-URL logos (≤512KB)
+  to Cloudflare R2 / Images (needs an R2 binding).
 
 ## Testing & CI
 - ✅ **DONE** **E2E job in CI** — runs the HTTP + Playwright suites against the
@@ -204,8 +216,10 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   **10DLC/TCR** registration (carrier, external) before a US outbound campaign.
 - **P2** **A2A hardening**: ✅ **peer allowlist** (`A2A_PEER_ALLOWLIST`) +
   **capability scoping** by caller (customer vs staff, returned in the response) +
-  signed intents (agent-intent). Remaining: mTLS (not available on Workers) /
-  rotating signed peer tokens.
+  signed intents (agent-intent) + ✅ **rotating signed peer tokens**
+  (`A2A_PEER_SECRET`; `x-agent-signature` = HMAC over `${agentId}.${ts}`, 5-min
+  window — grants trusted scope without a static shared key). Remaining: mTLS
+  (not available on Workers).
 - ✅ **DONE** Cross-channel **consent-to-switch** logging when moving a customer to
   a new channel — `db/48` `consent_switch_log`; `src/api/share.ts` `logConsentSwitch`
   records `(channel, from_channel, kind)` on every merchant-initiated share,

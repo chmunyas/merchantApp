@@ -15,7 +15,7 @@ vi.mock("../../src/lib/db", async (importOriginal) => {
   return { ...actual, getSql: () => h.sql };
 });
 
-import { enforceRateLimit } from "../../src/lib/rate-limit";
+import { enforceRateLimit, enforceAccountRateLimit, isAccountRateLimited } from "../../src/lib/rate-limit";
 
 function signupReq(): Request {
   return new Request("https://app.example.com/api/auth/signup", { method: "POST" });
@@ -56,5 +56,28 @@ describe("enforceRateLimit — escape hatch for E2E", () => {
       {},
     );
     expect(res).toBeNull();
+  });
+});
+
+describe("per-account rate limiting", () => {
+  it("flags an account that is over its per-tenant limit", async () => {
+    expect(await isAccountRateLimited({}, "v_1", "copilot", 30, 60)).toBe(true);
+  });
+
+  it("429s via enforceAccountRateLimit", async () => {
+    const res = await enforceAccountRateLimit({}, "v_1", "broadcast", 6, 60);
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(429);
+  });
+
+  it("bypasses when DISABLE_RATE_LIMIT is set (E2E escape hatch)", async () => {
+    expect(await isAccountRateLimited({ DISABLE_RATE_LIMIT: "1" }, "v_1", "copilot", 30, 60)).toBe(
+      false,
+    );
+    expect(await enforceAccountRateLimit({ DISABLE_RATE_LIMIT: "1" }, "v_1", "x", 1, 60)).toBeNull();
+  });
+
+  it("no-ops for a missing account id", async () => {
+    expect(await isAccountRateLimited({}, "", "copilot", 30, 60)).toBe(false);
   });
 });
