@@ -53,8 +53,9 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
 - ✅ **DONE (API)** Dispute / chargeback **response tooling** — `db/49` adds
   `evidence`/`evidence_submitted_at`/`resolution`; `POST /api/disputes/:id/evidence`
   (contest → `under_review`) and `POST /api/disputes/:id/accept` (concede) gated
-  manager+. **Remaining P3:** a dashboard page to drive it (the API + agent can
-  already act).
+  manager+ + a full **`/dashboard/disputes`** page (summary, deadline countdowns,
+  submit-evidence / accept, status lifecycle). The provider "submit evidence" API
+  call activates once a PesaSwap dispute key is configured.
 - **P1 (external dependency)** **KE-QR interoperability — CBK-directory PSP id.**
   KE-QR codes (EMVCo MPM TLV, `src/lib/ke-qr.ts`) are structurally valid +
   CRC-verified but not yet routable by other banks until an acquiring-PSP
@@ -136,9 +137,14 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   (`planLimit`/`planLimitMessage` in `src/lib/tenancy.ts`). Free-tier defaults:
   5 staff, 20 tables, 50 menu items, 25 recurring, 500 contacts. Demo/admin/pro
   tokens are uncapped; existing data is never touched.
-- **P2** A real **billing processor** (Stripe/PesaSwap subscriptions: plan purchase,
-  metering, dunning, upgrade/downgrade) + usage dashboards. Enforcement + the plan
-  claim exist; the paid upgrade flow (moving a merchant from `free` → `pro`) does not.
+- ✅ **DONE (M-Pesa billing)** Real **billing / subscriptions** on the existing
+  PesaSwap M-Pesa integration — `db/50` `subscriptions`; `src/lib/billing.ts`
+  (plan catalogue free/pro + `activateSubscription`/`downgradeToFree`);
+  `src/api/billing.ts` (`GET /api/billing`, `POST /api/billing/subscribe` → M-Pesa
+  STK, `/cancel`, `/run` dunning sweep); activation hooked into `recordLedger`
+  first-success; `POST /api/auth/refresh` re-mints the plan claim; upgrade/usage UI
+  at `/dashboard/billing`. Verified: free → pro via M-Pesa (test-mode) → plan
+  unlocked → downgrade. **Remaining:** metering-based overage billing.
 
 ## White-label & reseller (foundation shipped this session)
 - ✅ **DONE** Reseller **org layer** — `organizations` + `venues.org_id` +

@@ -241,6 +241,47 @@ export async function handleAuthRoute(
     });
   }
 
+  // Refresh the JWT from the CURRENT DB state (e.g. after a plan upgrade) without
+  // a full re-login, so a new plan claim takes effect immediately.
+  if (path === "/api/auth/refresh" && request.method === "POST") {
+    const payload = await requireAuth(request, env);
+    if (!payload) return json({ error: "unauthorized" }, 401);
+    const cfg = await getAuthConfig(env);
+    const sql = getSql(env);
+    if (!cfg || !sql) return json({ error: "auth unavailable" }, 503);
+    const email = String(payload.sub ?? "").toLowerCase();
+    const venue = (payload as { venue?: string }).venue ?? null;
+    const [u] = await sql`
+      SELECT role, name, plan, org_id, venue_id
+      FROM app_users
+      WHERE lower(email) = ${email}
+      ORDER BY (venue_id = ${venue}) DESC NULLS LAST
+      LIMIT 1`;
+    if (!u) return json({ error: "account not found" }, 404);
+    const token = await signJwt(
+      {
+        sub: email,
+        role: String(u.role ?? payload.role ?? "merchant"),
+        name: (u.name as string) ?? undefined,
+        venue: venue ?? (u.venue_id as string) ?? undefined,
+        plan: (u.plan as string) ?? "free",
+        org: (u.org_id as string) ?? undefined,
+      },
+      cfg.secret,
+    );
+    return json({
+      token,
+      user: {
+        email,
+        role: u.role,
+        name: u.name,
+        venue: venue ?? u.venue_id,
+        plan: (u.plan as string) ?? "free",
+        org: (u.org_id as string) ?? null,
+      },
+    });
+  }
+
   // Self-serve signup: creates a venue + merchant account and returns a JWT.
   if (path === "/api/auth/signup" && request.method === "POST") {
     if (truthyEnv(envVar(env, "AUTH_DISABLE_SIGNUP"))) {

@@ -8,6 +8,7 @@
 
 import { getSql } from "@/lib/db";
 import { partnerIdForVenue, postCommission } from "@/lib/commission";
+import { activateSubscription } from "@/lib/billing";
 import { requireAuth } from "@/api/auth";
 import { roleAtLeast } from "@/lib/rbac";
 import { venueFromPayload } from "@/lib/tenancy";
@@ -274,6 +275,22 @@ async function recordLedger(
       paymentId: rec.id,
       gross: Number(rec.amount),
     });
+  }
+
+  // Subscription billing: if this payment settled a plan purchase, activate/extend
+  // the venue's subscription (+ bump app_users.plan) once, on first success.
+  if (firstSuccess && rec.venue && typeof meta.subscription_plan === "string") {
+    try {
+      await activateSubscription(
+        sql,
+        rec.venue,
+        meta.subscription_plan,
+        rec.id,
+        Number(rec.amount),
+      );
+    } catch {
+      /* best-effort — never block the payment on billing activation */
+    }
   }
 
   // Accrue loyalty points to the contact identified by phone (upsert on the

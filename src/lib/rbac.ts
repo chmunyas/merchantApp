@@ -17,12 +17,14 @@ export const ROLE_RANK: Record<UserRole, number> = {
 const ROUTE_MIN_RANK: ReadonlyArray<readonly [string, number]> = [
   // Owner-only: configuration, channel API keys, staff management, billing/plan.
   ["/dashboard/settings", ROLE_RANK.merchant],
+  ["/dashboard/billing", ROLE_RANK.merchant],
   ["/dashboard/staff", ROLE_RANK.merchant],
   ["/dashboard/whatsapp", ROLE_RANK.merchant],
   ["/dashboard/telegram", ROLE_RANK.merchant],
   // Manager+: financials, catalogue/price edits, automations, analytics.
   ["/dashboard/accounting", ROLE_RANK.manager],
   ["/dashboard/settlement", ROLE_RANK.manager],
+  ["/dashboard/disputes", ROLE_RANK.manager],
   ["/dashboard/payment-methods", ROLE_RANK.manager],
   ["/dashboard/reports", ROLE_RANK.manager],
   ["/dashboard/analytics", ROLE_RANK.manager],

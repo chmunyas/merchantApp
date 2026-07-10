@@ -11,6 +11,7 @@ import { handleBackendRoute } from "./api/backend";
 import { handleStateRoute } from "./api/state";
 import { handleBrandingRoute } from "./api/branding";
 import { handleManifestRoute } from "./api/manifest";
+import { handleBillingRoute } from "./api/billing";
 import { handleOrgRoute } from "./api/org";
 import { handleStaffRoute } from "./api/staff";
 import { handleTipsRoute } from "./api/tips";
@@ -204,6 +205,10 @@ export default {
           // Per-merchant PWA manifest (branded installable app)
           const manifestResponse = await handleManifestRoute(request, env);
           if (manifestResponse) return manifestResponse;
+
+          // Subscription billing (M-Pesa-charged plan tiers)
+          const billingResponse = await handleBillingRoute(request, env);
+          if (billingResponse) return billingResponse;
 
           // Reseller organizations (bank white-label)
           const orgResponse = await handleOrgRoute(request, env);

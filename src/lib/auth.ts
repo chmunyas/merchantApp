@@ -304,6 +304,23 @@ export async function switchVenue(venue: string): Promise<boolean> {
   }
 }
 
+// Refresh the JWT from current server state (e.g. after a plan change) so a new
+// plan claim takes effect immediately, without a full re-login.
+export async function refreshToken(): Promise<{ plan?: string } | null> {
+  try {
+    const res = await authFetch("/api/auth/refresh", { method: "POST" });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      token?: string;
+      user?: { plan?: string };
+    };
+    if (data.token) setToken(data.token);
+    return { plan: data.user?.plan };
+  } catch {
+    return null;
+  }
+}
+
 // Multi-store: create a new store under the current account (becomes a member).
 export async function addStore(
   name: string,
