@@ -21,14 +21,23 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   Telegram actually sends it), SMS/bridge shared secret. See
   `src/lib/webhook-verify.ts`, `src/api/channels.ts`, `src/api/whatsapp.ts`.
 - ✅ **DONE** Configurable **CORS** origin — `src/lib/cors.ts` + a single rewrite in
-  `server.ts` `withSecurityHeaders`. Set `CORS_ALLOWED_ORIGIN` (single origin,
-  comma-list, or `*`) to lock cross-origin access; unset keeps the open default.
-- ✅ **DONE (partial)** Rate limiting: **per-account** limits added
-  (`enforceAccountRateLimit`/`isAccountRateLimited` in `src/lib/rate-limit.ts`;
-  applied to `/api/copilot` 30/min and `/api/broadcast` 6/min per venue).
-  **Remaining P2:** WAF/bot rules + a CAPTCHA on signup (Cloudflare/infra).
-- **P2** **APM / error tracking** (e.g. Sentry) + uptime + alerting (only basic
-  `console.error` capture today).
+  `server.ts` `withSecurityHeaders`. `CORS_ALLOWED_ORIGIN` is now set (wrangler
+  `[vars]`) to the app origin, so Cloudflare prod is locked to same-origin; dev
+  stays open. Verified: an unknown Origin is not reflected.
+- ✅ **DONE** **Passwordless-first auth** — email / WhatsApp / SMS **OTP** login
+  (`/api/auth/otp/{request,verify}`, `db/51 auth_otps`, hashed + attempt-capped +
+  10-min expiry), provisioning a passwordless account on first verify; optional
+  **password + TOTP** 2FA (`/api/auth/totp/{setup,enable,disable}`, RFC 6238
+  `src/lib/totp.ts`, enforced on both OTP + password login), `POST /api/auth/password/set`.
+  Passwordless email OTP is the default on `/sign-in`. `password_hash` is now nullable.
+- ✅ **DONE (partial)** Rate limiting: **per-account** limits
+  (`enforceAccountRateLimit`/`isAccountRateLimited`, `/api/copilot` 30/min,
+  `/api/broadcast` 6/min) + OTP request 5/hour/destination + **Turnstile CAPTCHA**
+  on signup + OTP request (`src/lib/turnstile.ts`, gated on `TURNSTILE_SECRET`).
+  **Remaining P2:** Cloudflare WAF/bot rules (dashboard config).
+- ✅ **DONE (hook)** **APM / error tracking** — `src/lib/observability.ts`
+  `captureException`, wired into the server error handler; sends to Sentry when
+  `SENTRY_DSN` is set (no-op otherwise). **Remaining:** uptime/alerting config.
 - **P2** **CI auto-deploy** — create a scoped API token (Workers Scripts:Edit +
   Hyperdrive:Read), set `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_DEPLOY_ENABLED=true`
   (the Global API Key isn't suitable for CI); deploys are manual from the

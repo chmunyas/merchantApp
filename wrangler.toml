@@ -27,6 +27,10 @@ AUTH_REQUIRE_LOGIN = "0"
 # links fall back to http://localhost:8080 and break for real customers/agents.
 PUBLIC_BASE_URL = "https://pesaswap-merchant-app.pesaswap.workers.dev"
 
+# Lock browser cross-origin access to the app's own origin (leave unset in dev to
+# keep "*"). Same-origin requests are unaffected; this blocks unknown web origins.
+CORS_ALLOWED_ORIGIN = "https://pesaswap-merchant-app.pesaswap.workers.dev"
+
 # Payments test mode. "1" simulates a SUCCESSFUL payment WITHOUT calling PesaSwap,
 # so the full journey (QR -> order -> pay -> success -> loyalty -> receipt portal)
 # can be tested end-to-end without live credentials. The ledger is still written

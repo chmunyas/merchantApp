@@ -106,22 +106,26 @@ function applyTenant(venue: string | null | undefined, name: string): void {
 }
 
 // Log in with email + password against the server (PBKDF2-verified), storing a
-// real JWT. Returns the user or null on failure.
+// real JWT. Returns { user } on success, { totpRequired } when a second factor is
+// needed, or {} on failure.
 export async function jwtLogin(
   email: string,
   password: string,
-): Promise<AuthUser | null> {
+  totp?: string,
+): Promise<{ user?: AuthUser; totpRequired?: boolean }> {
   try {
     const res = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, totp }),
     });
-    if (!res.ok) return null;
-    const data = (await res.json()) as {
-      token: string;
-      user: { email: string; name?: string; role?: string; venue?: string };
+    const data = (await res.json().catch(() => ({}))) as {
+      token?: string;
+      totpRequired?: boolean;
+      user?: { email: string; name?: string; role?: string; venue?: string };
     };
+    if (data.totpRequired) return { totpRequired: true };
+    if (!res.ok || !data.token || !data.user) return {};
     setToken(data.token);
     applyTenant(data.user.venue, data.user.name ?? "");
     const user: AuthUser = {
@@ -132,9 +136,74 @@ export async function jwtLogin(
       merchantId: data.user.venue,
     };
     writeUser(DEMO_AUTH_KEY, user);
-    return user;
+    return { user };
   } catch {
-    return null;
+    return {};
+  }
+}
+
+export type OtpChannel = "email" | "whatsapp" | "sms";
+
+// Passwordless: request a one-time code over a channel. `devCode` is returned only
+// in non-production so dev/demo can complete the flow without a live ESP/WhatsApp.
+export async function requestOtp(
+  channel: OtpChannel,
+  destination: string,
+): Promise<{ sent: boolean; devCode?: string; error?: string }> {
+  try {
+    const res = await fetch("/api/auth/otp/request", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ channel, destination }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      sent?: boolean;
+      devCode?: string;
+      error?: string;
+    };
+    if (!res.ok) return { sent: false, error: data.error ?? "Could not send code." };
+    return { sent: true, devCode: data.devCode };
+  } catch {
+    return { sent: false, error: "Network error. Please try again." };
+  }
+}
+
+// Passwordless: verify a code → store the JWT (provisioning the account if new).
+export async function verifyOtp(
+  channel: OtpChannel,
+  destination: string,
+  code: string,
+  opts?: { name?: string; totp?: string },
+): Promise<{ user?: AuthUser; totpRequired?: boolean; error?: string }> {
+  try {
+    const res = await fetch("/api/auth/otp/verify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ channel, destination, code, ...opts }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      token?: string;
+      totpRequired?: boolean;
+      error?: string;
+      user?: { email: string; name?: string; role?: string; venue?: string };
+    };
+    if (data.totpRequired) return { totpRequired: true };
+    if (!res.ok || !data.token || !data.user) {
+      return { error: data.error ?? "Verification failed." };
+    }
+    setToken(data.token);
+    applyTenant(data.user.venue, data.user.name ?? "");
+    const user: AuthUser = {
+      id: data.user.email,
+      name: data.user.name ?? data.user.email,
+      email: data.user.email,
+      role: (data.user.role as UserRole) ?? "merchant",
+      merchantId: data.user.venue,
+    };
+    writeUser(DEMO_AUTH_KEY, user);
+    return { user };
+  } catch {
+    return { error: "Network error. Please try again." };
   }
 }
 

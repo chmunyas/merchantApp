@@ -1,7 +1,17 @@
-import { getSql } from "@/lib/db";
+import { getAdapter } from "@/lib/channels";
+import { getSql, type Sql } from "@/lib/db";
 import { envVar } from "@/lib/env";
 import { hashPassword, signJwt, verifyJwt, verifyPassword } from "@/lib/jwt";
+import {
+  generateOtpCode,
+  hashOtp,
+  normalizeDestination,
+  timingSafeEqualHex,
+} from "@/lib/otp";
+import { rateLimit, clientIp } from "@/lib/rate-limit";
+import { generateTotpSecret, totpUri, verifyTotp } from "@/lib/totp";
 import { venueFromPayload } from "@/lib/tenancy";
+import { verifyTurnstile } from "@/lib/turnstile";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -129,6 +139,32 @@ export async function requireRole(
   return role && roles.includes(role) ? payload : null;
 }
 
+// Passwordless provisioning: create a venue + owner app_user with NO password, so
+// an OTP-verified identity gets a full merchant account. Mirrors signup's core
+// (venue + app_users + user_venues) minus password / org / invite.
+async function provisionPasswordlessMerchant(
+  sql: Sql,
+  identity: { email: string; phone?: string | null; name?: string | null },
+): Promise<{ venueId: string; userId: string; name: string }> {
+  const name = (
+    identity.name?.trim() ||
+    identity.email.split("@")[0] ||
+    "My venue"
+  ).slice(0, 60);
+  const venueId = `v_${crypto.randomUUID().slice(0, 8)}`;
+  const code = name.replace(/[^A-Za-z]/g, "").slice(0, 3).toUpperCase() || "VEN";
+  await sql`
+    INSERT INTO venues (id, name, code, active) VALUES (${venueId}, ${name}, ${code}, true)`;
+  const [created] = await sql`
+    INSERT INTO app_users (email, password_hash, name, phone, venue_id, role, plan)
+    VALUES (${identity.email}, NULL, ${name}, ${identity.phone ?? null}, ${venueId}, 'merchant', 'free')
+    RETURNING id`;
+  await sql`
+    INSERT INTO user_venues (user_id, venue_id, role)
+    VALUES (${created.id}, ${venueId}, 'merchant') ON CONFLICT DO NOTHING`;
+  return { venueId, userId: String(created.id), name };
+}
+
 export async function handleAuthRoute(
   request: Request,
   env: unknown,
@@ -140,7 +176,11 @@ export async function handleAuthRoute(
   if (path === "/api/auth/login" && request.method === "POST") {
     const cfg = await getAuthConfig(env);
     if (!cfg) return json({ error: "auth unavailable" }, 503);
-    const body = (await request.json()) as { email?: string; password?: string };
+    const body = (await request.json()) as {
+      email?: string;
+      password?: string;
+      totp?: string;
+    };
     const email = String(body.email ?? "").trim().toLowerCase();
     const password = String(body.password ?? "");
     // Platform admin (seeded in app_settings.auth).
@@ -159,12 +199,23 @@ export async function handleAuthRoute(
     if (sql) {
       try {
         const [user] = await sql`
-          SELECT email, password_hash, name, venue_id, role, plan, org_id
+          SELECT email, password_hash, name, venue_id, role, plan, org_id,
+                 totp_secret, totp_enabled
           FROM app_users WHERE lower(email) = ${email} LIMIT 1`;
         if (
           user &&
+          user.password_hash &&
           (await verifyPassword(password, String(user.password_hash)))
         ) {
+          // Optional TOTP second factor (high-assurance opt-in). When enabled the
+          // password alone is not enough — a valid authenticator code is required.
+          if (user.totp_enabled) {
+            const code = String(body.totp ?? "").trim();
+            if (!code) return json({ totpRequired: true }, 200);
+            if (!(await verifyTotp(String(user.totp_secret ?? ""), code))) {
+              return json({ error: "Invalid authenticator code." }, 401);
+            }
+          }
           const token = await signJwt(
             {
               sub: String(user.email),
@@ -282,6 +333,234 @@ export async function handleAuthRoute(
     });
   }
 
+  // ===================== Passwordless OTP (email / WhatsApp / SMS) ===========
+  // Request a one-time code, sent over the chosen channel. The account is created
+  // on first successful verify (passwordless signup). Rate-limited per destination.
+  if (path === "/api/auth/otp/request" && request.method === "POST") {
+    const cfg = await getAuthConfig(env);
+    const sql = getSql(env);
+    if (!cfg || !sql) return json({ error: "auth unavailable" }, 503);
+    const body = (await request.json().catch(() => ({}))) as {
+      channel?: string;
+      destination?: string;
+    };
+    const channel = String(body.channel ?? "email").toLowerCase();
+    if (!["email", "whatsapp", "sms"].includes(channel)) {
+      return json({ error: "unsupported channel" }, 400);
+    }
+    if (!(await verifyTurnstile(env, (body as { turnstileToken?: string }).turnstileToken, clientIp(request)))) {
+      return json({ error: "Captcha verification failed." }, 403);
+    }
+    const dest = normalizeDestination(channel, body.destination ?? "");
+    if (!dest || (channel === "email" && !dest.includes("@"))) {
+      return json({ error: "A valid destination is required." }, 400);
+    }
+    // Abuse guard: 5 codes / hour / destination.
+    const rl = await rateLimit(env, `otp:${channel}:${dest}`, 5, 3600);
+    if (rl.limited) {
+      return json({ error: "Too many codes requested. Try again later." }, 429);
+    }
+    const code = generateOtpCode();
+    const codeHash = await hashOtp(code, dest, cfg.secret);
+    const id = `otp_${crypto.randomUUID().replace(/-/g, "")}`;
+    const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    await sql`
+      INSERT INTO auth_otps (id, channel, destination, code_hash, purpose, expires_at)
+      VALUES (${id}, ${channel}, ${dest}, ${codeHash}, 'login', ${expires})`;
+    const message = `Your PesaSwap code is ${code}. It expires in 10 minutes. If you didn't request it, ignore this message.`;
+    const handle = channel === "email" ? `email:${dest}` : dest;
+    try {
+      await getAdapter(channel).send(handle, message, env, "main");
+    } catch {
+      /* delivery best-effort; the code is still valid + can be re-sent */
+    }
+    // On non-prod (no HYPERDRIVE binding) or with AUTH_OTP_DEBUG, echo the code so
+    // dev/E2E can complete the flow without a live ESP/WhatsApp. NEVER in prod.
+    const isProd = Boolean((env as { HYPERDRIVE?: unknown } | null)?.HYPERDRIVE);
+    const debug = !isProd || truthyEnv(envVar(env, "AUTH_OTP_DEBUG"));
+    console.info(`[auth] OTP ${channel}:${dest}${debug ? ` = ${code}` : ""}`);
+    return json({
+      sent: true,
+      channel,
+      destination: dest,
+      ...(debug ? { devCode: code } : {}),
+    });
+  }
+
+  // Verify a code → mint a JWT (provisioning the account passwordlessly if new).
+  if (path === "/api/auth/otp/verify" && request.method === "POST") {
+    const cfg = await getAuthConfig(env);
+    const sql = getSql(env);
+    if (!cfg || !sql) return json({ error: "auth unavailable" }, 503);
+    const body = (await request.json().catch(() => ({}))) as {
+      channel?: string;
+      destination?: string;
+      code?: string;
+      name?: string;
+      totp?: string;
+    };
+    const channel = String(body.channel ?? "email").toLowerCase();
+    const dest = normalizeDestination(channel, body.destination ?? "");
+    const code = String(body.code ?? "").trim();
+    if (!dest || !/^\d{6}$/.test(code)) return json({ error: "Invalid code." }, 400);
+
+    const [otp] = await sql`
+      SELECT id, code_hash, attempts FROM auth_otps
+      WHERE destination = ${dest} AND channel = ${channel}
+        AND consumed_at IS NULL AND expires_at > now()
+      ORDER BY created_at DESC LIMIT 1`;
+    if (!otp) return json({ error: "That code has expired. Request a new one." }, 401);
+    if (Number(otp.attempts) >= 5) {
+      await sql`UPDATE auth_otps SET consumed_at = now() WHERE id = ${otp.id}`;
+      return json({ error: "Too many attempts. Request a new code." }, 429);
+    }
+    const expected = await hashOtp(code, dest, cfg.secret);
+    if (!timingSafeEqualHex(expected, String(otp.code_hash))) {
+      await sql`UPDATE auth_otps SET attempts = attempts + 1 WHERE id = ${otp.id}`;
+      return json({ error: "Incorrect code." }, 401);
+    }
+    await sql`UPDATE auth_otps SET consumed_at = now() WHERE id = ${otp.id}`;
+
+    let user =
+      channel === "email"
+        ? (
+            await sql`
+              SELECT id, email, name, venue_id, role, plan, org_id, totp_secret, totp_enabled
+              FROM app_users WHERE lower(email) = ${dest} LIMIT 1`
+          )[0]
+        : (
+            await sql`
+              SELECT id, email, name, venue_id, role, plan, org_id, totp_secret, totp_enabled
+              FROM app_users WHERE phone = ${dest} LIMIT 1`
+          )[0];
+    if (!user) {
+      const email =
+        channel === "email"
+          ? dest
+          : `${dest.replace(/[^\d]/g, "")}@phone.pesaswap.local`;
+      const phone = channel === "email" ? null : dest;
+      const prov = await provisionPasswordlessMerchant(sql, {
+        email,
+        phone,
+        name: body.name,
+      });
+      [user] = await sql`
+        SELECT id, email, name, venue_id, role, plan, org_id, totp_secret, totp_enabled
+        FROM app_users WHERE id = ${prov.userId} LIMIT 1`;
+    }
+    if (!user) return json({ error: "Could not sign you in." }, 500);
+
+    if (user.totp_enabled) {
+      const t = String(body.totp ?? "").trim();
+      if (!t) return json({ totpRequired: true }, 200);
+      if (!(await verifyTotp(String(user.totp_secret ?? ""), t))) {
+        return json({ error: "Invalid authenticator code." }, 401);
+      }
+    }
+    const token = await signJwt(
+      {
+        sub: String(user.email),
+        role: String(user.role ?? "merchant"),
+        name: (user.name as string) ?? undefined,
+        venue: (user.venue_id as string) ?? undefined,
+        plan: (user.plan as string) ?? "free",
+        org: (user.org_id as string) ?? undefined,
+      },
+      cfg.secret,
+    );
+    return json({
+      token,
+      user: {
+        email: user.email,
+        role: user.role,
+        name: user.name,
+        venue: user.venue_id,
+        plan: (user.plan as string) ?? "free",
+        org: (user.org_id as string) ?? null,
+      },
+    });
+  }
+
+  // ===================== TOTP 2FA (opt-in high assurance) ====================
+  if (path === "/api/auth/totp/setup" && request.method === "POST") {
+    const payload = await requireAuth(request, env);
+    if (!payload) return json({ error: "unauthorized" }, 401);
+    const sql = getSql(env);
+    if (!sql) return json({ error: "auth unavailable" }, 503);
+    const email = String(payload.sub ?? "").toLowerCase();
+    const secret = generateTotpSecret();
+    await sql`UPDATE app_users SET totp_secret = ${secret} WHERE lower(email) = ${email}`;
+    return json({ secret, otpauthUrl: totpUri(secret, email) });
+  }
+
+  if (path === "/api/auth/totp/enable" && request.method === "POST") {
+    const payload = await requireAuth(request, env);
+    if (!payload) return json({ error: "unauthorized" }, 401);
+    const sql = getSql(env);
+    if (!sql) return json({ error: "auth unavailable" }, 503);
+    const email = String(payload.sub ?? "").toLowerCase();
+    const body = (await request.json().catch(() => ({}))) as { code?: string };
+    const [u] = await sql`
+      SELECT totp_secret FROM app_users WHERE lower(email) = ${email} LIMIT 1`;
+    if (!u?.totp_secret) return json({ error: "Start setup first." }, 400);
+    if (!(await verifyTotp(String(u.totp_secret), String(body.code ?? "")))) {
+      return json({ error: "Invalid code." }, 401);
+    }
+    await sql`UPDATE app_users SET totp_enabled = true WHERE lower(email) = ${email}`;
+    return json({ enabled: true });
+  }
+
+  if (path === "/api/auth/totp/disable" && request.method === "POST") {
+    const payload = await requireAuth(request, env);
+    if (!payload) return json({ error: "unauthorized" }, 401);
+    const sql = getSql(env);
+    if (!sql) return json({ error: "auth unavailable" }, 503);
+    const email = String(payload.sub ?? "").toLowerCase();
+    const body = (await request.json().catch(() => ({}))) as { code?: string };
+    const [u] = await sql`
+      SELECT totp_secret, totp_enabled FROM app_users WHERE lower(email) = ${email} LIMIT 1`;
+    if (
+      u?.totp_enabled &&
+      !(await verifyTotp(String(u.totp_secret ?? ""), String(body.code ?? "")))
+    ) {
+      return json({ error: "Invalid code." }, 401);
+    }
+    await sql`
+      UPDATE app_users SET totp_secret = NULL, totp_enabled = false
+      WHERE lower(email) = ${email}`;
+    return json({ disabled: true });
+  }
+
+  // Optionally set/replace a password (upgrade a passwordless account to one that
+  // also supports password + TOTP for enterprise/high-assurance scenarios).
+  if (path === "/api/auth/password/set" && request.method === "POST") {
+    const payload = await requireAuth(request, env);
+    if (!payload) return json({ error: "unauthorized" }, 401);
+    const sql = getSql(env);
+    if (!sql) return json({ error: "auth unavailable" }, 503);
+    const email = String(payload.sub ?? "").toLowerCase();
+    const body = (await request.json().catch(() => ({}))) as {
+      password?: string;
+      currentPassword?: string;
+    };
+    const password = String(body.password ?? "");
+    if (password.length < 8) {
+      return json({ error: "Password must be at least 8 characters." }, 400);
+    }
+    const [u] = await sql`
+      SELECT password_hash FROM app_users WHERE lower(email) = ${email} LIMIT 1`;
+    if (
+      u?.password_hash &&
+      !(await verifyPassword(String(body.currentPassword ?? ""), String(u.password_hash)))
+    ) {
+      return json({ error: "Current password is incorrect." }, 403);
+    }
+    await sql`
+      UPDATE app_users SET password_hash = ${await hashPassword(password)}
+      WHERE lower(email) = ${email}`;
+    return json({ ok: true });
+  }
+
   // Self-serve signup: creates a venue + merchant account and returns a JWT.
   if (path === "/api/auth/signup" && request.method === "POST") {
     if (truthyEnv(envVar(env, "AUTH_DISABLE_SIGNUP"))) {
@@ -309,6 +588,9 @@ export async function handleAuthRoute(
     }
     if (!businessName) {
       return json({ error: "Business name is required." }, 400);
+    }
+    if (!(await verifyTurnstile(env, (body as { turnstileToken?: string }).turnstileToken, clientIp(request)))) {
+      return json({ error: "Captcha verification failed." }, 403);
     }
     if (email === cfg.adminEmail.toLowerCase()) {
       return json({ error: "That email is reserved." }, 409);

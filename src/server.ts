@@ -7,6 +7,7 @@ import { handleAuthRoute } from "./api/auth";
 import { withRequestSql } from "./lib/db";
 import { enforceRateLimit } from "./lib/rate-limit";
 import { resolveCorsOrigin } from "./lib/cors";
+import { captureException } from "./lib/observability";
 import { handleBackendRoute } from "./api/backend";
 import { handleStateRoute } from "./api/state";
 import { handleBrandingRoute } from "./api/branding";
@@ -374,6 +375,10 @@ export default {
           return await normalizeCatastrophicSsrResponse(response);
         } catch (error) {
           console.error(error);
+          void captureException(env, error, {
+            url: new URL(request.url).pathname,
+            method: request.method,
+          });
           return brandedErrorResponse();
         }
       },

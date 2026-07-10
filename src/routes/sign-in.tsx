@@ -19,6 +19,8 @@ import {
   googleLogin,
   isDemoMode,
   jwtLogin,
+  requestOtp,
+  verifyOtp,
   useAuth,
 } from "@/lib/auth";
 
@@ -26,7 +28,7 @@ export const Route = createFileRoute("/sign-in")({
   component: SignInPage,
 });
 
-type View = "picker" | "login" | "forgot" | "reset-sent";
+type View = "picker" | "login" | "otp" | "forgot" | "reset-sent";
 
 // Google Identity Services sign-in. Renders the official button when a
 // GOOGLE_CLIENT_ID is configured; otherwise shows a disabled hint.
@@ -104,6 +106,12 @@ function SignInPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  // Passwordless OTP + optional TOTP second factor.
+  const [otpSent, setOtpSent] = useState(false);
+  const [code, setCode] = useState("");
+  const [totp, setTotp] = useState("");
+  const [needTotp, setNeedTotp] = useState(false);
+  const [devHint, setDevHint] = useState<string | null>(null);
 
   // If already signed in, redirect
   if (isSignedIn && user) {
@@ -117,7 +125,7 @@ function SignInPage() {
       return;
     }
     if (role === "admin") {
-      const user = await jwtLogin("admin@pesaswap.io", "pesaswap-admin");
+      const { user } = await jwtLogin("admin@pesaswap.io", "pesaswap-admin");
       if (user) {
         void navigate({ to: "/admin" });
         return;
@@ -131,8 +139,18 @@ function SignInPage() {
     e.preventDefault();
     setError("");
     setLoading(true);
-    // Real server-verified login (PBKDF2 + JWT).
-    const user = await jwtLogin(email, password);
+    // Real server-verified login (PBKDF2 + JWT), with optional TOTP second factor.
+    const { user, totpRequired } = await jwtLogin(
+      email,
+      password,
+      totp || undefined,
+    );
+    if (totpRequired) {
+      setNeedTotp(true);
+      setError("");
+      setLoading(false);
+      return;
+    }
     if (user) {
       void navigate({ to: getDefaultRouteForRole(user.role) });
     } else if (isDemoMode()) {
@@ -140,9 +158,49 @@ function SignInPage() {
       toast.success("Signed in (demo mode)");
       void navigate({ to: "/dashboard" });
     } else {
-      setError("Invalid email or password");
+      setError(needTotp ? "Invalid authenticator code" : "Invalid email or password");
     }
     setLoading(false);
+  }
+
+  // Passwordless (Email OTP) — the default, lowest-friction sign-in.
+  async function handleSendOtp(e: FormEvent) {
+    e.preventDefault();
+    if (!email.trim()) {
+      setError("Enter your email address");
+      return;
+    }
+    setError("");
+    setLoading(true);
+    const r = await requestOtp("email", email.trim());
+    setLoading(false);
+    if (!r.sent) {
+      setError(r.error ?? "Could not send the code.");
+      return;
+    }
+    setOtpSent(true);
+    setDevHint(r.devCode ? `Dev code: ${r.devCode}` : null);
+    toast.success("We sent a code to your email");
+  }
+
+  async function handleVerifyOtp(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    const r = await verifyOtp("email", email.trim(), code.trim(), {
+      totp: totp || undefined,
+    });
+    if (r.totpRequired) {
+      setNeedTotp(true);
+      setLoading(false);
+      return;
+    }
+    setLoading(false);
+    if (r.user) {
+      void navigate({ to: getDefaultRouteForRole(r.user.role) });
+    } else {
+      setError(r.error ?? "Verification failed.");
+    }
   }
 
   function handleForgotPassword(e: FormEvent) {
@@ -284,6 +342,131 @@ function SignInPage() {
     );
   }
 
+  // Passwordless email OTP (default sign-in)
+  if (view === "otp") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 p-4">
+        <div className="w-full max-w-md">
+          <div className="rounded-2xl border bg-white p-8 shadow-xl">
+            <button
+              onClick={() => {
+                setView("picker");
+                setOtpSent(false);
+                setCode("");
+                setNeedTotp(false);
+                setError("");
+              }}
+              className="mb-4 flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 transition"
+            >
+              <ArrowLeft className="h-4 w-4" /> Back
+            </button>
+            <div className="mb-6 text-center">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100">
+                <Mail className="h-7 w-7 text-emerald-600" />
+              </div>
+              <h1 className="text-2xl font-bold text-slate-900">
+                {otpSent ? "Enter your code" : "Sign in with email"}
+              </h1>
+              <p className="mt-2 text-sm text-slate-500">
+                {otpSent
+                  ? `We sent a 6-digit code to ${email}`
+                  : "No password needed — we'll email you a one-time code."}
+              </p>
+            </div>
+
+            {!otpSent ? (
+              <form onSubmit={handleSendOtp} className="space-y-4">
+                <Input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="h-11 rounded-xl"
+                  placeholder="you@business.com"
+                  autoFocus
+                />
+                {error && (
+                  <p className="rounded-lg bg-red-50 border border-red-200 p-2 text-sm text-red-600">
+                    {error}
+                  </p>
+                )}
+                <Button
+                  type="submit"
+                  disabled={loading}
+                  className="h-11 w-full rounded-xl bg-emerald-600 hover:bg-emerald-700"
+                >
+                  {loading ? "Sending…" : "Send me a code"}
+                </Button>
+              </form>
+            ) : (
+              <form onSubmit={handleVerifyOtp} className="space-y-4">
+                <Input
+                  inputMode="numeric"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  className="h-11 rounded-xl text-center text-lg tracking-[0.4em]"
+                  placeholder="000000"
+                  maxLength={6}
+                  autoFocus
+                />
+                {needTotp && (
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-slate-600">
+                      Authenticator code (2FA)
+                    </label>
+                    <Input
+                      inputMode="numeric"
+                      value={totp}
+                      onChange={(e) => setTotp(e.target.value)}
+                      className="h-11 rounded-xl text-center tracking-[0.3em]"
+                      placeholder="000000"
+                      maxLength={6}
+                    />
+                  </div>
+                )}
+                {devHint && (
+                  <p className="rounded-lg bg-amber-50 border border-amber-200 p-2 text-center text-xs text-amber-700">
+                    {devHint}
+                  </p>
+                )}
+                {error && (
+                  <p className="rounded-lg bg-red-50 border border-red-200 p-2 text-sm text-red-600">
+                    {error}
+                  </p>
+                )}
+                <Button
+                  type="submit"
+                  disabled={loading}
+                  className="h-11 w-full rounded-xl bg-emerald-600 hover:bg-emerald-700"
+                >
+                  {loading ? "Verifying…" : "Verify & sign in"}
+                </Button>
+                <button
+                  type="button"
+                  onClick={(e) => void handleSendOtp(e as unknown as FormEvent)}
+                  className="w-full text-xs text-slate-400 hover:text-emerald-600"
+                >
+                  Resend code
+                </button>
+              </form>
+            )}
+
+            <div className="mt-6 text-center">
+              <button
+                onClick={() => {
+                  setView("login");
+                  setError("");
+                }}
+                className="text-xs text-slate-400 hover:text-violet-600 transition"
+              >
+                Prefer a password? Sign in with a password
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // Email/password login form
   if (view === "login") {
     return (
@@ -352,6 +535,26 @@ function SignInPage() {
                   placeholder="••••••••"
                 />
               </div>
+              {needTotp && (
+                <div className="space-y-2">
+                  <label
+                    className="text-sm font-medium text-slate-700"
+                    htmlFor="login-totp"
+                  >
+                    Authenticator code (2FA)
+                  </label>
+                  <Input
+                    id="login-totp"
+                    inputMode="numeric"
+                    value={totp}
+                    onChange={(e) => setTotp(e.target.value)}
+                    className="h-11 rounded-xl text-center tracking-[0.3em]"
+                    placeholder="000000"
+                    maxLength={6}
+                    autoFocus
+                  />
+                </div>
+              )}
               {error && (
                 <p className="rounded-lg bg-red-50 border border-red-200 p-2 text-sm text-red-600">
                   {error}
@@ -487,10 +690,16 @@ function SignInPage() {
             <div className="h-px flex-1 bg-slate-200" />
           </div>
 
-          {/* Email login button */}
+          {/* Email login button (passwordless-first) */}
           <Button
             variant="outline"
-            onClick={() => setView("login")}
+            onClick={() => {
+              setOtpSent(false);
+              setCode("");
+              setNeedTotp(false);
+              setError("");
+              setView("otp");
+            }}
             className="w-full rounded-xl h-11"
           >
             <Mail className="mr-2 h-4 w-4" />
