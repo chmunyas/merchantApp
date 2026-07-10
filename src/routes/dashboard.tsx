@@ -26,6 +26,7 @@ import {
   Scale,
   ShieldAlert,
   Gem,
+  KeyRound,
   Menu,
   MessagesSquare,
   NotebookPen,
@@ -144,6 +145,7 @@ const navGroups = [
       { to: "/dashboard/telegram", label: "Telegram", icon: Send },
       { to: "/dashboard/settings", label: "Settings", icon: Settings },
       { to: "/dashboard/billing", label: "Billing", icon: Gem },
+      { to: "/dashboard/api-keys", label: "API keys", icon: KeyRound },
     ],
   },
 ] as const;

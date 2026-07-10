@@ -41,6 +41,15 @@ priority (P1 = before real go-live, P2 = soon after, P3 = nice to have). See
   entry on `/sign-in`** (org slug → start). Verified start→IdP redirect + callback
   error handling + config-save (secret never returned) on all tiers; RS256 verify
   unit-tested. **Remaining:** SAML (heavier; OIDC covers Okta/Entra/Google/Auth0).
+- ✅ **DONE** **Agent / API tokens** — scoped, revocable `pat_…` bearer credentials
+  so agents act on a user's behalf, **decoupled from the login session** (`db/53
+  api_tokens`; `src/lib/api-tokens.ts` — SHA-256-hashed, shown once, role capped at
+  manager, optional expiry). `requireAuth` resolves `pat_` tokens; `GET/POST
+  /api/tokens` + `DELETE /api/tokens/:id` (human manager+ only — a token can't mint
+  tokens); `/api/a2a` requires the `agent` scope and runs bounded by the token's
+  scopes + venue. UI at `/dashboard/api-keys` (create with one-time reveal, revoke).
+  Verified create→use→revoke on dev + prod-local + Cloudflare. **Future:** OAuth2
+  client-credentials + per-REST-endpoint scope enforcement.
 - ✅ **DONE (partial)** Rate limiting: **per-account** limits
   (`enforceAccountRateLimit`/`isAccountRateLimited`, `/api/copilot` 30/min,
   `/api/broadcast` 6/min) + OTP request 5/hour/destination + **Turnstile CAPTCHA**

@@ -1,5 +1,6 @@
 import { getAdapter } from "@/lib/channels";
 import { getSql, type Sql } from "@/lib/db";
+import { resolveApiToken } from "@/lib/api-tokens";
 import { envVar } from "@/lib/env";
 import { hashPassword, signJwt, verifyJwt, verifyPassword } from "@/lib/jwt";
 import {
@@ -86,6 +87,13 @@ export async function requireAuth(
   const header = request.headers.get("authorization") ?? "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
   if (!token) return null;
+  // Personal/agent API tokens (pat_…) resolve against the api_tokens table — a
+  // long-lived, scoped, revocable credential decoupled from the login session.
+  if (token.startsWith("pat_")) {
+    const sql = getSql(env);
+    if (!sql) return null;
+    return resolveApiToken(sql, token);
+  }
   const secret = await getAuthSecret(env);
   if (!secret) return null;
   return verifyJwt(token, secret);

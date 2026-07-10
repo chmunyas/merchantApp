@@ -69,6 +69,7 @@ import { Route as DashboardChainRouteImport } from './routes/dashboard/chain'
 import { Route as DashboardBookingsRouteImport } from './routes/dashboard/bookings'
 import { Route as DashboardBillingRouteImport } from './routes/dashboard/billing'
 import { Route as DashboardAutomationsRouteImport } from './routes/dashboard/automations'
+import { Route as DashboardApiKeysRouteImport } from './routes/dashboard/api-keys'
 import { Route as DashboardAnalyticsRouteImport } from './routes/dashboard/analytics'
 import { Route as DashboardAccountingRouteImport } from './routes/dashboard/accounting'
 import { Route as BookBusinessIdRouteImport } from './routes/book.$businessId'
@@ -377,6 +378,11 @@ const DashboardAutomationsRoute = DashboardAutomationsRouteImport.update({
   path: '/automations',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardApiKeysRoute = DashboardApiKeysRouteImport.update({
+  id: '/api-keys',
+  path: '/api-keys',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardAnalyticsRoute = DashboardAnalyticsRouteImport.update({
   id: '/analytics',
   path: '/analytics',
@@ -439,6 +445,7 @@ export interface FileRoutesByFullPath {
   '/book/$businessId': typeof BookBusinessIdRoute
   '/dashboard/accounting': typeof DashboardAccountingRoute
   '/dashboard/analytics': typeof DashboardAnalyticsRoute
+  '/dashboard/api-keys': typeof DashboardApiKeysRoute
   '/dashboard/automations': typeof DashboardAutomationsRoute
   '/dashboard/billing': typeof DashboardBillingRoute
   '/dashboard/bookings': typeof DashboardBookingsRoute
@@ -506,6 +513,7 @@ export interface FileRoutesByTo {
   '/book/$businessId': typeof BookBusinessIdRoute
   '/dashboard/accounting': typeof DashboardAccountingRoute
   '/dashboard/analytics': typeof DashboardAnalyticsRoute
+  '/dashboard/api-keys': typeof DashboardApiKeysRoute
   '/dashboard/automations': typeof DashboardAutomationsRoute
   '/dashboard/billing': typeof DashboardBillingRoute
   '/dashboard/bookings': typeof DashboardBookingsRoute
@@ -576,6 +584,7 @@ export interface FileRoutesById {
   '/book/$businessId': typeof BookBusinessIdRoute
   '/dashboard/accounting': typeof DashboardAccountingRoute
   '/dashboard/analytics': typeof DashboardAnalyticsRoute
+  '/dashboard/api-keys': typeof DashboardApiKeysRoute
   '/dashboard/automations': typeof DashboardAutomationsRoute
   '/dashboard/billing': typeof DashboardBillingRoute
   '/dashboard/bookings': typeof DashboardBookingsRoute
@@ -647,6 +656,7 @@ export interface FileRouteTypes {
     | '/book/$businessId'
     | '/dashboard/accounting'
     | '/dashboard/analytics'
+    | '/dashboard/api-keys'
     | '/dashboard/automations'
     | '/dashboard/billing'
     | '/dashboard/bookings'
@@ -714,6 +724,7 @@ export interface FileRouteTypes {
     | '/book/$businessId'
     | '/dashboard/accounting'
     | '/dashboard/analytics'
+    | '/dashboard/api-keys'
     | '/dashboard/automations'
     | '/dashboard/billing'
     | '/dashboard/bookings'
@@ -783,6 +794,7 @@ export interface FileRouteTypes {
     | '/book/$businessId'
     | '/dashboard/accounting'
     | '/dashboard/analytics'
+    | '/dashboard/api-keys'
     | '/dashboard/automations'
     | '/dashboard/billing'
     | '/dashboard/bookings'
@@ -1274,6 +1286,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardAutomationsRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/api-keys': {
+      id: '/dashboard/api-keys'
+      path: '/api-keys'
+      fullPath: '/dashboard/api-keys'
+      preLoaderRoute: typeof DashboardApiKeysRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/analytics': {
       id: '/dashboard/analytics'
       path: '/analytics'
@@ -1347,6 +1366,7 @@ const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 interface DashboardRouteChildren {
   DashboardAccountingRoute: typeof DashboardAccountingRoute
   DashboardAnalyticsRoute: typeof DashboardAnalyticsRoute
+  DashboardApiKeysRoute: typeof DashboardApiKeysRoute
   DashboardAutomationsRoute: typeof DashboardAutomationsRoute
   DashboardBillingRoute: typeof DashboardBillingRoute
   DashboardBookingsRoute: typeof DashboardBookingsRoute
@@ -1389,6 +1409,7 @@ interface DashboardRouteChildren {
 const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardAccountingRoute: DashboardAccountingRoute,
   DashboardAnalyticsRoute: DashboardAnalyticsRoute,
+  DashboardApiKeysRoute: DashboardApiKeysRoute,
   DashboardAutomationsRoute: DashboardAutomationsRoute,
   DashboardBillingRoute: DashboardBillingRoute,
   DashboardBookingsRoute: DashboardBookingsRoute,

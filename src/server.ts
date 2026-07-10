@@ -14,6 +14,7 @@ import { handleStateRoute } from "./api/state";
 import { handleBrandingRoute } from "./api/branding";
 import { handleManifestRoute } from "./api/manifest";
 import { handleBillingRoute } from "./api/billing";
+import { handleTokensRoute } from "./api/tokens";
 import { handleOrgRoute } from "./api/org";
 import { handleStaffRoute } from "./api/staff";
 import { handleTipsRoute } from "./api/tips";
@@ -215,6 +216,10 @@ export default {
           // Subscription billing (M-Pesa-charged plan tiers)
           const billingResponse = await handleBillingRoute(request, env);
           if (billingResponse) return billingResponse;
+
+          // Personal / agent API tokens (scoped, revocable)
+          const tokensResponse = await handleTokensRoute(request, env);
+          if (tokensResponse) return tokensResponse;
 
           // Reseller organizations (bank white-label)
           const orgResponse = await handleOrgRoute(request, env);

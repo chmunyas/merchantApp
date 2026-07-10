@@ -25,6 +25,7 @@ const ROUTE_MIN_RANK: ReadonlyArray<readonly [string, number]> = [
   ["/dashboard/accounting", ROLE_RANK.manager],
   ["/dashboard/settlement", ROLE_RANK.manager],
   ["/dashboard/disputes", ROLE_RANK.manager],
+  ["/dashboard/api-keys", ROLE_RANK.manager],
   ["/dashboard/payment-methods", ROLE_RANK.manager],
   ["/dashboard/reports", ROLE_RANK.manager],
   ["/dashboard/analytics", ROLE_RANK.manager],

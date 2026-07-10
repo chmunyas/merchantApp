@@ -1,6 +1,8 @@
 import { runAgent, type AgentRole } from "@/lib/agent";
 import { envVar } from "@/lib/env";
 import { verifyPeerSignature } from "@/lib/webhook-verify";
+import { tokenHasScope } from "@/lib/api-tokens";
+import { requireAuth } from "@/api/auth";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -113,7 +115,23 @@ export async function handleA2aRoute(
           peerSecret,
         )
       : false;
-    const authorized = (Boolean(apiKey) && provided === apiKey) || signedPeer;
+    // A personal/agent API token (Bearer pat_…) carrying the `agent` scope grants
+    // staff-scoped access, bound to the token's own venue. This is the primary way
+    // an agent acts on a user's behalf — scoped + revocable, separate from a login.
+    const principal = await requireAuth(request, env);
+    const tokenAgent = Boolean(
+      principal &&
+        (principal as { isApiToken?: boolean }).isApiToken &&
+        tokenHasScope(principal, "agent"),
+    );
+    const tokenVenue = tokenAgent
+      ? ((principal as { venue?: string }).venue ?? undefined)
+      : undefined;
+    const tokenScopes = tokenAgent
+      ? ((principal as { scopes?: string[] }).scopes ?? [])
+      : null;
+    const authorized =
+      (Boolean(apiKey) && provided === apiKey) || signedPeer || tokenAgent;
 
     // Peer allowlist (hardening): when A2A_PEER_ALLOWLIST is set (comma-separated
     // agent ids), only a trusted (api-key) caller OR a listed `x-agent-id` peer may
@@ -134,13 +152,14 @@ export async function handleA2aRoute(
     // the agent's own role gate); everyone else is customer-scoped.
     const role: AgentRole = authorized ? (body.role ?? "staff") : "customer";
     const scopes =
-      role === "customer"
+      tokenScopes ??
+      (role === "customer"
         ? ["get_menu", "check_availability", "create_enquiry", "checkout", "book"]
-        : ["*"];
+        : ["*"]);
     const result = await runAgent(
       message,
       {
-        venue: body.venue ?? "main",
+        venue: tokenVenue ?? body.venue ?? "main",
         role,
         from: body.from ?? "a2a",
         name: body.name,
