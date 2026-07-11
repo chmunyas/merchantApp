@@ -19,6 +19,7 @@ type ServerInvoice = {
   channel?: string | null;
   created_at?: string;
   paid_at?: string | null;
+  paid_ref?: string | null;
 };
 
 function mapStatus(s: string): Invoice["status"] {
@@ -55,6 +56,7 @@ function mapServerInvoice(r: ServerInvoice): Invoice {
     date: fmtDate(r.created_at),
     paidVia: r.channel ? String(r.channel) : undefined,
     paidAt: r.paid_at ?? undefined,
+    paidRef: r.paid_ref ?? undefined,
     customerPhone: r.phone ?? undefined,
     payments:
       paid > 0 && status !== "Paid"

@@ -1243,6 +1243,9 @@ function InvoiceDetailSheet({
         <div className="space-y-1.5 pt-2">
           {[
             ["Issue date", invoice.date],
+            ...(invoice.paidRef
+              ? [["M-Pesa REF", invoice.paidRef] as [string, string]]
+              : []),
             ["Settles to", "USD wallet"],
             [
               "FX route",

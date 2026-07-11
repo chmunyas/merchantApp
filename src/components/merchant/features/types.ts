@@ -37,6 +37,7 @@ export type Invoice = {
     nextDate: string;
   };
   lastReminder?: string;
+  paidRef?: string;
   timeline?: InvoiceTimelineEvent[];
   payments?: PartialPayment[];
   installmentPlan?: InstallmentPlan;
