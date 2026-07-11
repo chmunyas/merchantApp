@@ -1,9 +1,92 @@
 import { useEffect, useState } from "react";
 
+import { authFetch, getToken } from "@/lib/auth";
 import type { Invoice, PartialPayment } from "./types";
 import { appendTimelineEvent, timelineFor } from "./utils";
 
+// Map a server invoice row (/api/invoices, same source as the dashboard) to the
+// app's Invoice shape, so the mobile app shows EXACTLY the logged-in venue's data.
+type ServerInvoice = {
+  id?: string | number;
+  number?: string;
+  customer_name?: string;
+  phone?: string | null;
+  amount?: number;
+  amount_paid?: number;
+  currency?: string;
+  status?: string;
+  display_status?: string;
+  channel?: string | null;
+  created_at?: string;
+  paid_at?: string | null;
+};
+
+function mapStatus(s: string): Invoice["status"] {
+  const x = String(s ?? "").toLowerCase();
+  if (x === "paid" || x === "void") return "Paid";
+  if (x === "partial") return "Partial";
+  if (x === "overdue") return "Overdue";
+  return "Pending";
+}
+
+function fmtDate(iso?: string | null): string {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return "";
+  }
+}
+
+function mapServerInvoice(r: ServerInvoice): Invoice {
+  const amount = Number(r.amount) || 0;
+  const paid = Number(r.amount_paid) || 0;
+  const status = mapStatus(r.display_status ?? r.status ?? "");
+  return {
+    id: String(r.number ?? r.id ?? ""),
+    customer: String(r.customer_name ?? "Customer"),
+    amount,
+    currency: String(r.currency ?? "KES"),
+    status,
+    date: fmtDate(r.created_at),
+    paidVia: r.channel ? String(r.channel) : undefined,
+    paidAt: r.paid_at ?? undefined,
+    customerPhone: r.phone ?? undefined,
+    payments:
+      paid > 0 && status !== "Paid"
+        ? [
+            {
+              id: `PAY-${r.id ?? r.number}`,
+              amount: paid,
+              paidAt: r.paid_at ?? new Date().toISOString(),
+              paidVia: r.channel ?? "PesaSwap",
+            },
+          ]
+        : undefined,
+  };
+}
+
 const STORAGE_KEY = "fxengine.merchant.invoices";
+
+// The venue a token is bound to, if it's a REAL merchant login (v_…) — not a demo
+// session (venue "main") or a venue-less principal. Used to decide whether to load
+// live invoices or keep the showcase seed.
+function realVenueFromToken(): string | null {
+  const token = getToken();
+  if (!token) return null;
+  try {
+    const b64 = token.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/");
+    if (!b64) return null;
+    const padded = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), "=");
+    const venue = (JSON.parse(atob(padded)) as { venue?: string }).venue;
+    return venue && venue !== "main" ? venue : null;
+  } catch {
+    return null;
+  }
+}
 const seed: Invoice[] = [
   {
     id: "INV-10241",
@@ -113,8 +196,15 @@ const seed: Invoice[] = [
 ];
 
 export function useInvoices() {
+  // A real signed-in venue, OR a launch handoff (#token=), loads live invoices
+  // from the server (below). Start empty in those cases so the demo seed never
+  // flashes for a logged-in merchant; demo/anonymous sessions keep the seed.
+  const launching =
+    typeof window !== "undefined" &&
+    (Boolean(realVenueFromToken()) || window.location.hash.includes("token="));
   const [invoices, setInvoices] = useState<Invoice[]>(() => {
     if (typeof window === "undefined") return seed;
+    if (launching) return [];
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       return raw ? (JSON.parse(raw) as Invoice[]) : seed;
@@ -122,14 +212,51 @@ export function useInvoices() {
       return seed;
     }
   });
+  const [authed, setAuthed] = useState<boolean>(launching);
 
+  // Load the logged-in venue's REAL invoices (same source as the dashboard's
+  // /api/invoices), replacing the demo showcase. Re-runs on auth/venue change —
+  // including the launch handoff, which sets the token AFTER this mounts.
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    let cancelled = false;
+    async function load() {
+      if (!realVenueFromToken()) {
+        setAuthed(false);
+        return;
+      }
+      setAuthed(true);
+      try {
+        const res = await authFetch("/api/invoices");
+        if (!res.ok) return;
+        const data = (await res.json()) as { invoices?: ServerInvoice[] };
+        if (!cancelled && Array.isArray(data.invoices)) {
+          setInvoices(data.invoices.map(mapServerInvoice));
+        }
+      } catch {
+        /* keep whatever is on screen if the fetch fails */
+      }
+    }
+    void load();
+    window.addEventListener("pesaswap:auth-changed", load);
+    window.addEventListener("storage", load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("pesaswap:auth-changed", load);
+      window.removeEventListener("storage", load);
+    };
+  }, []);
+
+  // Persist ONLY anonymous/demo edits — never a real tenant's server data into the
+  // shared demo key (which would leak across accounts / into the anonymous demo).
+  useEffect(() => {
+    if (authed) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(invoices));
     } catch {
       /* ignore */
     }
-  }, [invoices]);
+  }, [invoices, authed]);
 
   return {
     invoices,

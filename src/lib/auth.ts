@@ -576,7 +576,31 @@ export function adoptLaunchToken(): void {
   if (!m) return;
   try {
     const token = decodeURIComponent(m[1]);
-    if (token) setToken(token);
+    if (token) {
+      setToken(token);
+      // Pin the tenant + user from the token's claims so the app scopes to the
+      // logged-in merchant's OWN venue (same data as the dashboard), never the
+      // shared demo venue.
+      const payloadB64 = token.split(".")[1];
+      if (payloadB64) {
+        const b64 = payloadB64.replace(/-/g, "+").replace(/_/g, "/");
+        const padded = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), "=");
+        const claims = JSON.parse(atob(padded)) as {
+          sub?: string;
+          role?: string;
+          name?: string;
+          venue?: string;
+        };
+        if (claims.venue) applyTenant(claims.venue, claims.name ?? "");
+        writeUser(DEMO_AUTH_KEY, {
+          id: claims.sub ?? "",
+          name: claims.name ?? claims.sub ?? "",
+          email: claims.sub ?? "",
+          role: (claims.role as UserRole) ?? "merchant",
+          merchantId: claims.venue,
+        });
+      }
+    }
   } catch {
     /* ignore a malformed token */
   }

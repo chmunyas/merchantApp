@@ -188,6 +188,7 @@ export function MerchantApp({
       <div className="flex-1 overflow-y-auto pb-24">
         {tab === "home" && (
           <HomeView
+            merchantName={merchantName}
             invoices={ledger.invoices}
             onOpen={setShowInvoice}
             onNew={() => setTab("invoice")}
@@ -335,11 +336,13 @@ export function MerchantApp({
 }
 
 function HomeView({
+  merchantName,
   invoices,
   onOpen,
   onNew,
   onScan,
 }: {
+  merchantName: string;
   invoices: Invoice[];
   onOpen: (i: Invoice) => void;
   onNew: () => void;
@@ -354,14 +357,22 @@ function HomeView({
     partial: invoices.filter((i) => i.status === "Partial").length,
     overdue: invoices.filter((i) => i.status === "Overdue").length,
   };
-  const currencyTotals = ["USD", "EUR", "GBP", "KES", "NGN"].map(
-    (currency) => ({
-      currency,
-      total: invoices
-        .filter((i) => i.status !== "Paid" && i.currency === currency)
-        .reduce((sum, i) => sum + i.amount, 0),
-    }),
+  // Currencies actually present in the ledger (real data is typically KES).
+  const presentCurrencies = Array.from(
+    new Set(invoices.map((i) => i.currency).filter(Boolean)),
   );
+  const currencyList = (
+    presentCurrencies.length > 0
+      ? presentCurrencies
+      : ["USD", "EUR", "GBP", "KES", "NGN"]
+  ).slice(0, 5);
+  const primaryCurrency = presentCurrencies[0] ?? "KES";
+  const currencyTotals = currencyList.map((currency) => ({
+    currency,
+    total: invoices
+      .filter((i) => i.status !== "Paid" && i.currency === currency)
+      .reduce((sum, i) => sum + i.amount, 0),
+  }));
   const maxCurrencyTotal = Math.max(
     ...currencyTotals.map((item) => item.total),
     1,
@@ -374,7 +385,7 @@ function HomeView({
           <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
             Merchant
           </p>
-          <h1 className="text-lg font-bold">Sade's Atelier</h1>
+          <h1 className="text-lg font-bold">{merchantName}</h1>
         </div>
         <button className="size-9 rounded-full bg-muted flex items-center justify-center">
           <Bell className="size-4" />
@@ -388,7 +399,7 @@ function HomeView({
             Outstanding receivables
           </p>
           <p className="text-3xl font-bold font-mono mt-1">
-            ${outstanding.toLocaleString()}.00
+            {primaryCurrency} {outstanding.toLocaleString()}
           </p>
         </div>
         <div className="grid grid-cols-3 gap-2 text-center pt-2 border-t border-background/10">
