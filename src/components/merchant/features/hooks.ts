@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { authFetch, getToken } from "@/lib/auth";
 import type { Invoice, PartialPayment } from "./types";
@@ -47,6 +47,7 @@ function mapServerInvoice(r: ServerInvoice): Invoice {
   const status = mapStatus(r.display_status ?? r.status ?? "");
   return {
     id: String(r.number ?? r.id ?? ""),
+    serverId: r.id != null ? String(r.id) : undefined,
     customer: String(r.customer_name ?? "Customer"),
     amount,
     currency: String(r.currency ?? "KES"),
@@ -214,38 +215,38 @@ export function useInvoices() {
   });
   const [authed, setAuthed] = useState<boolean>(launching);
 
-  // Load the logged-in venue's REAL invoices (same source as the dashboard's
-  // /api/invoices), replacing the demo showcase. Re-runs on auth/venue change —
-  // including the launch handoff, which sets the token AFTER this mounts.
+  // Pull the venue's live invoices from the server (the SAME source the dashboard
+  // uses) so both surfaces always agree. No-op for demo/anonymous sessions.
+  const refetch = useCallback(async () => {
+    if (!realVenueFromToken()) return;
+    try {
+      const res = await authFetch("/api/invoices");
+      if (!res.ok) return;
+      const data = (await res.json()) as { invoices?: ServerInvoice[] };
+      if (Array.isArray(data.invoices)) {
+        setInvoices(data.invoices.map(mapServerInvoice));
+      }
+    } catch {
+      /* keep whatever is on screen if the fetch fails */
+    }
+  }, []);
+
+  // Load real invoices on mount + whenever auth/venue changes — including the
+  // launch handoff, which sets the token AFTER this hook mounts.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    let cancelled = false;
-    async function load() {
-      if (!realVenueFromToken()) {
-        setAuthed(false);
-        return;
-      }
-      setAuthed(true);
-      try {
-        const res = await authFetch("/api/invoices");
-        if (!res.ok) return;
-        const data = (await res.json()) as { invoices?: ServerInvoice[] };
-        if (!cancelled && Array.isArray(data.invoices)) {
-          setInvoices(data.invoices.map(mapServerInvoice));
-        }
-      } catch {
-        /* keep whatever is on screen if the fetch fails */
-      }
-    }
-    void load();
-    window.addEventListener("pesaswap:auth-changed", load);
-    window.addEventListener("storage", load);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("pesaswap:auth-changed", load);
-      window.removeEventListener("storage", load);
+    const sync = () => {
+      setAuthed(Boolean(realVenueFromToken()));
+      void refetch();
     };
-  }, []);
+    sync();
+    window.addEventListener("pesaswap:auth-changed", sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener("pesaswap:auth-changed", sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, [refetch]);
 
   // Persist ONLY anonymous/demo edits — never a real tenant's server data into the
   // shared demo key (which would leak across accounts / into the anonymous demo).
@@ -260,8 +261,44 @@ export function useInvoices() {
 
   return {
     invoices,
-    add: (inv: Invoice) => setInvoices((prev) => [inv, ...prev]),
-    markPaid: (id: string, via = "PesaSwap") =>
+    refetch,
+    add: async (inv: Invoice) => {
+      // A real venue persists to the server (same create the dashboard uses), so
+      // the new invoice shows up on BOTH surfaces. Demo sessions stay local.
+      if (realVenueFromToken()) {
+        try {
+          await authFetch("/api/invoices", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              customerName: inv.customer,
+              amount: inv.amount,
+              phone: inv.customerPhone,
+              notes: inv.note,
+            }),
+          });
+          await refetch();
+        } catch {
+          /* ignore — the list will re-sync on next load */
+        }
+        return;
+      }
+      setInvoices((prev) => [inv, ...prev]);
+    },
+    markPaid: async (id: string, via = "PesaSwap") => {
+      const target = invoices.find((i) => i.id === id);
+      if (realVenueFromToken() && target?.serverId) {
+        try {
+          await authFetch(
+            `/api/invoices/${encodeURIComponent(target.serverId)}/paid`,
+            { method: "POST" },
+          );
+          await refetch();
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
       setInvoices((prev) =>
         prev.map((i) =>
           i.id === id
@@ -289,12 +326,30 @@ export function useInvoices() {
               })()
             : i,
         ),
-      ),
+      );
+    },
     update: (id: string, patch: Partial<Invoice>) =>
       setInvoices((prev) =>
         prev.map((i) => (i.id === id ? { ...i, ...patch } : i)),
       ),
-    recordPayment: (id: string, paymentAmount: number, via = "PesaSwap") =>
+    recordPayment: async (id: string, paymentAmount: number, via = "PesaSwap") => {
+      const target = invoices.find((i) => i.id === id);
+      if (realVenueFromToken() && target?.serverId) {
+        try {
+          await authFetch(
+            `/api/invoices/${encodeURIComponent(target.serverId)}/pay`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ amount: paymentAmount }),
+            },
+          );
+          await refetch();
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
       setInvoices((prev) =>
         prev.map((i) => {
           if (i.id !== id) return i;
@@ -346,7 +401,8 @@ export function useInvoices() {
             }),
           };
         }),
-      ),
+      );
+    },
     reset: () => setInvoices(seed),
   };
 }

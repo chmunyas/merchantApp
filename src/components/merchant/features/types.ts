@@ -43,6 +43,9 @@ export type Invoice = {
   fxLock?: FxLock;
   deliveryChannel?: "email" | "whatsapp" | "sms" | "link";
   customerPhone?: string;
+  // The server (DB) id, when this invoice is a real, persisted record — used to
+  // drive server mutations (pay / mark-paid). Absent for demo/seed invoices.
+  serverId?: string;
 };
 
 export type FxLock = {

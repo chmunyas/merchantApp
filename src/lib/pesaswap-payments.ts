@@ -48,6 +48,7 @@ export type PaymentContext = {
 export type PaymentMetadata = {
   // Identity
   merchant_id?: string;
+  venue?: string;
   merchant_name: string;
   till_number: string;
 
@@ -170,6 +171,7 @@ export function buildPaymentMetadata(params: {
 
   return {
     merchant_id: merchant.id,
+    venue: merchant.id,
     merchant_name: merchant.name,
     till_number: merchant.till,
     flow_type: flow,

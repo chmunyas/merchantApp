@@ -9,6 +9,7 @@ import {
 import { authFetch } from "@/lib/auth";
 import { PaymentQr } from "@/components/pay/PaymentQr";
 import { useMerchantIdentity } from "@/lib/use-merchant-identity";
+import { getCurrentVenueId } from "@/lib/merchant-dashboard";
 import { OmniShare } from "../OmniShare";
 import type { TapGoTransaction } from "./types";
 
@@ -26,7 +27,7 @@ export function TapGoPOS() {
 
   const payUrl =
     typeof window !== "undefined"
-      ? `${window.location.origin}/pay?tapgo=${encodeURIComponent(btoa(JSON.stringify({ till: TILL_NUMBER, amount: Number(amount), merchant: MERCHANT_NAME })))}`
+      ? `${window.location.origin}/pay?tapgo=${encodeURIComponent(btoa(JSON.stringify({ till: TILL_NUMBER, amount: Number(amount), merchant: MERCHANT_NAME, venue: getCurrentVenueId() })))}`
       : "";
 
   function initiatePayment() {
@@ -50,7 +51,7 @@ export function TapGoPOS() {
     try {
       // Create a real payment intent via PesaSwap backend
       const metadata = buildPaymentMetadata({
-        merchant: { name: MERCHANT_NAME, till: TILL_NUMBER },
+        merchant: { name: MERCHANT_NAME, till: TILL_NUMBER, id: getCurrentVenueId() },
         flow: "tapgo",
         customer: { phone: phone || "0722000000" },
       });
