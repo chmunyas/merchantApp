@@ -239,6 +239,7 @@ async function recordLedger(
                 rec.venue,
                 String(inv.id),
                 Math.round(Number(rec.amount) / 100),
+                rec.providerRef ?? null,
               );
             } else {
               await postPaymentEntry(sql, {
@@ -1311,6 +1312,7 @@ async function handleListPayments(
           customerPhone: (meta.customer_phone as string) || null,
           customerName: (meta.customer_name as string) || null,
           flowType: (meta.flow_type as string) || null,
+          invoiceNumber: (meta.invoice_number as string) || null,
           errorMessage: (meta.error_message as string) || null,
           // Refund context: how much has been refunded on this payment (minor
           // units), and — for a refund row — which payment it reverses + why.
@@ -1479,6 +1481,7 @@ async function handleGetPaymentStatus(
           amount: p.amount,
           currency: p.currency,
           metadata: meta,
+          provider_ref: (p.connector_transaction_id as string) || null,
           error_message: p.error_message ?? undefined,
         });
       }

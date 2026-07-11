@@ -41,6 +41,7 @@ type LivePayment = {
   customerPhone: string | null;
   customerName: string | null;
   flowType: string | null;
+  invoiceNumber: string | null;
   errorMessage: string | null;
   refundedAmount: number; // minor units refunded on this payment
   refundOf: string | null; // for a refund row: the payment it reverses
@@ -978,6 +979,9 @@ function PaymentDetailModal({
       ? ([["Reason", payment.errorMessage]] as Array<[string, string]>)
       : []),
     ["M-Pesa receipt (REF)", payment.providerRef || "—"],
+    ...(payment.invoiceNumber
+      ? ([["Invoice", payment.invoiceNumber]] as Array<[string, string]>)
+      : []),
     ...(payment.refundedAmount > 0
       ? ([
           [

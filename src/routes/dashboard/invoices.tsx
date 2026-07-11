@@ -52,6 +52,7 @@ type Invoice = {
   due_date: string | null;
   amount_paid: string | number;
   balance: string | number;
+  paid_ref?: string | null;
   reminder_count: number;
   created_at: string;
 };
@@ -549,6 +550,7 @@ function InvoicesPage() {
                           {invoice.reminder_count > 0
                             ? ` · ${invoice.reminder_count} reminder(s)`
                             : ""}
+                          {invoice.paid_ref ? ` · REF ${invoice.paid_ref}` : ""}
                         </p>
                       </div>
                     </div>

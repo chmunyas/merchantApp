@@ -8,12 +8,15 @@ type Sql = NonNullable<ReturnType<typeof getSql>>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = Record<string, any>;
 
-// Record a (partial or full) payment against an invoice.
+// Record a (partial or full) payment against an invoice. `ref` is the settling
+// payment reference (e.g. the M-Pesa receipt) — stored on the invoice so the
+// same reference is visible to the customer and the merchant/staff.
 export async function recordPayment(
   env: unknown,
   venue: string,
   invoiceId: string,
   amount: number,
+  ref?: string | null,
 ): Promise<Record<string, unknown>> {
   const sql = getSql(env);
   if (!sql) return { error: "database not configured" };
@@ -25,13 +28,16 @@ export async function recordPayment(
   const total = Number(invoice.amount);
   const newPaid = Number(invoice.amount_paid) + Number(amount);
   const paid = newPaid >= total;
+  const settleRef = ref && ref.trim() ? ref.trim() : null;
   if (paid) {
     await sql`
-      UPDATE invoices SET amount_paid = ${newPaid}, status = 'paid', paid_at = now()
+      UPDATE invoices SET amount_paid = ${newPaid}, status = 'paid', paid_at = now(),
+        paid_ref = COALESCE(${settleRef}, paid_ref)
       WHERE id = ${invoiceId}`;
   } else {
     await sql`
-      UPDATE invoices SET amount_paid = ${newPaid}, status = 'partial'
+      UPDATE invoices SET amount_paid = ${newPaid}, status = 'partial',
+        paid_ref = COALESCE(${settleRef}, paid_ref)
       WHERE id = ${invoiceId}`;
   }
   await logInvoiceEvent(
@@ -39,7 +45,9 @@ export async function recordPayment(
     venue,
     invoiceId,
     paid ? "paid" : "payment",
-    `Payment ${invoice.currency} ${Number(amount).toLocaleString()}`,
+    `Payment ${invoice.currency} ${Number(amount).toLocaleString()}${
+      settleRef ? ` · REF ${settleRef}` : ""
+    }`,
     { amount },
   );
   // Settle the receivable in the general ledger (Dr Cash, Cr A/R). Idempotent

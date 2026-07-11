@@ -44,6 +44,7 @@ export async function handleInvoiceRoute(
     if (!number) return json({ error: "number required" }, 400);
     const [inv] = await sql`
       SELECT i.number, i.amount, i.amount_paid, i.currency, i.status, i.staff_id,
+             i.venue_id, i.paid_ref,
              v.name AS merchant, vb.logo_url, vb.primary_color,
              o.name AS org_name, o.branding AS org_branding
       FROM invoices i
@@ -60,6 +61,8 @@ export async function handleInvoiceRoute(
       merchant: inv.merchant ?? "PesaSwap",
       currency: inv.currency,
       status: inv.status,
+      venue: inv.venue_id ?? null,
+      paidRef: inv.paid_ref ?? null,
       logoUrl: inv.logo_url ?? null,
       primaryColor: inv.primary_color ?? null,
       poweredBy: inv.org_name

@@ -61,6 +61,7 @@ type PaymentData = {
   venue?: string | null;
   orderId?: string | null;
   invoiceNumber?: string | null;
+  paidRef?: string | null;
   payLinkId?: string | null;
   phone?: string | null;
   total?: number | null;
@@ -145,7 +146,9 @@ function PayPage() {
         logoUrl: data.logoUrl ?? null,
         poweredBy: data.poweredBy ?? null,
         staffId: data.staffId ?? null,
+        venue: data.venue ?? null,
         invoiceNumber: number,
+        paidRef: data.paidRef ?? null,
       });
       if (data.status === "paid") {
         setState("success");
@@ -262,7 +265,7 @@ function PayPage() {
 
     const metadata = buildPaymentMetadata({
       merchant: { name: paymentData.merchant, till: paymentData.till },
-      flow: "tapgo",
+      flow: paymentData.invoiceNumber ? "invoice" : "tapgo",
       customer: { phone },
     });
     // Attribute the payment + tip to the serving staff: the invoice creator, or the
@@ -319,6 +322,26 @@ function PayPage() {
           }
         } catch {
           /* balance refresh is a bonus — never block the receipt */
+        }
+      }
+      // Invoice payments: the server settles the invoice and stores the M-Pesa
+      // receipt (REF) during payment confirmation. Re-fetch the invoice so the
+      // same reference shows on the customer's receipt as on the merchant's.
+      if (paymentData.invoiceNumber) {
+        try {
+          const res = await fetch(
+            `/api/invoices/payinfo?number=${encodeURIComponent(paymentData.invoiceNumber)}`,
+          );
+          if (res.ok) {
+            const d = (await res.json()) as { paidRef?: string | null };
+            if (d.paidRef) {
+              setPaymentData((prev) =>
+                prev ? { ...prev, paidRef: d.paidRef } : prev,
+              );
+            }
+          }
+        } catch {
+          /* the receipt REF is a bonus — never block the receipt */
         }
       }
       setState("success");
@@ -1241,7 +1264,9 @@ function SuccessState({
         {(
           [
             ["Merchant", data.merchant],
-            ["Till", data.till],
+            ...(data.invoiceNumber
+              ? ([["Invoice", data.invoiceNumber]] as Array<[string, string]>)
+              : ([["Till", data.till]] as Array<[string, string]>)),
             ...(tip > 0
               ? ([
                   ["Bill", `KES ${(amountPaid - tip).toLocaleString()}`],
@@ -1251,6 +1276,9 @@ function SuccessState({
             ["Amount paid", `KES ${amountPaid.toLocaleString()}`],
             ["Phone", phone ? `${phone.slice(0, 4)}***${phone.slice(-3)}` : "—"],
             ["Method", "M-Pesa via PesaSwap"],
+            ...(data.paidRef
+              ? ([["M-Pesa REF", data.paidRef]] as Array<[string, string]>)
+              : []),
             ["Time", new Date().toLocaleTimeString()],
             [
               "Reference",

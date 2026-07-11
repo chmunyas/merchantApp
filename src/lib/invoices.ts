@@ -175,6 +175,7 @@ export async function listInvoices(sql: Sql, venue: string) {
     SELECT id, number, customer_name, phone, amount, currency, description,
            status, channel, pay_link, due_date, subtotal, tax_rate, tax_amount,
            amount_paid, line_items, reminder_count, recurring_id, created_at, paid_at,
+           paid_ref,
            (amount - amount_paid) AS balance,
            CASE
              WHEN status IN ('paid','void') THEN status
