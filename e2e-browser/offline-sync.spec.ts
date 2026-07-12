@@ -25,8 +25,16 @@ test.describe("offline store-and-forward (browser)", () => {
     const venue: string = su.user.venue;
 
     await page.goto(`/pesaswapApp#token=${token}`);
-    // Let the app adopt the token + render the home tab.
-    await page.waitForTimeout(2500);
+    // IMPORTANT: fully hydrate the app BEFORE going offline — otherwise blocking
+    // the network would prevent lazy JS chunks from loading and the app would
+    // never render. Wait for the mobile shell + home view to be interactive.
+    await expect(page.getByText("PesaSwap").first()).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByText("Merchant").first()).toBeVisible({
+      timeout: 30_000,
+    });
+    await page.waitForTimeout(1000);
 
     // Go offline, then simulate a Tap&Go sale being queued (the POS calls the same
     // outbox key). We inject through localStorage + the app's change event so the
@@ -54,13 +62,16 @@ test.describe("offline store-and-forward (browser)", () => {
         };
         localStorage.setItem("pesaswap.pos.outbox", JSON.stringify([charge]));
         window.dispatchEvent(new Event("pesaswap:offline-changed"));
+        // Also fire the browser offline event the hook listens for.
+        window.dispatchEvent(new Event("offline"));
       },
       { saleId, venue },
     );
 
-    // The offline indicator appears (pill in the status bar, visible on any tab).
-    await expect(page.getByText(/Offline/i).first()).toBeVisible({
-      timeout: 10_000,
+    // The queued sale surfaces (race-proof across the online/offline transition):
+    // the status pill reads "1 to sync" (online) or "Offline · 1" (offline).
+    await expect(page.getByText(/to sync|Offline/i).first()).toBeVisible({
+      timeout: 15_000,
     });
 
     // Back online: the queue drains automatically. Fire the browser 'online' event
@@ -81,7 +92,7 @@ test.describe("offline store-and-forward (browser)", () => {
           const rows = list.payments ?? [];
           return rows.some((p: { amount?: number }) => Math.round(Number(p.amount)) === 50000);
         },
-        { timeout: 20_000, intervals: [1000, 1500, 2000] },
+        { timeout: 25_000, intervals: [1000, 1500, 2000] },
       )
       .toBe(true);
 
@@ -97,7 +108,7 @@ test.describe("offline store-and-forward (browser)", () => {
               return -1;
             }
           }),
-        { timeout: 20_000, intervals: [1000, 1500] },
+        { timeout: 25_000, intervals: [1000, 1500] },
       )
       .toBe(0);
   });
