@@ -57,6 +57,7 @@ import { handlePromoRoute } from "./api/promo";
 import { handlePaymentMethodsAdminRoute } from "./api/payment-methods-admin";
 import { handlePayLinkRoute } from "./api/pay-links";
 import { handleFeesRoute } from "./api/fees";
+import { handleOpenApiRoute } from "./api/openapi";
 
 type ServerEntry = {
   fetch: (
@@ -178,11 +179,23 @@ function withSecurityHeaders(
   });
 }
 
+// /api/v1/* is a stable, versioned alias for /api/*, so third-party integrations
+// can pin a version. Rewritten once, up front, so every handler serves both.
+function rewriteApiVersion(request: Request): Request {
+  const url = new URL(request.url);
+  if (url.pathname.startsWith("/api/v1/")) {
+    url.pathname = "/api/" + url.pathname.slice("/api/v1/".length);
+    return new Request(url.toString(), request);
+  }
+  return request;
+}
+
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     // A correlation id threaded through logs, error reports and the response
     // header, so a single request can be traced end-to-end.
     const requestId = crypto.randomUUID();
+    request = rewriteApiVersion(request);
     const response = await withRequestSql(
       env,
       ctx as { waitUntil?: (promise: Promise<unknown>) => void },
@@ -191,6 +204,10 @@ export default {
           // Abuse protection: rate-limit sensitive public endpoints first.
           const limited = await enforceRateLimit(request, env);
           if (limited) return limited;
+
+          // Public API contract: OpenAPI spec + Swagger UI docs.
+          const openApiResponse = handleOpenApiRoute(request);
+          if (openApiResponse) return openApiResponse;
 
           // Handle PesaSwap API routes first
           const apiResponse = await handlePaymentRoute(request, env);
