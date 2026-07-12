@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { MerchantApp } from "@/components/merchant/MerchantApp";
 import { adoptLaunchToken, ensureSessionToken } from "@/lib/auth";
@@ -35,10 +35,18 @@ export const Route = createFileRoute("/pesaswapApp")({
 
 function PesaSwapAppPage() {
   // Adopt a session handed off from the dashboard "Launch app" button (#token=…)
-  // so the app opens signed in as the logged-in merchant, THEN fall back to a
-  // scoped session only if there's still no token (so /api/share etc. are authed).
+  // SYNCHRONOUSLY, before MerchantApp reads the venue — a lazy useState initializer
+  // runs during THIS render, before the child renders. This guarantees the app
+  // paints the logged-in merchant's OWN venue on the first frame instead of
+  // briefly (or, on a slow client, persistently) showing the shared demo venue
+  // while a post-render effect races to adopt. Idempotent + client-only.
+  useState(() => {
+    if (typeof window !== "undefined") adoptLaunchToken();
+    return null;
+  });
+  // Then fall back to a scoped session only if there's still no token (so
+  // /api/share etc. are authed). ensureSessionToken no-ops when a token exists.
   useEffect(() => {
-    adoptLaunchToken();
     void ensureSessionToken("merchant");
   }, []);
 
