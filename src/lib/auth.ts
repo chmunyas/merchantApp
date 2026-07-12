@@ -377,14 +377,63 @@ export async function staffSwitchVenue(venue: string): Promise<boolean> {
 }
 
 // fetch() that attaches the JWT — use for protected admin/config calls.
-export function authFetch(
+// Cross-surface cache coherence: announce that server data changed so cached
+// reads (the dashboard's React Query) revalidate. Fires a same-tab window event
+// and a cross-tab BroadcastChannel message (one shared instance never echoes its
+// own posts). A DataSyncBridge in the root subscribes and invalidates queries.
+let dataChannel: BroadcastChannel | null = null;
+function getDataChannel(): BroadcastChannel | null {
+  if (typeof window === "undefined" || typeof BroadcastChannel === "undefined") {
+    return null;
+  }
+  if (!dataChannel) {
+    try {
+      dataChannel = new BroadcastChannel("pesaswap:data");
+    } catch {
+      dataChannel = null;
+    }
+  }
+  return dataChannel;
+}
+
+export const DATA_CHANGED_EVENT = "pesaswap:data-changed";
+
+export function notifyDataChanged(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(DATA_CHANGED_EVENT));
+  try {
+    getDataChannel()?.postMessage("changed");
+  } catch {
+    /* best-effort cross-tab */
+  }
+}
+
+export function subscribeDataChanged(handler: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener(DATA_CHANGED_EVENT, handler);
+  const ch = getDataChannel();
+  if (ch) ch.addEventListener("message", handler);
+  return () => {
+    window.removeEventListener(DATA_CHANGED_EVENT, handler);
+    if (ch) ch.removeEventListener("message", handler);
+  };
+}
+
+export async function authFetch(
   input: string,
   init: RequestInit = {},
 ): Promise<Response> {
   const token = getToken();
   const headers = new Headers(init.headers);
   if (token) headers.set("authorization", `Bearer ${token}`);
-  return fetch(input, { ...init, headers });
+  const res = await fetch(input, { ...init, headers });
+  // A successful mutating call means cached reads elsewhere are now stale —
+  // invalidate them so the write reflects across surfaces immediately.
+  const method = (init.method ?? "GET").toUpperCase();
+  if (res.ok && method !== "GET" && method !== "HEAD") {
+    notifyDataChanged();
+  }
+  return res;
 }
 
 // Multi-store: switch the active store by re-minting the JWT for a venue the user

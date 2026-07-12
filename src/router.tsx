@@ -11,7 +11,11 @@ export const getRouter = () => {
         staleTime: 30_000,
         gcTime: 5 * 60_000,
         retry: 1,
-        refetchOnWindowFocus: false,
+        // Refresh when the operator returns to the tab or reconnects, so a write
+        // made on another surface (the mobile app, another device) reflects
+        // without waiting out the stale window. Bounded by staleTime above.
+        refetchOnWindowFocus: true,
+        refetchOnReconnect: true,
       },
     },
   });

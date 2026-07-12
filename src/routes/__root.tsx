@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -16,6 +16,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ChatWidget } from "@/components/omni/ChatWidget";
 import { InstallBanner } from "@/components/InstallBanner";
 import { SandboxBadge } from "@/components/SandboxBadge";
+import { subscribeDataChanged } from "@/lib/auth";
 import { Menu } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -124,6 +125,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     errorComponent: ErrorComponent,
   },
 );
+
+// Cross-surface cache coherence: when any surface makes a successful write (via
+// authFetch) — including in another tab — invalidate React Query so the change is
+// reflected here without waiting out the stale window.
+function DataSyncBridge() {
+  const queryClient = useQueryClient();
+  useEffect(
+    () => subscribeDataChanged(() => void queryClient.invalidateQueries()),
+    [queryClient],
+  );
+  return null;
+}
 
 function RootShell({ children }: { children: React.ReactNode }) {
   return (
@@ -245,6 +258,7 @@ function RootComponent() {
     return (
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
+          <DataSyncBridge />
           <ErrorBoundary>
             <div className="min-h-screen bg-background text-foreground">
               <Outlet />
@@ -262,6 +276,7 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
+        <DataSyncBridge />
         <ErrorBoundary>
           <div className="min-h-screen bg-background text-foreground">
             <AppSidebar
