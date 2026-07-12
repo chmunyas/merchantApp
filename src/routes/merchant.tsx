@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { TopHeader } from "@/components/TopHeader";
 import { InstallButton } from "@/components/InstallButton";
 import { PhoneFrame } from "@/components/merchant/PhoneFrame";
@@ -13,6 +13,17 @@ import { Smartphone, QrCode, FileText, Zap } from "lucide-react";
 import type { ReactNode } from "react";
 
 export const Route = createFileRoute("/merchant")({
+  // A shared invoice pay link may arrive as /merchant?pay=INV-XXX. That means a
+  // CUSTOMER is paying — send them to the real, payable checkout (/pay?i=INV-XXX)
+  // instead of this merchant landing page, which renders no checkout.
+  validateSearch: (search: Record<string, unknown>): { pay?: string } => ({
+    pay: typeof search.pay === "string" ? search.pay : undefined,
+  }),
+  beforeLoad: ({ search }) => {
+    if (search.pay) {
+      throw redirect({ to: "/pay", search: { i: search.pay } });
+    }
+  },
   head: () => ({
     meta: [
       { title: "Merchant App — PesaSwap" },

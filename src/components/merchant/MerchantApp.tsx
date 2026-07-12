@@ -600,10 +600,10 @@ function ScanView({
     } catch {
       /* not json */
     }
-    // 2. URL with ?pay=INV-xxxx
+    // 2. URL with ?i=INV-xxxx (canonical pay link) or the legacy ?pay=INV-xxxx
     try {
       const url = new URL(trimmed);
-      const id = url.searchParams.get("pay");
+      const id = url.searchParams.get("i") || url.searchParams.get("pay");
       if (id) {
         const known = invoices.find((i) => i.id === id);
         if (known) return onDetected(known);

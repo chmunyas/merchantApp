@@ -265,7 +265,10 @@ export function payloadFor(inv: Invoice) {
 
 export function payLink(inv: Invoice) {
   if (typeof window === "undefined") return "";
-  const u = new URL(window.location.origin + "/merchant");
-  u.searchParams.set("pay", inv.id);
+  // Point at the real, payable checkout page (/pay?i=INV-XXX), which loads the
+  // invoice from the server and renders M-Pesa checkout. Used as a fallback until
+  // the invoice publishes its canonical link.
+  const u = new URL(window.location.origin + "/pay");
+  u.searchParams.set("i", inv.id);
   return u.toString();
 }
