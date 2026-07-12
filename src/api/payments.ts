@@ -19,6 +19,7 @@ import {
 } from "@/lib/accounting";
 import { recordPayment as recordInvoicePayment } from "@/lib/invoicing";
 import { isDisputeEvent, mapDisputeStatus } from "@/lib/disputes";
+import { computeFee, methodFromMetadata } from "@/lib/fees";
 import { loyaltyPointsFor } from "@/lib/loyalty";
 import { markPayLinkPaid } from "@/lib/pay-links";
 import { resolveInitiator } from "@/lib/tx-initiator";
@@ -187,17 +188,30 @@ async function recordLedger(
   }
   const firstSuccess = succeededNow && !alreadySucceeded;
 
+  // Processing fee for the transparency cockpit: computed on a settled payment
+  // from its billing method (never on a failed attempt), so the merchant sees the
+  // real blended effective rate they pay. NULL until the payment settles.
+  const feeAmount =
+    SUCCEEDED.includes(rec.status) && rec.kind !== "refund"
+      ? computeFee(
+          Math.round(Number(rec.amount) || 0),
+          methodFromMetadata(meta),
+          { instantPayout: Boolean(meta.instant_payout) },
+        ).fee
+      : null;
+
   try {
     await sql`
       INSERT INTO payments
-        (id, venue_id, kind, amount, currency, status, provider_ref, reference, metadata, tip_amount, staff_id, initiator)
+        (id, venue_id, kind, amount, currency, status, provider_ref, reference, metadata, tip_amount, staff_id, initiator, fee_amount)
       VALUES (${rec.id}, ${rec.venue ?? null}, ${rec.kind ?? "payment"}, ${rec.amount},
               ${rec.currency}, ${rec.status}, ${rec.providerRef ?? null}, ${rec.reference ?? null},
-              ${sql.json(JSON.parse(JSON.stringify(rec.metadata ?? {})))}, ${tipAmount}, ${staffId}, ${initiator})
+              ${sql.json(JSON.parse(JSON.stringify(rec.metadata ?? {})))}, ${tipAmount}, ${staffId}, ${initiator}, ${feeAmount})
       ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status,
         tip_amount = EXCLUDED.tip_amount,
         staff_id = COALESCE(EXCLUDED.staff_id, payments.staff_id),
         provider_ref = COALESCE(EXCLUDED.provider_ref, payments.provider_ref),
+        fee_amount = COALESCE(EXCLUDED.fee_amount, payments.fee_amount),
         amount = CASE
           WHEN EXCLUDED.status IN ('succeeded', 'paid', 'captured')
           THEN EXCLUDED.amount ELSE payments.amount END,

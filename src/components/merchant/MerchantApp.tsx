@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 
 import { AIInsightsView } from "./features/AIInsightsView";
+import { FeeCard } from "./features/FeeCard";
 import { InvoiceCreator } from "./features/InvoiceCreator";
 import { SyncCockpit, SyncStatusPill } from "./features/SyncCockpit";
 import { TableServiceView } from "./features/TableServiceView";
@@ -417,6 +418,9 @@ function HomeView({
       {/* Store-and-forward: offline / queued-sale status + manual sync. Renders
           only when offline or there are sales waiting to sync. */}
       <SyncCockpit />
+
+      {/* Fee transparency: the real blended rate paid over the last 30 days. */}
+      <FeeCard />
 
       <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
         <div className="flex items-center justify-between">

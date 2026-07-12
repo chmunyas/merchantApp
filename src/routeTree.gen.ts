@@ -60,6 +60,7 @@ import { Route as DashboardInventoryRouteImport } from './routes/dashboard/inven
 import { Route as DashboardInboxRouteImport } from './routes/dashboard/inbox'
 import { Route as DashboardForecastRouteImport } from './routes/dashboard/forecast'
 import { Route as DashboardFloorplanRouteImport } from './routes/dashboard/floorplan'
+import { Route as DashboardFeesRouteImport } from './routes/dashboard/fees'
 import { Route as DashboardEnquiriesRouteImport } from './routes/dashboard/enquiries'
 import { Route as DashboardDisputesRouteImport } from './routes/dashboard/disputes'
 import { Route as DashboardDepositsRouteImport } from './routes/dashboard/deposits'
@@ -333,6 +334,11 @@ const DashboardFloorplanRoute = DashboardFloorplanRouteImport.update({
   path: '/floorplan',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardFeesRoute = DashboardFeesRouteImport.update({
+  id: '/fees',
+  path: '/fees',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardEnquiriesRoute = DashboardEnquiriesRouteImport.update({
   id: '/enquiries',
   path: '/enquiries',
@@ -455,6 +461,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/deposits': typeof DashboardDepositsRoute
   '/dashboard/disputes': typeof DashboardDisputesRoute
   '/dashboard/enquiries': typeof DashboardEnquiriesRoute
+  '/dashboard/fees': typeof DashboardFeesRoute
   '/dashboard/floorplan': typeof DashboardFloorplanRoute
   '/dashboard/forecast': typeof DashboardForecastRoute
   '/dashboard/inbox': typeof DashboardInboxRoute
@@ -523,6 +530,7 @@ export interface FileRoutesByTo {
   '/dashboard/deposits': typeof DashboardDepositsRoute
   '/dashboard/disputes': typeof DashboardDisputesRoute
   '/dashboard/enquiries': typeof DashboardEnquiriesRoute
+  '/dashboard/fees': typeof DashboardFeesRoute
   '/dashboard/floorplan': typeof DashboardFloorplanRoute
   '/dashboard/forecast': typeof DashboardForecastRoute
   '/dashboard/inbox': typeof DashboardInboxRoute
@@ -594,6 +602,7 @@ export interface FileRoutesById {
   '/dashboard/deposits': typeof DashboardDepositsRoute
   '/dashboard/disputes': typeof DashboardDisputesRoute
   '/dashboard/enquiries': typeof DashboardEnquiriesRoute
+  '/dashboard/fees': typeof DashboardFeesRoute
   '/dashboard/floorplan': typeof DashboardFloorplanRoute
   '/dashboard/forecast': typeof DashboardForecastRoute
   '/dashboard/inbox': typeof DashboardInboxRoute
@@ -666,6 +675,7 @@ export interface FileRouteTypes {
     | '/dashboard/deposits'
     | '/dashboard/disputes'
     | '/dashboard/enquiries'
+    | '/dashboard/fees'
     | '/dashboard/floorplan'
     | '/dashboard/forecast'
     | '/dashboard/inbox'
@@ -734,6 +744,7 @@ export interface FileRouteTypes {
     | '/dashboard/deposits'
     | '/dashboard/disputes'
     | '/dashboard/enquiries'
+    | '/dashboard/fees'
     | '/dashboard/floorplan'
     | '/dashboard/forecast'
     | '/dashboard/inbox'
@@ -804,6 +815,7 @@ export interface FileRouteTypes {
     | '/dashboard/deposits'
     | '/dashboard/disputes'
     | '/dashboard/enquiries'
+    | '/dashboard/fees'
     | '/dashboard/floorplan'
     | '/dashboard/forecast'
     | '/dashboard/inbox'
@@ -1223,6 +1235,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardFloorplanRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/fees': {
+      id: '/dashboard/fees'
+      path: '/fees'
+      fullPath: '/dashboard/fees'
+      preLoaderRoute: typeof DashboardFeesRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/enquiries': {
       id: '/dashboard/enquiries'
       path: '/enquiries'
@@ -1376,6 +1395,7 @@ interface DashboardRouteChildren {
   DashboardDepositsRoute: typeof DashboardDepositsRoute
   DashboardDisputesRoute: typeof DashboardDisputesRoute
   DashboardEnquiriesRoute: typeof DashboardEnquiriesRoute
+  DashboardFeesRoute: typeof DashboardFeesRoute
   DashboardFloorplanRoute: typeof DashboardFloorplanRoute
   DashboardForecastRoute: typeof DashboardForecastRoute
   DashboardInboxRoute: typeof DashboardInboxRoute
@@ -1419,6 +1439,7 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardDepositsRoute: DashboardDepositsRoute,
   DashboardDisputesRoute: DashboardDisputesRoute,
   DashboardEnquiriesRoute: DashboardEnquiriesRoute,
+  DashboardFeesRoute: DashboardFeesRoute,
   DashboardFloorplanRoute: DashboardFloorplanRoute,
   DashboardForecastRoute: DashboardForecastRoute,
   DashboardInboxRoute: DashboardInboxRoute,

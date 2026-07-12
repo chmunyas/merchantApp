@@ -56,6 +56,7 @@ import { handleRfmRoute } from "./api/rfm";
 import { handlePromoRoute } from "./api/promo";
 import { handlePaymentMethodsAdminRoute } from "./api/payment-methods-admin";
 import { handlePayLinkRoute } from "./api/pay-links";
+import { handleFeesRoute } from "./api/fees";
 
 type ServerEntry = {
   fetch: (
@@ -268,6 +269,10 @@ export default {
           // Settlement + reconciliation (batch payments, fees/net)
           const settlementResponse = await handleSettlementRoute(request, env);
           if (settlementResponse) return settlementResponse;
+
+          // Fee transparency: published schedule + blended effective rate
+          const feesResponse = await handleFeesRoute(request, env);
+          if (feesResponse) return feesResponse;
 
           // Disputes / chargebacks + payment webhook-event audit trail
           const disputeResponse = await handleDisputeRoute(request, env);
