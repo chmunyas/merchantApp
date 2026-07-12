@@ -34,3 +34,24 @@ all skills and agents** — a feature that works on only one tier is not done.
 Every `SKILL.md` and every `*-engineer` agent carries a "Definition of Done — full
 parity" note pointing here. When a subagent builds a feature function, "done"
 means this checklist is satisfied — not merely that the code compiles.
+
+## Sandbox environment (test payments)
+Alongside production there is a **sandbox** Worker built from the SAME codebase,
+so partners can try the full journey with no real money:
+
+| | Production | Sandbox |
+| --- | --- | --- |
+| URL | `pesaswap-merchant-app.pesaswap.workers.dev` | `pesaswap-merchant-app-sandbox.pesaswap.workers.dev` |
+| Payments | live M-Pesa (`PAYMENTS_TEST_MODE=0`) | simulated (`PAYMENTS_TEST_MODE=1`) |
+| Database (Neon) | `neondb` (Hyperdrive `37e129fb…`) | `pesaswap_sandbox` (Hyperdrive `f9c735c4…`) |
+| Deploy | `wrangler deploy` | `wrangler deploy --env sandbox` |
+
+- Config lives in `wrangler.toml` under `[env.sandbox]`; named envs do **not**
+  inherit `[vars]`/bindings, so they are redeclared there.
+- The sandbox has its own **separate** Neon database so test data never mixes
+  with production. Apply every new `db/NN-*.sql` to it too:
+  `docker run --rm -e U="<sandbox-neon-url>" -v <repo>\db:/db postgres:16 sh -lc 'psql "$U" -f /db/NN-*.sql'`.
+- The sandbox has a fixed `JWT_SECRET` secret (set via `wrangler secret put
+  JWT_SECRET --env sandbox`) so tokens verify consistently on its fresh DB.
+- One build serves both (the client uses same-origin APIs); a public
+  `GET /api/payments/config` drives the on-page "Sandbox" badge.

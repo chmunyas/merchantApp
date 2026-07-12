@@ -76,6 +76,17 @@ jobs:
           apiToken: ${{ env.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
 
+      - name: Deploy sandbox to Cloudflare Workers
+        # The sandbox Worker (test payments, separate database) is deployed from
+        # the SAME build so the two links never drift. Gated identically to the
+        # production deploy above.
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != '' && env.CLOUDFLARE_DEPLOY_ENABLED == 'true' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ env.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --env sandbox
+
   e2e:
     name: E2E (PWA → back office)
     needs: quality
