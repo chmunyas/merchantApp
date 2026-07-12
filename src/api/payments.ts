@@ -692,6 +692,18 @@ export async function handlePaymentRoute(
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
+  // Public: expose the payment mode so the UI can show a "Sandbox / test
+  // payments" badge. Test mode simulates payments (no real money); live mode
+  // charges real M-Pesa. No secrets are revealed.
+  if (path === "/api/payments/config" && request.method === "GET") {
+    const e = getEnv(env);
+    const testMode =
+      e.PAYMENTS_TEST_MODE !== "" &&
+      e.PAYMENTS_TEST_MODE !== "0" &&
+      e.PAYMENTS_TEST_MODE.toLowerCase() !== "false";
+    return withCors(jsonResponse({ testMode }), corsHeaders);
+  }
+
   // --- Payment Routes ---
   if (path === "/api/payments/create" && request.method === "POST") {
     return withCors(await handleCreatePayment(request, env), corsHeaders);

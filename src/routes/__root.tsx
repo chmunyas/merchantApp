@@ -15,6 +15,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ChatWidget } from "@/components/omni/ChatWidget";
 import { InstallBanner } from "@/components/InstallBanner";
+import { SandboxBadge } from "@/components/SandboxBadge";
 import { Menu } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -250,6 +251,7 @@ function RootComponent() {
               <Toaster position="top-right" richColors />
               {isCustomerFacing && <ChatWidget />}
               <InstallBanner />
+              <SandboxBadge />
             </div>
           </ErrorBoundary>
         </AuthProvider>
@@ -286,6 +288,7 @@ function RootComponent() {
             <Toaster position="top-right" richColors />
             {isCustomerFacing && <ChatWidget />}
             <InstallBanner />
+            <SandboxBadge />
           </div>
         </ErrorBoundary>
       </AuthProvider>

@@ -65,3 +65,35 @@ localConnectionString = "postgres://pesaswap:pesaswap@localhost:5433/pesaswap"
 #                           bridge container's BRIDGE_TOKEN)
 # - CRON_SECRET            (shared secret guarding the invoicing/run +
 #                           sequences/run sweeps against anonymous callers)
+
+# ===========================================================================
+# Sandbox environment — a SEPARATE Worker (its own URL + its own database) that
+# SIMULATES payments, so the whole journey (QR -> order -> pay -> success ->
+# receipt) can be tried with no real money and no live PesaSwap key. Deploy with:
+#   npx wrangler deploy --env sandbox
+# Production (live M-Pesa) stays the DEFAULT top-level deploy: `wrangler deploy`.
+# Named environments do NOT inherit [vars]/bindings, so they are redeclared here.
+# ===========================================================================
+[env.sandbox]
+name = "pesaswap-merchant-app-sandbox"
+
+[env.sandbox.vars]
+# Point server->PesaSwap calls at the sandbox host (unused while TEST_MODE=1).
+PESASWAP_URL = "https://api.sandbox.pesaswap.io"
+PESASWAP_PROFILE_ID = "pro_4TgkuteoiYO8M9hvtNCa"
+AUTH_REQUIRE_LOGIN = "0"
+# Shareable links + CORS resolve to the sandbox origin, not production.
+PUBLIC_BASE_URL = "https://pesaswap-merchant-app-sandbox.pesaswap.workers.dev"
+CORS_ALLOWED_ORIGIN = "https://pesaswap-merchant-app-sandbox.pesaswap.workers.dev"
+# Simulate a SUCCESSFUL payment without calling PesaSwap — no real money moves
+# and no live API key is required. The ledger + settlement still run, so the full
+# flow is exercised end-to-end. This is what makes it a true sandbox.
+PAYMENTS_TEST_MODE = "1"
+SENTRY_ENVIRONMENT = "sandbox"
+
+# Sandbox database — a SEPARATE Neon database (pesaswap_sandbox) so test data
+# never mixes with production. Provisioned via:
+#   wrangler hyperdrive create pesaswap-db-sandbox --connection-string="<sandbox>"
+[[env.sandbox.hyperdrive]]
+binding = "HYPERDRIVE"
+id = "f9c735c4224f4ca6b40c1ad61aad1632"
