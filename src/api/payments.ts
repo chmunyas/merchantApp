@@ -109,6 +109,68 @@ const merchantConnections = new Map<string, Set<WebSocket>>();
 
 // Idempotency key cache (prevents double charges)
 const idempotencyCache = new Map<string, { response: unknown; expires: number }>();
+const IDEMPOTENCY_TTL_MS = 3_600_000;
+
+// Durable, cross-isolate idempotency for payment creation. `idempotentGuard`
+// atomically RESERVES the key (first writer wins): the winner proceeds and later
+// calls `rememberIdempotent` with its response; a concurrent duplicate finds the
+// key taken and waits briefly for that response, so a replayed create (offline
+// sync, a lost 200, a double-tap, a cross-isolate retry) returns the SAME result
+// instead of double-recording. Falls back to the in-memory cache when there's no
+// database (best-effort).
+async function idempotentGuard(
+  env: unknown,
+  key: string,
+): Promise<{ replay: unknown } | { proceed: true }> {
+  const cached = idempotencyCache.get(key);
+  if (cached && cached.expires > Date.now()) return { replay: cached.response };
+  const sql = getSql(env);
+  if (!sql) return { proceed: true };
+  try {
+    const [reserved] = await sql`
+      INSERT INTO idempotency_keys (key) VALUES (${key})
+      ON CONFLICT (key) DO NOTHING RETURNING key`;
+    if (reserved) return { proceed: true }; // we own it
+    // Someone else owns it — poll briefly for their completed response.
+    for (let i = 0; i < 20; i++) {
+      const [row] = await sql`
+        SELECT response FROM idempotency_keys WHERE key = ${key}`;
+      if (row && row.response != null) {
+        idempotencyCache.set(key, {
+          response: row.response,
+          expires: Date.now() + IDEMPOTENCY_TTL_MS,
+        });
+        return { replay: row.response };
+      }
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    // Timed out waiting (rare) — proceed; the ledger's id-conflict still guards.
+    return { proceed: true };
+  } catch {
+    return { proceed: true };
+  }
+}
+
+async function rememberIdempotent(
+  env: unknown,
+  key: string,
+  response: unknown,
+): Promise<void> {
+  idempotencyCache.set(key, {
+    response,
+    expires: Date.now() + IDEMPOTENCY_TTL_MS,
+  });
+  const sql = getSql(env);
+  if (!sql) return;
+  try {
+    await sql`
+      INSERT INTO idempotency_keys (key, response)
+      VALUES (${key}, ${sql.json(JSON.parse(JSON.stringify(response)))})
+      ON CONFLICT (key) DO UPDATE SET response = EXCLUDED.response`;
+  } catch {
+    /* best-effort durability — the in-memory cache still applies */
+  }
+}
 
 // Post cost-of-goods-sold for a paid order: match its line items to inventory
 // by name and expense the cost (Dr COGS, Cr Inventory). Idempotent per order;
@@ -798,12 +860,11 @@ async function handleCreatePayment(
   const body = (await request.json()) as PaymentRequest;
   const idempotencyKey = request.headers.get("Idempotency-Key");
 
-  // Check idempotency
+  // Check idempotency (durable, cross-isolate): a replayed create returns the
+  // same result instead of double-recording. Reserves the key for the winner.
   if (idempotencyKey) {
-    const cached = idempotencyCache.get(idempotencyKey);
-    if (cached && cached.expires > Date.now()) {
-      return jsonResponse(cached.response, 200);
-    }
+    const guard = await idempotentGuard(workerEnv, idempotencyKey);
+    if ("replay" in guard) return jsonResponse(guard.replay, 200);
   }
 
   // Validate
@@ -950,10 +1011,7 @@ async function handleCreatePayment(
         error: { code, message: reason },
       };
       if (idempotencyKey) {
-        idempotencyCache.set(idempotencyKey, {
-          response: failBody,
-          expires: Date.now() + 3_600_000,
-        });
+        await rememberIdempotent(workerEnv, idempotencyKey, failBody);
       }
       return jsonResponse(failBody, 200);
     }
@@ -985,10 +1043,7 @@ async function handleCreatePayment(
       test_mode: true,
     };
     if (idempotencyKey) {
-      idempotencyCache.set(idempotencyKey, {
-        response: responseBody,
-        expires: Date.now() + 3_600_000,
-      });
+      await rememberIdempotent(workerEnv, idempotencyKey, responseBody);
     }
     return jsonResponse(responseBody, 201);
   }
@@ -1091,10 +1146,7 @@ async function handleCreatePayment(
         stk: true,
       };
       if (idempotencyKey) {
-        idempotencyCache.set(idempotencyKey, {
-          response: responseBody,
-          expires: Date.now() + 3_600_000,
-        });
+        await rememberIdempotent(workerEnv, idempotencyKey, responseBody);
       }
       return jsonResponse(responseBody, 201);
     } catch (err) {
@@ -1173,10 +1225,7 @@ async function handleCreatePayment(
 
     // Cache idempotent response (1 hour)
     if (idempotencyKey) {
-      idempotencyCache.set(idempotencyKey, {
-        response: responseBody,
-        expires: Date.now() + 3600000,
-      });
+      await rememberIdempotent(workerEnv, idempotencyKey, responseBody);
     }
 
     return jsonResponse(responseBody, 201);
