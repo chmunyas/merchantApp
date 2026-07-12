@@ -33,5 +33,22 @@ test.describe("launch handoff (browser)", () => {
     // ...and it is adopted to the merchant's OWN venue — the demo tenant
     // ("Sade's Atelier" + its seeded receivables) must NOT appear.
     await expect(page.getByText("Sade's Atelier")).toHaveCount(0);
+
+    // A real login carries a venue claim, so the demo-venue banner must NOT show.
+    await expect(page.getByText(/viewing the demo venue/i)).toHaveCount(0);
+  });
+
+  test("a cold open (no login) surfaces the demo-venue banner", async ({
+    page,
+  }) => {
+    // Opening the standalone app with no token falls back to an anonymous session
+    // scoped to the shared demo venue — which must be announced, not silent.
+    await page.goto("/pesaswapApp");
+    await expect(page.getByText("PesaSwap").first()).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByText(/viewing the demo venue/i)).toBeVisible({
+      timeout: 30_000,
+    });
   });
 });

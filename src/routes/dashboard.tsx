@@ -53,6 +53,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { UserProfileMenu } from "@/components/auth/UserProfileMenu";
+import { DemoVenueBanner } from "@/components/DemoVenueBanner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
@@ -492,6 +493,8 @@ function DashboardShell() {
             </div>
           </div>
         </header>
+
+        <DemoVenueBanner />
 
         <main className="flex-1 overflow-y-auto p-4 lg:p-8">
           {user && !canAccessPath(user.role, pathname) ? (

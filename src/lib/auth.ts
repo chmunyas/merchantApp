@@ -91,6 +91,50 @@ function setToken(token: string | null): void {
   if (!canUseStorage()) return;
   if (token) localStorage.setItem(JWT_KEY, token);
   else localStorage.removeItem(JWT_KEY);
+  // The token is the source of tenant scope, so anything reacting to auth (the
+  // demo-venue banner, useDemoAuth) must re-evaluate when it changes — including
+  // the silent anonymous-session write that previously fired no event.
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event("pesaswap:auth-changed"));
+  }
+}
+
+// The claims of a JWT, read WITHOUT verifying the signature. Safe only for
+// client-side UX decisions (which venue/role the token itself asserts) — never
+// for trust, which is always enforced server-side.
+export type TokenClaims = {
+  sub?: string;
+  role?: string;
+  name?: string;
+  venue?: string;
+  plan?: string;
+};
+
+export function decodeTokenClaims(
+  token: string | null = getToken(),
+): TokenClaims | null {
+  if (!token) return null;
+  try {
+    const payloadB64 = token.split(".")[1];
+    if (!payloadB64) return null;
+    const b64 = payloadB64.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), "=");
+    return JSON.parse(atob(padded)) as TokenClaims;
+  } catch {
+    return null;
+  }
+}
+
+// True when the app is running on an ANONYMOUS session (from /api/auth/session)
+// rather than a real login. Such a token carries no `venue` claim, so the server
+// scopes it to the shared demo "main" venue — the root of the "I signed in but see
+// someone else's data" confusion. A real merchant/staff login always pins a venue;
+// a platform admin legitimately has none, so it is excluded.
+export function isDemoSession(token: string | null = getToken()): boolean {
+  const claims = decodeTokenClaims(token);
+  if (!claims) return false;
+  if (claims.role === "admin") return false;
+  return !claims.venue;
 }
 
 // Pin the browser's active tenant to the logged-in merchant's own venue, so the
@@ -149,16 +193,8 @@ export type OtpChannel = "email" | "whatsapp" | "sms";
 // role so the caller can route the user to the right home.
 export function completeSso(token: string): { role: UserRole } | null {
   try {
-    const payloadB64 = token.split(".")[1];
-    if (!payloadB64) return null;
-    const b64 = payloadB64.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), "=");
-    const claims = JSON.parse(atob(padded)) as {
-      sub?: string;
-      role?: string;
-      name?: string;
-      venue?: string;
-    };
+    const claims = decodeTokenClaims(token);
+    if (!claims) return null;
     setToken(token);
     const user: AuthUser = {
       id: claims.sub ?? "",
@@ -626,20 +662,24 @@ export function adoptLaunchToken(): void {
   try {
     const token = decodeURIComponent(m[1]);
     if (token) {
+      const claims = decodeTokenClaims(token);
+      // No-shadow: never let an ANONYMOUS launch token (no venue claim) clobber an
+      // existing REAL login — otherwise a stray demo launch link would silently
+      // downgrade a signed-in merchant back to the shared demo venue.
+      const incomingIsAnon = !claims?.venue && claims?.role !== "admin";
+      if (incomingIsAnon && !isDemoSession(getToken())) {
+        window.history.replaceState(
+          null,
+          "",
+          window.location.pathname + window.location.search,
+        );
+        return;
+      }
       setToken(token);
       // Pin the tenant + user from the token's claims so the app scopes to the
       // logged-in merchant's OWN venue (same data as the dashboard), never the
       // shared demo venue.
-      const payloadB64 = token.split(".")[1];
-      if (payloadB64) {
-        const b64 = payloadB64.replace(/-/g, "+").replace(/_/g, "/");
-        const padded = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), "=");
-        const claims = JSON.parse(atob(padded)) as {
-          sub?: string;
-          role?: string;
-          name?: string;
-          venue?: string;
-        };
+      if (claims) {
         if (claims.venue) applyTenant(claims.venue, claims.name ?? "");
         writeUser(DEMO_AUTH_KEY, {
           id: claims.sub ?? "",

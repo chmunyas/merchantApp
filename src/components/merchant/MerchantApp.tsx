@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { realtime } from "../../lib/realtime";
 import { authFetch } from "@/lib/auth";
+import { DemoVenueBanner } from "@/components/DemoVenueBanner";
 import { PaymentQr } from "@/components/pay/PaymentQr";
 import { useMerchantIdentity } from "@/lib/use-merchant-identity";
 import {
@@ -189,6 +190,8 @@ export function MerchantApp({
           </span>
         </span>
       </div>
+
+      <DemoVenueBanner />
 
       <div className="flex-1 overflow-y-auto pb-24">
         {tab === "home" && (
