@@ -21,12 +21,20 @@ ENV VITE_PESASWAP_PUBLISHABLE_KEY=${VITE_PESASWAP_PUBLISHABLE_KEY}
 ENV VITE_BACKEND_URL=${VITE_BACKEND_URL}
 RUN npm run build
 
+# Bundle the built Worker into one self-contained file the LOCAL workerd can load
+# (see scripts/bundle-prodlocal.mjs). The shared dist/ shipped by `wrangler deploy`
+# is untouched — this only produces dist/server/worker.single.js for prod-local.
+RUN node scripts/bundle-prodlocal.mjs
+
 ### Stage 2: run the built Worker in the Workers runtime (workerd) ###
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app
 
-# node_modules is required so Wrangler can resolve/bundle the Worker's imports
-# (react, clsx, …) and provides the pinned Wrangler + matching workerd binary.
+# node_modules is required so Wrangler resolves bindings + provides the pinned
+# Wrangler + matching workerd binary. We serve the pre-bundled single-file Worker
+# with --no-bundle: it is already fully bundled (postgres, react, all route chunks
+# inlined) and, crucially, only exports `default`, so workerd does not reject a
+# non-function named export. Non-secret vars + bindings still come from wrangler.toml.
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY package.json package-lock.json wrangler.toml ./
@@ -35,4 +43,4 @@ EXPOSE 8787
 
 # Local Workers runtime, reachable from the host. Server secrets are read from
 # .dev.vars (mounted by docker compose); non-secret vars come from wrangler.toml.
-CMD ["node_modules/.bin/wrangler", "dev", "--ip", "0.0.0.0", "--port", "8787"]
+CMD ["node_modules/.bin/wrangler", "dev", "dist/server/worker.single.js", "--no-bundle", "--ip", "0.0.0.0", "--port", "8787"]

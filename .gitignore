@@ -2,6 +2,9 @@
 node_modules/
 dist/
 
+# Local Workers runtime state (miniflare cache/DO storage from `wrangler dev`)
+.wrangler/
+
 # Environment variables (secrets - never commit)
 .env
 .env.local
