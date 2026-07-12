@@ -15,10 +15,14 @@ all skills and agents** — a feature that works on only one tier is not done.
 1. **Validate** in the dev container:
    `docker exec -w /app pesaswap-merchant-app npm run typecheck` then `npm test`
    (142 unit tests) — plus E2E (`npm run test:e2e`) where the change warrants it.
-2. **Migrations** — apply every new `db/NN-*.sql` to **all three** databases:
+2. **Migrations** — apply every new `db/NN-*.sql` to **all** databases. Dev and
+   prod-local mount `db/` as `docker-entrypoint-initdb.d` (fresh volumes only), so
+   apply manually there; the managed Neon databases are handled by the runner:
    - dev: `docker exec pesaswap-postgres psql -U pesaswap -d pesaswap -f /docker-entrypoint-initdb.d/NN-*.sql`
    - prod-local: `docker exec pesaswap-postgres-prod psql -U pesaswap -d pesaswap -f /docker-entrypoint-initdb.d/NN-*.sql`
-   - Neon: `docker run --rm -v <repo>\db:/db postgres:16 psql "<neon-direct-url>" -f /db/NN-*.sql`
+   - production + sandbox Neon: **automated in CI** (`scripts/migrate.mjs`, tracked
+     by a `schema_migrations` ledger — only new files run). To apply manually:
+     `MIGRATE_DATABASE_URL="<neon-url>" npm run migrate`.
    Do **not** put semicolons inside SQL comment lines (the local splitter breaks on them).
 3. **Register** any new route handler in `src/server.ts`. A build regenerates
    `src/routeTree.gen.ts` for new route files.
@@ -49,8 +53,13 @@ so partners can try the full journey with no real money:
 - Config lives in `wrangler.toml` under `[env.sandbox]`; named envs do **not**
   inherit `[vars]`/bindings, so they are redeclared there.
 - The sandbox has its own **separate** Neon database so test data never mixes
-  with production. Apply every new `db/NN-*.sql` to it too:
-  `docker run --rm -e U="<sandbox-neon-url>" -v <repo>\db:/db postgres:16 sh -lc 'psql "$U" -f /db/NN-*.sql'`.
+  with production. New `db/NN-*.sql` files are applied automatically by the CI
+  migration runner (`scripts/migrate.mjs`) to BOTH the production and sandbox
+  Neon databases, gated on repo secrets:
+  - `NEON_DATABASE_URL` — production Neon (database `neondb`)
+  - `NEON_SANDBOX_DATABASE_URL` — sandbox Neon (database `pesaswap_sandbox`)
+  Until those secrets are set the steps skip (CI stays green). Manual apply:
+  `MIGRATE_DATABASE_URL="<sandbox-neon-url>" npm run migrate`.
 - The sandbox has a fixed `JWT_SECRET` secret (set via `wrangler secret put
   JWT_SECRET --env sandbox`) so tokens verify consistently on its fresh DB.
 - One build serves both (the client uses same-origin APIs); a public

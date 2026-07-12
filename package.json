@@ -17,6 +17,7 @@
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:e2e:browser": "playwright test",
     "typecheck": "tsc --noEmit --skipLibCheck",
+    "migrate": "node scripts/migrate.mjs",
     "prepare": "husky"
   },
   "dependencies": {

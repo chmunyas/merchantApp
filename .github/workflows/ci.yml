@@ -46,6 +46,8 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_DEPLOY_ENABLED: ${{ secrets.CLOUDFLARE_DEPLOY_ENABLED }}
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      NEON_SANDBOX_DATABASE_URL: ${{ secrets.NEON_SANDBOX_DATABASE_URL }}
     steps:
       - uses: actions/checkout@v4
 
@@ -60,6 +62,26 @@ jobs:
         run: npm run build
         env:
           VITE_PESASWAP_PUBLISHABLE_KEY: ${{ secrets.VITE_PESASWAP_PUBLISHABLE_KEY }}
+
+      # Apply any NEW db/*.sql migrations to the managed databases BEFORE the new
+      # code deploys, so the schema is always ready. The runner is idempotent (a
+      # schema_migrations ledger), so this is a no-op when nothing changed. Each
+      # step is skipped until its database URL secret is configured, keeping CI
+      # green. Set NEON_DATABASE_URL (production) and NEON_SANDBOX_DATABASE_URL
+      # (sandbox) as repo secrets to enable.
+      - name: Migrate production database
+        if: ${{ env.NEON_DATABASE_URL != '' }}
+        run: node scripts/migrate.mjs
+        env:
+          MIGRATE_DATABASE_URL: ${{ env.NEON_DATABASE_URL }}
+          MIGRATE_LABEL: production
+
+      - name: Migrate sandbox database
+        if: ${{ env.NEON_SANDBOX_DATABASE_URL != '' }}
+        run: node scripts/migrate.mjs
+        env:
+          MIGRATE_DATABASE_URL: ${{ env.NEON_SANDBOX_DATABASE_URL }}
+          MIGRATE_LABEL: sandbox
 
       - name: Deploy to Cloudflare Workers
         # Deploys only when the Cloudflare secrets are set AND deploys are
