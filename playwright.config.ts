@@ -6,8 +6,11 @@ const BASE_URL = process.env.E2E_BASE_URL ?? "http://localhost:8080";
 
 export default defineConfig({
   testDir: "./e2e-browser",
-  timeout: 45_000,
-  expect: { timeout: 12_000 },
+  // Warm the on-demand-compiled dev routes before the suite so a cold server's
+  // first-hit compilation doesn't blow past per-test timeouts.
+  globalSetup: "./e2e-browser/global-setup.ts",
+  timeout: 90_000,
+  expect: { timeout: 20_000 },
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
