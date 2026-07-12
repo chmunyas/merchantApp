@@ -10,11 +10,13 @@ import { authFetch } from "@/lib/auth";
 import { PaymentQr } from "@/components/pay/PaymentQr";
 import { useMerchantIdentity } from "@/lib/use-merchant-identity";
 import { getCurrentVenueId } from "@/lib/merchant-dashboard";
+import { useOfflineQueue } from "@/lib/use-offline-queue";
 import { OmniShare } from "../OmniShare";
 import type { TapGoTransaction } from "./types";
 
 export function TapGoPOS() {
   const { name: MERCHANT_NAME, till: TILL_NUMBER } = useMerchantIdentity();
+  const offline = useOfflineQueue();
   const [amount, setAmount] = useState("");
   const [mode, setMode] = useState<"keypad" | "qr" | "waiting" | "success">(
     "keypad",
@@ -46,18 +48,44 @@ export function TapGoPOS() {
 
   async function simulatePaymentReceived(phone?: string) {
     if (!currentTx) return;
+    const tx = currentTx;
+
+    const metadata = buildPaymentMetadata({
+      merchant: { name: MERCHANT_NAME, till: TILL_NUMBER, id: getCurrentVenueId() },
+      flow: "tapgo",
+      customer: { phone: phone || "0722000000" },
+    });
+    const minorAmount = tx.amount * 100;
+
+    function queueForLater(note: string) {
+      // Store-and-forward: save the sale locally and let the sync cockpit replay
+      // it when connectivity returns. We NEVER fake a "paid" state offline — the
+      // sale shows as pending sync until it's actually submitted.
+      offline.enqueue({
+        id: tx.id,
+        amount: minorAmount,
+        currency: "KES",
+        metadata: metadata as unknown as Record<string, unknown>,
+      });
+      toast.success("Saved offline", { description: note });
+      setMode("keypad");
+      setAmount("");
+      setCurrentTx(null);
+      setCustomerNumber("");
+    }
+
+    // Offline: queue immediately without hitting the network.
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      queueForLater("This sale will sync automatically when you're back online.");
+      return;
+    }
+
     setMode("waiting");
 
     try {
       // Create a real payment intent via PesaSwap backend
-      const metadata = buildPaymentMetadata({
-        merchant: { name: MERCHANT_NAME, till: TILL_NUMBER, id: getCurrentVenueId() },
-        flow: "tapgo",
-        customer: { phone: phone || "0722000000" },
-      });
-
       const payment = await pesaswapClient.createPayment({
-        amount: currentTx.amount * 100, // minor units
+        amount: minorAmount, // minor units
         currency: "KES",
         description: `Tap&Go payment to ${MERCHANT_NAME}`,
         metadata: metadata,
@@ -66,8 +94,8 @@ export function TapGoPOS() {
       // Payment created — now wait for customer confirmation via webhook/realtime
       // For now, mark as confirmed (webhook will update in real-time)
       const completedTx: TapGoTransaction = {
-        ...currentTx,
-        id: payment.payment_id || currentTx.id,
+        ...tx,
+        id: payment.payment_id || tx.id,
         status: "confirmed",
         method: phone ? "STK Push" : "QR Scan",
         customerPhone: phone
@@ -84,6 +112,15 @@ export function TapGoPOS() {
         setCustomerNumber("");
       }, 3000);
     } catch (err) {
+      // A network failure (fetch rejects with a TypeError) means we simply
+      // couldn't reach the server — don't lose the sale, queue it for sync. A
+      // real server decline is surfaced as an error instead.
+      if (err instanceof TypeError) {
+        queueForLater(
+          "We couldn't reach the network — this sale will sync automatically.",
+        );
+        return;
+      }
       toast.error(
         "Payment failed: " +
           (err instanceof Error ? err.message : "Unknown error"),

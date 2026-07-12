@@ -36,6 +36,7 @@ import {
 
 import { AIInsightsView } from "./features/AIInsightsView";
 import { InvoiceCreator } from "./features/InvoiceCreator";
+import { SyncCockpit, SyncStatusPill } from "./features/SyncCockpit";
 import { TableServiceView } from "./features/TableServiceView";
 import { TapGoPOS } from "./features/TapGoPOS";
 import { WalletReconciliationView } from "./features/WalletReconciliationView";
@@ -179,9 +180,12 @@ export function MerchantApp({
       {/* status bar */}
       <div className="flex justify-between items-center px-6 pt-3 pb-1 text-[11px] font-mono">
         <span>{clock}</span>
-        <span className="flex items-center gap-1">
-          <span className="size-1.5 bg-accent rounded-full" />
-          PesaSwap
+        <span className="flex items-center gap-2">
+          <SyncStatusPill onClick={() => setTab("home")} />
+          <span className="flex items-center gap-1">
+            <span className="size-1.5 bg-accent rounded-full" />
+            PesaSwap
+          </span>
         </span>
       </div>
 
@@ -409,6 +413,10 @@ function HomeView({
           <Stat label="Overdue" value={String(counts.overdue)} />
         </div>
       </div>
+
+      {/* Store-and-forward: offline / queued-sale status + manual sync. Renders
+          only when offline or there are sales waiting to sync. */}
+      <SyncCockpit />
 
       <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
         <div className="flex items-center justify-between">
