@@ -30,7 +30,9 @@ const files = readdirSync(dbDir)
 
 const sql = postgres(url, {
   max: 1,
-  ssl: "require",
+  // Neon (and other managed hosts) require TLS; a local Postgres (CI, dev,
+  // prod-local) has none. Use SSL only when the URL asks for it.
+  ssl: /sslmode=require|neon\.tech/i.test(url) ? "require" : false,
   connect_timeout: 30,
   idle_timeout: 10,
   onnotice: () => {},

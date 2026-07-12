@@ -153,12 +153,13 @@ jobs:
       - run: npm ci
 
       - name: Apply database migrations
-        run: |
-          sudo apt-get update && sudo apt-get install -y postgresql-client
-          for f in db/*.sql; do
-            echo "Applying $f"
-            PGPASSWORD=pesaswap psql -h localhost -U pesaswap -d pesaswap -v ON_ERROR_STOP=1 -f "$f"
-          done
+        # Unified path: the same idempotent runner used for the managed Neon DBs,
+        # tracked by the schema_migrations ledger — one migration mechanism
+        # everywhere (local + Neon), no per-environment drift.
+        run: node scripts/migrate.mjs
+        env:
+          MIGRATE_DATABASE_URL: ${{ env.DATABASE_URL }}
+          MIGRATE_LABEL: ci
 
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium

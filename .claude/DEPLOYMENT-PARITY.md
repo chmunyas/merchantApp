@@ -15,14 +15,16 @@ all skills and agents** — a feature that works on only one tier is not done.
 1. **Validate** in the dev container:
    `docker exec -w /app pesaswap-merchant-app npm run typecheck` then `npm test`
    (142 unit tests) — plus E2E (`npm run test:e2e`) where the change warrants it.
-2. **Migrations** — apply every new `db/NN-*.sql` to **all** databases. Dev and
-   prod-local mount `db/` as `docker-entrypoint-initdb.d` (fresh volumes only), so
-   apply manually there; the managed Neon databases are handled by the runner:
-   - dev: `docker exec pesaswap-postgres psql -U pesaswap -d pesaswap -f /docker-entrypoint-initdb.d/NN-*.sql`
-   - prod-local: `docker exec pesaswap-postgres-prod psql -U pesaswap -d pesaswap -f /docker-entrypoint-initdb.d/NN-*.sql`
-   - production + sandbox Neon: **automated in CI** (`scripts/migrate.mjs`, tracked
-     by a `schema_migrations` ledger — only new files run). To apply manually:
-     `MIGRATE_DATABASE_URL="<neon-url>" npm run migrate`.
+2. **Migrations** — one idempotent runner (`scripts/migrate.mjs`, tracked by a
+   `schema_migrations` ledger) is the single mechanism for **every** database
+   (local + managed Neon), so nothing drifts. It auto-detects TLS (Neon requires
+   it; local Postgres has none). Apply a new `db/NN-*.sql` with:
+   `MIGRATE_DATABASE_URL="<url>" npm run migrate` (a no-op when nothing is new).
+   - CI (e2e job) runs it against its Postgres; the deploy job runs it against
+     production + sandbox Neon (gated on the `NEON_DATABASE_URL` /
+     `NEON_SANDBOX_DATABASE_URL` secrets).
+   - dev + prod-local also mount `db/` as `docker-entrypoint-initdb.d` for a fresh
+     volume, and their ledgers are back-filled so the runner stays a no-op there.
    Do **not** put semicolons inside SQL comment lines (the local splitter breaks on them).
 3. **Register** any new route handler in `src/server.ts`. A build regenerates
    `src/routeTree.gen.ts` for new route files.
