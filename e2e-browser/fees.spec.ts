@@ -25,13 +25,22 @@ test.describe("fees cockpit (browser)", () => {
     await expect(page.getByText("PesaSwap").first()).toBeVisible({
       timeout: 30_000,
     });
-    await page.waitForTimeout(1000);
+    // Wait for the venue to be applied (proves the JWT + user + venue are in
+    // localStorage) before navigating — otherwise the dashboard could redirect to
+    // sign-in on a slow (CI) machine.
+    await expect(page.getByText("Merchant").first()).toBeVisible({
+      timeout: 30_000,
+    });
+    await page.waitForTimeout(500);
 
-    // Open the fee cockpit.
-    await page.goto("/dashboard/fees");
-    await expect(
-      page.getByRole("heading", { name: /Fees & takings/i }),
-    ).toBeVisible({ timeout: 20_000 });
+    // Open the fee cockpit. Retry the navigation to ride out any transient
+    // sign-in redirect while the session settles.
+    await expect(async () => {
+      await page.goto("/dashboard/fees");
+      await expect(
+        page.getByRole("heading", { name: /Fees & takings/i }),
+      ).toBeVisible({ timeout: 8_000 });
+    }).toPass({ timeout: 40_000 });
     await expect(page.getByText(/Blended effective rate/i)).toBeVisible();
     await expect(page.getByText(/By payment method/i)).toBeVisible();
     await expect(page.getByText(/Fee calculator/i)).toBeVisible();
