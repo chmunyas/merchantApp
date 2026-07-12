@@ -80,7 +80,27 @@ async function getAuthConfig(env: unknown): Promise<AuthConfig | null> {
 
 // Verify a Bearer JWT on a request. Returns the payload or null. Reusable by any
 // route that needs to be protected.
-export async function requireAuth(
+export function requireAuth(
+  request: Request,
+  env: unknown,
+): Promise<Record<string, unknown> | null> {
+  let cached = authMemo.get(request);
+  if (!cached) {
+    cached = resolveAuth(request, env);
+    authMemo.set(request, cached);
+  }
+  return cached;
+}
+
+// Memoized per-request (keyed on the Request object) so a handler that checks
+// auth several times — or the chain of handlers a request walks — verifies the
+// JWT / resolves a `pat_` token against the DB only ONCE.
+const authMemo = new WeakMap<
+  Request,
+  Promise<Record<string, unknown> | null>
+>();
+
+async function resolveAuth(
   request: Request,
   env: unknown,
 ): Promise<Record<string, unknown> | null> {
