@@ -1,6 +1,8 @@
 import { webHandle } from "@/lib/channels";
 import { getSql } from "@/lib/db";
 import { processInbound } from "@/lib/inbound";
+import { requireAuth } from "@/api/auth";
+import { roleAtLeast, venueFromPayload } from "@/lib/tenancy";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -68,9 +70,16 @@ export async function handleOmniRoute(
   // Cross-channel timeline for a person (identity graph payoff): every message
   // to/from this human across WhatsApp, web, Telegram, IG and SMS, by phone.
   if (path === "/api/timeline" && request.method === "GET") {
+    // A person's cross-channel history is PII, so this is staff-only and strictly
+    // tenant-pinned: the caller must be authenticated and can only ever read their
+    // OWN venue's data (the token's venue claim wins over any ?venue=).
+    const payload = await requireAuth(request, env);
+    if (!payload || !roleAtLeast(payload, "staff")) {
+      return json({ error: "unauthorized" }, 401);
+    }
     const sql = getSql(env);
     if (!sql) return json({ messages: [] });
-    const venue = url.searchParams.get("venue") ?? "main";
+    const venue = venueFromPayload(payload, url);
     const phone = url.searchParams.get("phone");
     if (!phone) return json({ error: "phone required" }, 400);
     const messages = await sql`
