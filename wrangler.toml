@@ -56,6 +56,18 @@ binding = "HYPERDRIVE"
 id = "37e129fb323e48f8b30c842852bfddd7"
 localConnectionString = "postgres://pesaswap:pesaswap@localhost:5433/pesaswap"
 
+# Real-time hub. A Durable Object is the only way to fan an event (e.g. a payment
+# webhook) out to a merchant's live WebSocket across isolates; module globals are
+# per-isolate. One instance per merchant (idFromName). The polling fallback reads
+# the same DO's durable buffer, so both transports are correct.
+[[durable_objects.bindings]]
+name = "REALTIME"
+class_name = "RealtimeHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RealtimeHub"]
+
 # Secrets (set via `wrangler secret put`):
 # - PESASWAP_API_KEY
 # - PESASWAP_WEBHOOK_SECRET
@@ -97,3 +109,13 @@ SENTRY_ENVIRONMENT = "sandbox"
 [[env.sandbox.hyperdrive]]
 binding = "HYPERDRIVE"
 id = "f9c735c4224f4ca6b40c1ad61aad1632"
+
+# Named environments do NOT inherit bindings/migrations, so the real-time DO is
+# redeclared for the sandbox Worker.
+[[env.sandbox.durable_objects.bindings]]
+name = "REALTIME"
+class_name = "RealtimeHub"
+
+[[env.sandbox.migrations]]
+tag = "v1"
+new_sqlite_classes = ["RealtimeHub"]

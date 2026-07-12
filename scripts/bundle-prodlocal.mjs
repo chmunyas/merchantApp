@@ -24,7 +24,17 @@ const serverDir = join(process.cwd(), "dist", "server");
 const wrapper = join(serverDir, "_prodlocal_entry.mjs");
 const outfile = join(serverDir, "worker.single.js");
 
-writeFileSync(wrapper, 'import worker from "./server.js";\nexport default worker;\n');
+// Re-export ONLY `default` (the ExportedHandler) and the RealtimeHub Durable
+// Object class — a valid named entrypoint. The route-split entry's other named
+// exports (INSTANT_PAYOUT_PERCENT as I, MANAGEABLE_ROLES as M, …) are NOT
+// re-exported, so they collapse to internal bindings and workerd stops rejecting
+// them as invalid entrypoints.
+writeFileSync(
+  wrapper,
+  'import worker from "./server.js";\n' +
+    'export { RealtimeHub } from "./server.js";\n' +
+    "export default worker;\n",
+);
 
 await build({
   entryPoints: [wrapper],

@@ -849,12 +849,12 @@ export async function handlePaymentRoute(
 
   // --- Polling notifications fallback ---
   if (path === "/api/notifications" && request.method === "GET") {
-    return withCors(handleNotifications(url), corsHeaders);
+    return withCors(await handleNotifications(url, env), corsHeaders);
   }
 
   // --- WebSocket upgrade for real-time ---
   if (path === "/api/realtime") {
-    return handleRealtimeUpgrade(request, url);
+    return await handleRealtimeUpgrade(request, url, env);
   }
 
   return null; // Not an API route
@@ -1737,7 +1737,7 @@ async function handleRefund(
 
     // Notify merchant via WebSocket
     const merchantId = (payment?.metadata?.merchant_id as string) || "";
-    broadcastToMerchant(merchantId, {
+    await broadcastToMerchant(runtimeEnv, merchantId, {
       type: "payment.refunded",
       data: {
         refund_id: refundRecord.id,
@@ -2020,7 +2020,7 @@ async function processWebhook(
 
       // Broadcast to merchant
       const merchantId = (metadata.merchant_id as string) || "";
-      broadcastToMerchant(merchantId, {
+      await broadcastToMerchant(runtimeEnv, merchantId, {
         type: "payment.succeeded",
         data: {
           payment_id: paymentId,
@@ -2070,7 +2070,7 @@ async function processWebhook(
       }
 
       const merchantId = (metadata.merchant_id as string) || "";
-      broadcastToMerchant(merchantId, {
+      await broadcastToMerchant(runtimeEnv, merchantId, {
         type: "payment.failed",
         data: {
           payment_id: paymentId,
@@ -2145,7 +2145,7 @@ async function processWebhook(
       });
       if (booked) {
         const evtMeta = (resource.metadata || {}) as Record<string, unknown>;
-        broadcastToMerchant((evtMeta.merchant_id as string) || "", {
+        await broadcastToMerchant(runtimeEnv, (evtMeta.merchant_id as string) || "", {
           type: "payment.disputed",
           data: {
             payment_id: resource.payment_id || paymentId,
@@ -2166,7 +2166,26 @@ async function processWebhook(
 
 // --- WebSocket Real-Time ---
 
-function handleRealtimeUpgrade(request: Request, url: URL): Response {
+// The merchant's real-time Durable Object stub, or null when there is no DO
+// binding. On Workers the DO is the ONLY correct hub (module globals are
+// per-isolate); in dev (single-process node SSR) the null path uses the in-memory
+// maps below, which are correct there because everything shares one process.
+type HubStub = { fetch(req: Request): Promise<Response> };
+function realtimeHub(env: unknown, merchantId: string): HubStub | null {
+  const binding = (
+    env as
+      | { REALTIME?: { idFromName(name: string): unknown; get(id: unknown): HubStub } }
+      | undefined
+  )?.REALTIME;
+  if (!binding || !merchantId) return null;
+  return binding.get(binding.idFromName(merchantId));
+}
+
+async function handleRealtimeUpgrade(
+  request: Request,
+  url: URL,
+  env: unknown,
+): Promise<Response> {
   const merchantId = url.searchParams.get("merchant") || "";
 
   // Check for WebSocket upgrade
@@ -2175,7 +2194,12 @@ function handleRealtimeUpgrade(request: Request, url: URL): Response {
     return jsonResponse({ error: { message: "Expected WebSocket upgrade" } }, 426);
   }
 
-  // Create WebSocket pair (Cloudflare Workers API)
+  // Cloudflare: hand the socket to the merchant's Durable Object so an event
+  // emitted from any isolate (e.g. a payment webhook) can reach it.
+  const hub = realtimeHub(env, merchantId);
+  if (hub) return hub.fetch(request);
+
+  // Dev (node SSR): a single process, so the in-memory registry below works.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const WSPair = (globalThis as any).WebSocketPair;
   if (!WSPair) {
@@ -2214,10 +2238,19 @@ function handleRealtimeUpgrade(request: Request, url: URL): Response {
 // Store recent events for polling clients
 const recentEvents = new Map<string, Array<{ event: unknown; timestamp: string }>>();
 
-function handleNotifications(url: URL): Response {
+async function handleNotifications(url: URL, env: unknown): Promise<Response> {
   const merchantId = url.searchParams.get("merchant") || "";
   const since = url.searchParams.get("since") || "";
 
+  // Cloudflare: read the merchant DO's durable buffer (correct across isolates).
+  const hub = realtimeHub(env, merchantId);
+  if (hub) {
+    return hub.fetch(
+      new Request(`https://hub/notifications?since=${encodeURIComponent(since)}`),
+    );
+  }
+
+  // Dev fallback (single-process in-memory buffer).
   const events = recentEvents.get(merchantId) || [];
   const filtered = since ? events.filter((e) => e.timestamp > since) : events;
 
@@ -2226,7 +2259,30 @@ function handleNotifications(url: URL): Response {
 
 // --- Broadcast helper ---
 
-function broadcastToMerchant(merchantId: string, event: unknown): void {
+async function broadcastToMerchant(
+  env: unknown,
+  merchantId: string,
+  event: unknown,
+): Promise<void> {
+  // Cloudflare: post to the merchant's Durable Object, which fans out to its live
+  // sockets and appends to the durable polling buffer — reliable across isolates.
+  const hub = realtimeHub(env, merchantId);
+  if (hub) {
+    try {
+      await hub.fetch(
+        new Request("https://hub/broadcast", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(event),
+        }),
+      );
+    } catch {
+      /* best-effort — real-time is never allowed to fail a payment flow */
+    }
+    return;
+  }
+
+  // Dev (single-process node SSR): in-memory fan-out + buffer.
   const connections = merchantConnections.get(merchantId);
   const serialized = JSON.stringify(event);
 

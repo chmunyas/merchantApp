@@ -59,6 +59,10 @@ import { handlePayLinkRoute } from "./api/pay-links";
 import { handleFeesRoute } from "./api/fees";
 import { handleOpenApiRoute } from "./api/openapi";
 
+// The real-time hub Durable Object must be exported from the worker entry so the
+// Cloudflare runtime can instantiate it for the REALTIME binding (see wrangler.toml).
+export { RealtimeHub } from "./realtime-do";
+
 type ServerEntry = {
   fetch: (
     request: Request,
