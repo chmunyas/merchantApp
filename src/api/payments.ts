@@ -20,6 +20,7 @@ import {
 import { recordPayment as recordInvoicePayment } from "@/lib/invoicing";
 import { isDisputeEvent, mapDisputeStatus } from "@/lib/disputes";
 import { computeFee, methodFromMetadata } from "@/lib/fees";
+import { captureException } from "@/lib/observability";
 import { loyaltyPointsFor } from "@/lib/loyalty";
 import { markPayLinkPaid } from "@/lib/pay-links";
 import { resolveInitiator } from "@/lib/tx-initiator";
@@ -279,8 +280,16 @@ async function recordLedger(
           THEN EXCLUDED.amount ELSE payments.amount END,
         metadata = EXCLUDED.metadata,
         updated_at = now()`;
-  } catch {
-    /* best-effort ledger */
+  } catch (err) {
+    // The ledger write is best-effort so it never blocks a payment, but a failure
+    // means a real transaction may be missing from the ledger — surface it (with
+    // context) instead of swallowing it silently.
+    console.error("[recordLedger] insert failed", rec.id, err);
+    void captureException(env, err, {
+      where: "recordLedger.insert",
+      paymentId: rec.id,
+      venue: rec.venue ?? null,
+    });
   }
 
   // Post the double-entry accounting journal (best-effort — an unbalanced or

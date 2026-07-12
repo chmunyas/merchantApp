@@ -142,6 +142,7 @@ function withSecurityHeaders(
   response: Response,
   request: Request,
   env: unknown,
+  requestId: string,
 ): Response {
   if (
     response.status === 101 ||
@@ -150,6 +151,8 @@ function withSecurityHeaders(
     return response;
   }
   const headers = new Headers(response.headers);
+  // Correlation id: lets support tie a merchant-reported error to server logs.
+  headers.set("X-Request-Id", requestId);
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("X-Frame-Options", "DENY");
   headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
@@ -177,6 +180,9 @@ function withSecurityHeaders(
 
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
+    // A correlation id threaded through logs, error reports and the response
+    // header, so a single request can be traced end-to-end.
+    const requestId = crypto.randomUUID();
     const response = await withRequestSql(
       env,
       ctx as { waitUntil?: (promise: Promise<unknown>) => void },
@@ -389,8 +395,9 @@ export default {
           const response = await handler.fetch(request, env, ctx);
           return await normalizeCatastrophicSsrResponse(response);
         } catch (error) {
-          console.error(error);
+          console.error(`[req ${requestId}]`, error);
           void captureException(env, error, {
+            requestId,
             url: new URL(request.url).pathname,
             method: request.method,
           });
@@ -398,6 +405,6 @@ export default {
         }
       },
     );
-    return withSecurityHeaders(response, request, env);
+    return withSecurityHeaders(response, request, env, requestId);
   },
 };
