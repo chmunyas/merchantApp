@@ -23,6 +23,7 @@ import { loyaltyPointsFor } from "@/lib/loyalty";
 import { useBranding } from "@/lib/branding";
 import { QrScanner } from "@/components/QrScanner";
 import { QRCodeSVG } from "qrcode.react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/pay")({
   validateSearch: (
@@ -76,6 +77,7 @@ function PayPage() {
   const [paymentData, setPaymentData] = useState<PaymentData | null>(null);
   const [customerPhone, setCustomerPhone] = useState("");
   const [paymentId, setPaymentId] = useState<string | null>(null);
+  const [verifying, setVerifying] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   // Split bills: the order's remaining balance after this payer's share, so the
   // success screen can invite the next person to pay the rest.
@@ -308,46 +310,84 @@ function PayPage() {
     });
 
     if (result.success) {
-      setPaymentId(result.payment_id || null);
-      // Split bills: re-fetch the order so the NEXT person sees the updated balance
-      // and can push their own share. Each payer keeps their own phone + STK.
-      if (paymentData.orderId && search.o) {
-        try {
-          const res = await fetch(`/api/qr/pay/${encodeURIComponent(search.o)}`);
-          if (res.ok) {
-            const d = (await res.json()) as { remaining?: number | null };
-            setNextRemaining(
-              typeof d.remaining === "number" ? d.remaining : null,
-            );
-          }
-        } catch {
-          /* balance refresh is a bonus — never block the receipt */
-        }
-      }
-      // Invoice payments: the server settles the invoice and stores the M-Pesa
-      // receipt (REF) during payment confirmation. Re-fetch the invoice so the
-      // same reference shows on the customer's receipt as on the merchant's.
-      if (paymentData.invoiceNumber) {
-        try {
-          const res = await fetch(
-            `/api/invoices/payinfo?number=${encodeURIComponent(paymentData.invoiceNumber)}`,
-          );
-          if (res.ok) {
-            const d = (await res.json()) as { paidRef?: string | null };
-            if (d.paidRef) {
-              setPaymentData((prev) =>
-                prev ? { ...prev, paidRef: d.paidRef } : prev,
-              );
-            }
-          }
-        } catch {
-          /* the receipt REF is a bonus — never block the receipt */
-        }
-      }
-      setState("success");
+      await finalizeSuccess(result.payment_id || null);
     } else {
+      // Keep the payment id so the guest can re-check a late M-Pesa confirmation
+      // (an STK approved after our poll window) WITHOUT paying again.
+      setPaymentId(result.payment_id || null);
       setErrorMsg(result.error || "Payment failed. Please try again.");
       setState("error");
+    }
+  }
+
+  // Post-success side effects + receipt. Shared by the direct success path and the
+  // "check status again" re-verification, so a late M-Pesa confirmation lands the
+  // guest on the exact same receipt (with the M-Pesa REF) as an instant success.
+  async function finalizeSuccess(pid: string | null) {
+    if (pid) setPaymentId(pid);
+    // Split bills: re-fetch the order so the NEXT person sees the updated balance
+    // and can push their own share. Each payer keeps their own phone + STK.
+    if (paymentData?.orderId && search.o) {
+      try {
+        const res = await fetch(`/api/qr/pay/${encodeURIComponent(search.o)}`);
+        if (res.ok) {
+          const d = (await res.json()) as { remaining?: number | null };
+          setNextRemaining(
+            typeof d.remaining === "number" ? d.remaining : null,
+          );
+        }
+      } catch {
+        /* balance refresh is a bonus — never block the receipt */
+      }
+    }
+    // Invoice payments: the server settles the invoice and stores the M-Pesa
+    // receipt (REF) during confirmation. Re-fetch so the same reference shows on
+    // the customer's receipt as on the merchant's.
+    if (paymentData?.invoiceNumber) {
+      try {
+        const res = await fetch(
+          `/api/invoices/payinfo?number=${encodeURIComponent(paymentData.invoiceNumber)}`,
+        );
+        if (res.ok) {
+          const d = (await res.json()) as { paidRef?: string | null };
+          if (d.paidRef) {
+            setPaymentData((prev) =>
+              prev ? { ...prev, paidRef: d.paidRef } : prev,
+            );
+          }
+        }
+      } catch {
+        /* the receipt REF is a bonus — never block the receipt */
+      }
+    }
+    setState("success");
+  }
+
+  // "I've already paid — check again": re-poll the authoritative payment status
+  // so a late M-Pesa confirmation is caught without charging the guest twice. The
+  // status endpoint records the ledger on first success, so this is safe + idempotent.
+  async function verifyPaymentStatus() {
+    if (!paymentId) return;
+    setVerifying(true);
+    try {
+      const res = await fetch(
+        `/api/payments/${encodeURIComponent(paymentId)}/status`,
+      );
+      if (res.ok) {
+        const d = (await res.json()) as { status?: string };
+        if (d.status === "succeeded") {
+          await finalizeSuccess(paymentId);
+          return;
+        }
+      }
+      toast.error("Not confirmed yet", {
+        description:
+          "If you approved the M-Pesa prompt, give it a moment and check again.",
+      });
+    } catch {
+      toast.error("Couldn't check the payment status. Please try again.");
+    } finally {
+      setVerifying(false);
     }
   }
 
@@ -473,6 +513,8 @@ function PayPage() {
             amount={(payAmount ?? paymentData?.amount ?? 0) + payTip}
             onRetry={retryPayment}
             onCancel={reset}
+            onVerify={paymentId ? verifyPaymentStatus : undefined}
+            verifying={verifying}
           />
         )}
         {state === "success" && paymentData && (
@@ -1034,15 +1076,30 @@ function ScannedState({
 }
 
 function ProcessingState() {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => window.clearInterval(t);
+  }, []);
   return (
-    <div className="flex flex-col items-center justify-center py-20 space-y-4">
-      <div className="size-16 rounded-full border-4 border-foreground border-t-transparent animate-spin" />
-      <div className="text-center">
-        <p className="text-sm font-semibold">Processing payment...</p>
-        <p className="text-[11px] text-muted-foreground mt-1">
-          Confirming via PesaSwap — check your phone for M-Pesa prompt
-        </p>
+    <div className="flex flex-col items-center justify-center py-16 space-y-5">
+      <div className="relative">
+        <div className="size-16 rounded-full border-4 border-foreground border-t-transparent animate-spin" />
+        <Smartphone className="absolute inset-0 m-auto size-6 text-foreground" />
       </div>
+      <div className="text-center space-y-1">
+        <p className="text-sm font-semibold">Waiting for your M-Pesa PIN…</p>
+        <p className="text-[11px] text-muted-foreground">
+          Check your phone and enter your M-Pesa PIN to approve.
+        </p>
+        <p className="text-[11px] font-mono text-muted-foreground">{elapsed}s</p>
+      </div>
+      {elapsed >= 20 && (
+        <p className="max-w-[15rem] text-center text-[11px] text-muted-foreground">
+          Taking a moment? The prompt can take up to a minute. Keep this page
+          open — it updates automatically once you approve.
+        </p>
+      )}
     </div>
   );
 }
@@ -1052,11 +1109,15 @@ function ErrorState({
   amount,
   onRetry,
   onCancel,
+  onVerify,
+  verifying,
 }: {
   message: string;
   amount: number;
   onRetry: (newAmount?: number) => void;
   onCancel: () => void;
+  onVerify?: () => void;
+  verifying?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [amt, setAmt] = useState(String(Math.round(amount)));
@@ -1133,6 +1194,21 @@ function ErrorState({
             KES {Math.round(amount).toLocaleString()}
           </p>
         </div>
+      )}
+
+      {onVerify && (
+        <button
+          onClick={onVerify}
+          disabled={verifying}
+          className="w-full border border-emerald-300 bg-emerald-50 text-emerald-800 py-3 rounded-2xl text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
+        >
+          {verifying ? (
+            <span className="size-4 rounded-full border-2 border-emerald-700 border-t-transparent animate-spin" />
+          ) : (
+            <CheckCircle2 className="size-4" />
+          )}
+          {verifying ? "Checking…" : "I've already paid — check status"}
+        </button>
       )}
 
       <button
