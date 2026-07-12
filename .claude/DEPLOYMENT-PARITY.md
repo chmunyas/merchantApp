@@ -32,6 +32,13 @@ all skills and agents** — a feature that works on only one tier is not done.
    `docker exec -w /app -e CLOUDFLARE_API_KEY=... -e CLOUDFLARE_EMAIL=... -e CLOUDFLARE_ACCOUNT_ID=... pesaswap-merchant-app sh -lc 'npm run build && npx --yes wrangler@latest deploy'`.
 5. **Rebuild the prod-local mirror** so `:8787` reflects the new code:
    `docker compose -f docker-compose.prod.yml up -d --build merchant-app-prod`.
+   The image runs `scripts/bundle-prodlocal.mjs` after the build to emit a single
+   self-contained `dist/server/worker.single.js` and serves it with `wrangler dev
+   --no-bundle`. This is required because the route-split build re-exports shared
+   constants from the worker entry (`export { INSTANT_PAYOUT_PERCENT as I, … }`),
+   which newer workerd rejects as invalid named entrypoints ("Incorrect type for
+   map entry 'I'"). Do **not** revert the prod CMD to a plain `wrangler dev` — it
+   crash-loops. The shared `dist/` used by `wrangler deploy` is untouched.
 6. **Verify** the feature on **all three tiers** (curl/UI): `localhost:8080`,
    `localhost:8787`, and the Cloudflare URL.
 7. **Commit + push**.
