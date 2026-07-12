@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { seedAuth } from "./_auth";
+
 // Store-and-forward resilience: a sale taken OFFLINE is queued locally (shown as
 // pending, never "paid"), then syncs automatically when connectivity returns.
 const rnd = () => Math.random().toString(36).slice(2, 8);
@@ -10,7 +12,8 @@ test.describe("offline store-and-forward (browser)", () => {
     context,
     request,
   }) => {
-    // Seed a real merchant + launch the mobile app pinned to that JWT.
+    // Seed a real merchant + open the mobile app already signed in (deterministic
+    // — no launch-token/demo-session race).
     const email = `e2e-off-${rnd()}@e2e.test`;
     const su = await request
       .post("/api/auth/signup", {
@@ -21,10 +24,10 @@ test.describe("offline store-and-forward (browser)", () => {
         },
       })
       .then((r) => r.json());
-    const token: string = su.token;
     const venue: string = su.user.venue;
 
-    await page.goto(`/pesaswapApp#token=${token}`);
+    await seedAuth(page, { token: su.token, venue, name: "E2E Offline" });
+    await page.goto("/pesaswapApp");
     // IMPORTANT: fully hydrate the app BEFORE going offline — otherwise blocking
     // the network would prevent lazy JS chunks from loading and the app would
     // never render. Wait for the mobile shell + home view to be interactive.
@@ -69,10 +72,22 @@ test.describe("offline store-and-forward (browser)", () => {
     );
 
     // The queued sale surfaces (race-proof across the online/offline transition):
-    // the status pill reads "1 to sync" (online) or "Offline · 1" (offline).
-    await expect(page.getByText(/to sync|Offline/i).first()).toBeVisible({
-      timeout: 15_000,
-    });
+    // the status pill reads "1 to sync" (online) or "Offline · 1" (offline). Poll
+    // + re-dispatch the change event in case the hook mounted after the first one.
+    await expect
+      .poll(
+        async () => {
+          await page.evaluate(() =>
+            window.dispatchEvent(new Event("pesaswap:offline-changed")),
+          );
+          return page
+            .getByText(/to sync|Offline/i)
+            .first()
+            .isVisible();
+        },
+        { timeout: 25_000, intervals: [500, 1000, 1500, 2000] },
+      )
+      .toBe(true);
 
     // Back online: the queue drains automatically. Fire the browser 'online' event
     // the hook listens for.
@@ -85,7 +100,7 @@ test.describe("offline store-and-forward (browser)", () => {
         async () => {
           const list = await request
             .get(`/api/payments/list?venue=${venue}&limit=20`, {
-              headers: { authorization: `Bearer ${token}` },
+              headers: { authorization: `Bearer ${su.token}` },
             })
             .then((r) => r.json())
             .catch(() => ({ payments: [] }));

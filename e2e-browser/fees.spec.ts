@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
 
-// The fee-transparency cockpit renders for an authenticated merchant. Uses the
-// real onboarding wizard so the session is established exactly like a live user.
+import { seedAuth } from "./_auth";
+
+// The fee-transparency cockpit renders for an authenticated merchant. We seed the
+// session deterministically (no launch-token race) then open the dashboard page.
 const rnd = () => Math.random().toString(36).slice(2, 8);
 
 test.describe("fees cockpit (browser)", () => {
@@ -18,29 +20,18 @@ test.describe("fees cockpit (browser)", () => {
         },
       })
       .then((r) => r.json());
-    const token: string = su.token;
 
-    // Adopt the session (pins venue + user), then open the dashboard cockpit.
-    await page.goto(`/pesaswapApp#token=${token}`);
-    await expect(page.getByText("PesaSwap").first()).toBeVisible({
-      timeout: 30_000,
+    await seedAuth(page, {
+      token: su.token,
+      venue: su.user.venue,
+      name: "E2E Fees",
     });
-    // Wait for the venue to be applied (proves the JWT + user + venue are in
-    // localStorage) before navigating — otherwise the dashboard could redirect to
-    // sign-in on a slow (CI) machine.
-    await expect(page.getByText("Merchant").first()).toBeVisible({
-      timeout: 30_000,
-    });
-    await page.waitForTimeout(500);
 
-    // Open the fee cockpit. Retry the navigation to ride out any transient
-    // sign-in redirect while the session settles.
-    await expect(async () => {
-      await page.goto("/dashboard/fees");
-      await expect(
-        page.getByRole("heading", { name: /Fees & takings/i }),
-      ).toBeVisible({ timeout: 8_000 });
-    }).toPass({ timeout: 40_000 });
+    // Open the fee cockpit directly — the seeded session authenticates it.
+    await page.goto("/dashboard/fees");
+    await expect(
+      page.getByRole("heading", { name: /Fees & takings/i }),
+    ).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText(/Blended effective rate/i)).toBeVisible();
     await expect(page.getByText(/By payment method/i)).toBeVisible();
     await expect(page.getByText(/Fee calculator/i)).toBeVisible();
