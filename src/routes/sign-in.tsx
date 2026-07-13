@@ -167,6 +167,14 @@ function SignInPage() {
         void navigate({ to: "/admin" });
         return;
       }
+      // On a real deploy the demo admin password doesn't apply, so DON'T fall back
+      // to a fake client-only admin session (it can't call the admin APIs). Take the
+      // operator to the real admin password form instead, pre-filled.
+      setEmail("admin@pesaswap.io");
+      setPassword("");
+      setError("");
+      setView("login");
+      return;
     }
     demoLogin(role);
     void navigate({ to: getDefaultRouteForRole(role) });
