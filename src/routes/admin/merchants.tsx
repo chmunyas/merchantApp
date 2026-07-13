@@ -185,21 +185,28 @@ function AdminMerchantsPage() {
   function refresh() {
     ensureAdminDemoData();
     setActivity(getActivityLog());
-    // Prefer REAL tenant accounts from the server (self-serve signups); fall back
-    // to the local demo dataset when the API is unavailable or empty (offline/dev).
+    // Load REAL tenant accounts from the server. Only fall back to the local demo
+    // dataset on a NETWORK error (dev/offline) — never on 401/403, which means the
+    // caller reached /admin via a demo session with no real admin JWT. Surfacing
+    // that explicitly avoids the trap of showing demo rows as if they were live.
     void (async () => {
       try {
         const res = await authFetch("/api/admin/merchants");
         if (res.ok) {
           const data = (await res.json()) as { merchants?: RealMerchant[] };
-          const real = (data.merchants ?? []).map(toMerchantAccount);
-          if (real.length > 0) {
-            setMerchants(real);
-            return;
-          }
+          setMerchants((data.merchants ?? []).map(toMerchantAccount));
+          return;
+        }
+        if (res.status === 401 || res.status === 403) {
+          setMerchants([]);
+          toast.error(
+            "You're not signed in as a platform admin — log in with an admin account (email + password) to see live merchants.",
+          );
+          return;
         }
       } catch {
-        /* fall through to demo data */
+        setMerchants(getMerchants());
+        return;
       }
       setMerchants(getMerchants());
     })();
