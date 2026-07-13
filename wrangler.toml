@@ -38,6 +38,14 @@ CORS_ALLOWED_ORIGIN = "https://pesaswap-merchant-app.pesaswap.workers.dev"
 # to take real M-Pesa payments.
 PAYMENTS_TEST_MODE = "0"
 
+# PILOT ONLY — echo the login OTP back in the /api/auth/otp/request response (the
+# sign-in screen then shows "Dev code: NNNNNN"). This unblocks passwordless login
+# while no email/SMS provider is wired. SECURITY: anyone who can reach /sign-in can
+# request AND see a code for ANY email, so this effectively disables OTP delivery
+# as a security boundary (account-takeover risk for accounts without TOTP). Turn
+# this OFF ("0"/remove) as soon as a real email provider is configured.
+AUTH_OTP_DEBUG = "1"
+
 # --- Cloudflare edge capabilities ---
 
 # Workers AI: the natural-language ops agent + embeddings for pgvector memory.
@@ -102,6 +110,9 @@ CORS_ALLOWED_ORIGIN = "https://pesaswap-merchant-app-sandbox.pesaswap.workers.de
 # flow is exercised end-to-end. This is what makes it a true sandbox.
 PAYMENTS_TEST_MODE = "1"
 SENTRY_ENVIRONMENT = "sandbox"
+# Pilot: echo the login OTP on-screen (no email/SMS provider wired). See the note
+# on the top-level AUTH_OTP_DEBUG.
+AUTH_OTP_DEBUG = "1"
 
 # Sandbox database — a SEPARATE Neon database (pesaswap_sandbox) so test data
 # never mixes with production. Provisioned via:

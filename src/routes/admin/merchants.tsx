@@ -68,6 +68,47 @@ import {
   type SubscriptionTier,
 } from "@/lib/admin";
 import { cn } from "@/lib/utils";
+import { authFetch } from "@/lib/auth";
+
+// Map a real tenant row from /api/admin/merchants onto the admin UI's account
+// shape (vertical/location aren't tracked server-side yet, so they're best-effort).
+type RealMerchant = {
+  id: string;
+  businessName: string;
+  ownerName: string;
+  ownerEmail: string;
+  phone: string;
+  plan: string;
+  active: boolean;
+  onboardedAt: string;
+  txCount: number;
+  txOk: number;
+  grossMinor: number;
+  lastTxAt: string | null;
+};
+
+function toMerchantAccount(m: RealMerchant): MerchantAccount {
+  const gross = (m.grossMinor / 100).toLocaleString(undefined, {
+    maximumFractionDigits: 0,
+  });
+  const last = m.lastTxAt
+    ? ` · last ${new Date(m.lastTxAt).toLocaleDateString()}`
+    : "";
+  return {
+    id: m.id,
+    businessName: m.businessName,
+    ownerName: m.ownerName || m.ownerEmail || "—",
+    phone: m.phone || "",
+    email: m.ownerEmail || "",
+    vertical: "retail",
+    status: m.active ? "active" : "suspended",
+    tier: m.plan === "pro" ? "growth" : "free",
+    location: "",
+    features: {},
+    onboardedAt: m.onboardedAt,
+    notes: `${m.txOk}/${m.txCount} paid · KES ${gross}${last}`,
+  };
+}
 
 export const Route = createFileRoute("/admin/merchants")({
   component: AdminMerchantsPage,
@@ -143,8 +184,25 @@ function AdminMerchantsPage() {
 
   function refresh() {
     ensureAdminDemoData();
-    setMerchants(getMerchants());
     setActivity(getActivityLog());
+    // Prefer REAL tenant accounts from the server (self-serve signups); fall back
+    // to the local demo dataset when the API is unavailable or empty (offline/dev).
+    void (async () => {
+      try {
+        const res = await authFetch("/api/admin/merchants");
+        if (res.ok) {
+          const data = (await res.json()) as { merchants?: RealMerchant[] };
+          const real = (data.merchants ?? []).map(toMerchantAccount);
+          if (real.length > 0) {
+            setMerchants(real);
+            return;
+          }
+        }
+      } catch {
+        /* fall through to demo data */
+      }
+      setMerchants(getMerchants());
+    })();
   }
 
   const globalFeatures = useMemo(

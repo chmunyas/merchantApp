@@ -58,6 +58,7 @@ import { handlePaymentMethodsAdminRoute } from "./api/payment-methods-admin";
 import { handlePayLinkRoute } from "./api/pay-links";
 import { handleFeesRoute } from "./api/fees";
 import { handleOpenApiRoute } from "./api/openapi";
+import { handleAdminRoute } from "./api/admin";
 
 // The real-time hub Durable Object must be exported from the worker entry so the
 // Cloudflare runtime can instantiate it for the REALTIME binding (see wrangler.toml).
@@ -276,6 +277,10 @@ export default {
           // Venue picker list (Postgres-backed, principal-scoped)
           const venuesResponse = await handleVenuesRoute(request, env);
           if (venuesResponse) return venuesResponse;
+
+          // Platform-admin views over real tenant data (merchant accounts list).
+          const adminResponse = await handleAdminRoute(request, env);
+          if (adminResponse) return adminResponse;
 
           // Multi-store: per-store team (members/roles) + cross-store rollup
           const multiStoreResponse = await handleMultiStoreRoute(request, env);
