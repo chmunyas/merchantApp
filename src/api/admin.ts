@@ -15,21 +15,35 @@ function json(data: unknown, status = 200): Response {
 }
 
 // Platform-admin views over REAL tenant data (not the local demo dataset the admin
-// UI seeds). GET /api/admin/merchants lists every venue with its owner account and
-// live payment activity, so the operator can actually see self-serve signups.
+// UI seeds). Every /api/admin/* route is admin-only, server-verified — so the admin
+// portal can gate itself on a real admin JWT, not a client-set localStorage role.
 export async function handleAdminRoute(
   request: Request,
   env: unknown,
 ): Promise<Response | null> {
   const url = new URL(request.url);
-  if (url.pathname !== "/api/admin/merchants") return null;
+  if (!url.pathname.startsWith("/api/admin/")) return null;
   if (request.method === "OPTIONS") return json({ ok: true });
-  if (request.method !== "GET") return null;
 
+  // Single choke point: no /api/admin/* endpoint is reachable without a real admin
+  // token (a forged localStorage role can never satisfy this).
   const payload = await requireAuth(request, env);
   if (!payload) return json({ error: "unauthorized" }, 401);
   if (payload.role !== "admin") return json({ error: "forbidden" }, 403);
 
+  // Lightweight probe the admin portal calls to verify the session server-side.
+  if (url.pathname === "/api/admin/session") {
+    return json({ admin: true });
+  }
+
+  if (url.pathname === "/api/admin/merchants" && request.method === "GET") {
+    return handleMerchantsList(env);
+  }
+
+  return json({ error: "not found" }, 404);
+}
+
+async function handleMerchantsList(env: unknown): Promise<Response> {
   const sql = getSql(env);
   if (!sql) return json({ error: "database not configured" }, 503);
 

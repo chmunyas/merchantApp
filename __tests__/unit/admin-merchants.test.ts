@@ -36,6 +36,25 @@ describe("/api/admin/merchants", () => {
     expect(await res!.json()).toEqual({ merchants: [] });
   });
 
+  it("verifies an admin session for /api/admin/session", async () => {
+    vi.mocked(requireAuth).mockResolvedValue({ role: "admin" });
+    const res = await handleAdminRoute(
+      new Request("https://x.dev/api/admin/session"),
+      {},
+    );
+    expect(res!.status).toBe(200);
+    expect(await res!.json()).toEqual({ admin: true });
+  });
+
+  it("blocks the session probe for a non-admin", async () => {
+    vi.mocked(requireAuth).mockResolvedValue({ role: "merchant", venue: "v_1" });
+    const res = await handleAdminRoute(
+      new Request("https://x.dev/api/admin/session"),
+      {},
+    );
+    expect(res!.status).toBe(403);
+  });
+
   it("ignores unrelated paths", async () => {
     const res = await handleAdminRoute(
       new Request("https://x.dev/api/venues"),

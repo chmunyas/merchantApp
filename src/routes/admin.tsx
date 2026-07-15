@@ -18,6 +18,7 @@ import {
 import { useMemo, useState } from "react";
 
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
+import { AdminGuard } from "@/components/auth/AdminGuard";
 import { UserProfileMenu } from "@/components/auth/UserProfileMenu";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
@@ -178,7 +179,9 @@ function AdminShell() {
 function AdminLayout() {
   return (
     <ProtectedRoute roles={["admin"]}>
-      <AdminShell />
+      <AdminGuard>
+        <AdminShell />
+      </AdminGuard>
     </ProtectedRoute>
   );
 }
