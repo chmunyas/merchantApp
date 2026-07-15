@@ -12,6 +12,7 @@ import {
   Brain,
   Check,
   CircleDollarSign,
+  ClipboardList,
   ClipboardPaste,
   Clock3,
   Copy,
@@ -40,6 +41,7 @@ import { FeeCard } from "./features/FeeCard";
 import { InvoiceCreator } from "./features/InvoiceCreator";
 import { SyncCockpit, SyncStatusPill } from "./features/SyncCockpit";
 import { TableServiceView } from "./features/TableServiceView";
+import { QuickOrderView } from "./features/QuickOrderView";
 import { TapGoPOS } from "./features/TapGoPOS";
 import { WalletReconciliationView } from "./features/WalletReconciliationView";
 import { OmniShare } from "./OmniShare";
@@ -68,6 +70,7 @@ type Tab =
   | "insights"
   | "wallets"
   | "tapgo"
+  | "order"
   | "tables";
 
 export function MerchantApp({
@@ -240,12 +243,14 @@ export function MerchantApp({
           <WalletReconciliationView invoices={ledger.invoices} />
         )}
         {tab === "tapgo" && <TapGoPOS />}
+        {tab === "order" && <QuickOrderView />}
         {tab === "tables" && <TableServiceView />}
       </div>
 
       {/* bottom nav */}
-      <nav className={`absolute bottom-0 inset-x-0 border-t border-border bg-card/95 backdrop-blur px-2 py-2 grid grid-cols-6 gap-1 ${standalone ? "pb-[calc(0.5rem+env(safe-area-inset-bottom))]" : "rounded-b-[2.4rem]"}`}>
+      <nav className={`absolute bottom-0 inset-x-0 border-t border-border bg-card/95 backdrop-blur px-2 py-2 grid grid-cols-7 gap-1 ${standalone ? "pb-[calc(0.5rem+env(safe-area-inset-bottom))]" : "rounded-b-[2.4rem]"}`}>
         {[
+          { id: "order", icon: ClipboardList, label: "Order" },
           { id: "tapgo", icon: Zap, label: "Tap&Go" },
           { id: "tables", icon: Layers, label: "Tables" },
           { id: "home", icon: Home, label: "Home" },

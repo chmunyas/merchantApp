@@ -11,7 +11,7 @@ import {
   Utensils,
   XCircle,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { OmniShare } from "@/components/merchant/OmniShare";
@@ -54,6 +54,7 @@ function KitchenDisplayPage() {
   const [apiOrders, setApiOrders] = useState<KitchenOrder[] | null>(null);
   const [filter, setFilter] = useState<"active" | "all">("active");
   const [, setTick] = useState(0);
+  const seenIds = useRef<Set<string> | null>(null);
   const orders = apiOrders && apiOrders.length > 0 ? apiOrders : localOrders;
   const usingApiOrders = Boolean(apiOrders && apiOrders.length > 0);
 
@@ -85,20 +86,41 @@ function KitchenDisplayPage() {
 
   useEffect(() => {
     let cancelled = false;
-    authFetch("/api/orders")
-      .then(async (res) => {
-        if (!res.ok) return null;
+    const load = async () => {
+      try {
+        const res = await authFetch("/api/orders");
+        if (!res.ok) return;
         const data = (await res.json()) as { orders?: ApiOrder[] };
-        return (data.orders ?? []).map(apiOrderToKitchenOrder);
-      })
-      .then((next) => {
-        if (!cancelled && next) setApiOrders(next);
-      })
-      .catch(() => {
-        if (!cancelled) setApiOrders(null);
-      });
+        const mapped = (data.orders ?? []).map(apiOrderToKitchenOrder);
+        if (cancelled) return;
+        // Alert for orders that appeared since the last poll (from ANY device —
+        // e.g. a waiter's phone), skipping the very first load.
+        if (seenIds.current) {
+          const fresh = mapped.filter(
+            (o) => o.status === "new" && !seenIds.current!.has(o.id),
+          );
+          if (fresh.length > 0) {
+            toast.success(
+              fresh.length === 1
+                ? `New order${fresh[0].tableNumber ? ` · Table ${fresh[0].tableNumber}` : ""}`
+                : `${fresh.length} new orders`,
+              { icon: <Bell className="h-4 w-4" /> },
+            );
+            playOrderSound();
+          }
+        }
+        seenIds.current = new Set(mapped.map((o) => o.id));
+        setApiOrders(mapped);
+      } catch {
+        /* keep the last snapshot on a transient error */
+      }
+    };
+    void load();
+    // Poll so the kitchen sees orders taken on other devices within a few seconds.
+    const id = setInterval(load, 5000);
     return () => {
       cancelled = true;
+      clearInterval(id);
     };
   }, []);
 
@@ -267,7 +289,7 @@ function apiOrderToKitchenOrder(order: ApiOrder): KitchenOrder {
     tableId,
     tableNumber: Number.isFinite(tableNumber) ? tableNumber : 0,
     status: order.status,
-    total: Number(order.total ?? 0),
+    total: Number(order.total ?? 0) / 100,
     fulfilment:
       order.fulfillment_type === "collection"
         ? "takeaway"
@@ -281,7 +303,7 @@ function apiOrderToKitchenOrder(order: ApiOrder): KitchenOrder {
       id: item.id,
       name: item.name,
       quantity: Number(item.qty ?? 1),
-      price: Number(item.price ?? 0),
+      price: Number(item.price ?? 0) / 100,
       notes: item.notes ?? undefined,
     })),
   };
