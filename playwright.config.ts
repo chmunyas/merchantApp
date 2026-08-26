@@ -20,5 +20,20 @@ export default defineConfig({
     headless: true,
     trace: "on-first-retry",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    {
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"], channel: "chromium" },
+    },
+    { name: "webkit", use: { ...devices["Desktop Safari"] } },
+    { name: "iphone", use: { ...devices["iPhone 13"] } },
+    {
+      name: "android-handheld",
+      use: { ...devices["Pixel 7"], channel: "chromium" },
+    },
+    {
+      name: "android-tablet",
+      use: { ...devices["Galaxy Tab S4"], channel: "chromium" },
+    },
+  ],
 });

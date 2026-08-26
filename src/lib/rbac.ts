@@ -1,15 +1,11 @@
-import type { UserRole } from "@/lib/auth";
+import {
+  ROLE_RANK,
+  isVenueRole,
+  roleAtLeast as roleAtLeastCanonical,
+  type AppRole,
+} from "@/lib/tenancy";
 
-// Higher rank = more privilege. Front-of-house < shift lead < manager < owner.
-export const ROLE_RANK: Record<UserRole, number> = {
-  customer: 0,
-  staff: 1,
-  supervisor: 2,
-  manager: 3,
-  merchant: 4,
-  admin: 5,
-  reseller_admin: 5,
-};
+export { ROLE_RANK } from "@/lib/tenancy";
 
 // Minimum role rank required to open a dashboard route. Routes NOT listed here
 // are open to every signed-in dashboard role (front-of-house operations: orders,
@@ -28,6 +24,9 @@ const ROUTE_MIN_RANK: ReadonlyArray<readonly [string, number]> = [
   ["/dashboard/disputes", ROLE_RANK.manager],
   ["/dashboard/api-keys", ROLE_RANK.manager],
   ["/dashboard/payment-methods", ROLE_RANK.manager],
+  // Approving a payout run and setting salaries are both manager acts; without
+  // this the nav offers staff a page that answers 403 to everything on it.
+  ["/dashboard/payouts", ROLE_RANK.manager],
   ["/dashboard/reports", ROLE_RANK.manager],
   ["/dashboard/analytics", ROLE_RANK.manager],
   ["/dashboard/forecast", ROLE_RANK.manager],
@@ -56,8 +55,10 @@ export function minRankForPath(path: string): number {
   return best;
 }
 
-export function canAccessPath(role: UserRole, path: string): boolean {
-  return (ROLE_RANK[role] ?? 0) >= minRankForPath(path);
+export function canAccessPath(role: AppRole, path: string): boolean {
+  // Platform and organization principals use their own dedicated surfaces; they
+  // never inherit a venue dashboard through a numeric role comparison.
+  return isVenueRole(role) && ROLE_RANK[role] >= minRankForPath(path);
 }
 
 // Server-side guard: does this JWT payload's role meet the minimum rank? Use in
@@ -65,11 +66,12 @@ export function canAccessPath(role: UserRole, path: string): boolean {
 // module has no runtime dependency on the client auth context (type-only import).
 export function roleAtLeast(
   payload: { role?: unknown } | null,
-  min: UserRole,
+  min: AppRole,
 ): boolean {
-  const role =
-    payload && typeof payload.role === "string"
-      ? (payload.role as UserRole)
-      : undefined;
-  return role ? (ROLE_RANK[role] ?? 0) >= ROLE_RANK[min] : false;
+  return roleAtLeastCanonical(
+    payload as Record<string, unknown> | null,
+    min,
+  );
 }
+
+export type { AppRole, VenueRole } from "@/lib/tenancy";

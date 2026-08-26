@@ -57,10 +57,11 @@ describe("offline-queue", () => {
     expect(queueSize(s)).toBe(0);
   });
 
-  it("defaults a stable idempotency key to the sale id", () => {
+  it("uses a device-scoped draft key instead of a reusable sale id", () => {
     const s = memStore();
     enqueueCharge(s, { id: "c1", amount: 100, currency: "KES", metadata: {} });
-    expect(listQueued(s)[0].idempotencyKey).toBe("c1");
+    expect(listQueued(s)[0].idempotencyKey).toContain(":c1:");
+    expect(listQueued(s)[0].mode).toBe("draft");
     enqueueCharge(s, {
       id: "c2",
       amount: 200,
@@ -141,7 +142,7 @@ describe("offline-queue — store-and-forward sync", () => {
     expect(res.sent).toBe(1);
   });
 
-  it("queueStats separates pending from backing-off (failed) items", async () => {
+  it("queueStats reports review-only drafts as pending, never retrying", async () => {
     const s = memStore();
     enqueueCharge(s, { id: "p", amount: 100, currency: "KES", metadata: {} });
     enqueueCharge(s, { id: "f", amount: 200, currency: "KES", metadata: {} });
@@ -154,7 +155,7 @@ describe("offline-queue — store-and-forward sync", () => {
     );
     const stats = queueStats(s, now + 1_000);
     expect(stats.total).toBe(1);
-    expect(stats.failed).toBe(1); // "f" is backing off
-    expect(stats.pending).toBe(0);
+    expect(stats.failed).toBe(0);
+    expect(stats.pending).toBe(1);
   });
 });

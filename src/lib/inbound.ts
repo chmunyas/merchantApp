@@ -1,8 +1,8 @@
 import { runAgent, type AgentRole } from "@/lib/agent";
-import { getAdapter } from "@/lib/channels";
 import type { InboundMessage } from "@/lib/channels/types";
 import { getSql } from "@/lib/db";
 import { consentKeyword, isSuppressed, setSuppressed } from "@/lib/consent";
+import { queueOutbound } from "@/lib/outbound-jobs";
 import { notifyStaff } from "@/lib/push";
 
 export type InboundResult = {
@@ -17,6 +17,12 @@ export type InboundResult = {
 };
 
 type Sql = NonNullable<ReturnType<typeof getSql>>;
+
+function conversationHandle(msg: InboundMessage): string {
+  return msg.handle.startsWith(`${msg.channel}:`)
+    ? msg.handle
+    : `${msg.channel}:${msg.handle}`;
+}
 
 // Resolve (or create) the Person behind this message and link the channel
 // identity. Best-effort: identity enrichment must never break message flow.
@@ -68,19 +74,16 @@ export async function processInbound(
   msg: InboundMessage,
   venue: string,
   env: unknown,
+  accountId = "internal",
+  ingressId?: string,
+  receivedAt?: Date,
 ): Promise<InboundResult> {
   const sql = getSql(env);
   if (!sql) return { error: "database not configured" };
 
   // 1. Durable event log + inbound dedupe. When a provider message id is
   //    present and already seen, the insert conflicts and we stop (idempotent).
-  const inboundEvent = await sql`
-    INSERT INTO events (venue_id, channel, direction, provider_msg_id, type, status)
-    VALUES (${venue}, ${msg.channel}, 'inbound', ${msg.providerMsgId}, 'message', 'received')
-    ON CONFLICT (channel, provider_msg_id) WHERE provider_msg_id IS NOT NULL
-      DO NOTHING
-    RETURNING id`;
-  if (inboundEvent.length === 0) return { deduped: true };
+  const eventKey = ingressId ?? crypto.randomUUID();
 
   // 2. Role from the allowlist (staff/admin numbers unlock CRM tools).
   const [allow] = await sql`
@@ -96,59 +99,93 @@ export async function processInbound(
   const personId = await linkIdentity(sql, venue, msg);
 
   // 4. Upsert the conversation (channel-scoped handle keeps this collision-free).
+  const storedHandle = conversationHandle(msg);
   const [conversation] = await sql`
-    INSERT INTO conversations (venue_id, wa_id, name, role, channel, person_id)
-    VALUES (${venue}, ${msg.handle}, ${msg.name}, ${role}, ${msg.channel}, ${personId})
-    ON CONFLICT (venue_id, wa_id) DO UPDATE
-      SET last_message_at = now(),
+    INSERT INTO conversations
+      (venue_id, wa_id, name, role, channel, person_id, last_inbound_at)
+        VALUES (${venue}, ${storedHandle}, ${msg.name}, ${role}, ${msg.channel},
+          ${personId}, ${receivedAt ?? new Date()})
+    ON CONFLICT (venue_id, channel, wa_id) DO UPDATE
+        SET last_message_at = GREATEST(conversations.last_message_at, ${receivedAt ?? new Date()}),
+          last_inbound_at = GREATEST(
+            COALESCE(conversations.last_inbound_at, '-infinity'::timestamptz),
+            ${receivedAt ?? new Date()}
+          ),
           name = COALESCE(EXCLUDED.name, conversations.name),
           person_id = COALESCE(conversations.person_id, EXCLUDED.person_id)
     RETURNING id`;
 
   await sql`
-    INSERT INTO messages (conversation_id, direction, body, channel)
-    VALUES (${conversation.id}, 'inbound', ${msg.text}, ${msg.channel})`;
+    INSERT INTO messages (conversation_id, direction, body, channel, ingress_id)
+    VALUES (${conversation.id}, 'inbound', ${msg.text}, ${msg.channel}, ${ingressId ?? null})
+    ON CONFLICT (ingress_id, direction) WHERE ingress_id IS NOT NULL DO NOTHING`;
 
   // 4a. Consent / suppression (compliance). STOP opts this handle out of outbound
   //     on this channel; START opts back in — both get a transactional reply.
   const keyword = consentKeyword(msg.text);
-  if (keyword === "stop" || keyword === "start") {
-    await setSuppressed(sql, venue, msg.channel, msg.handle, keyword === "stop");
+  if (keyword === "stop" || keyword === "start" || keyword === "help") {
+    if (keyword !== "help") {
+      await setSuppressed(sql, venue, msg.channel, msg.handle, keyword === "stop");
+    }
     const confirm =
       keyword === "stop"
         ? "You've been unsubscribed and won't receive further messages. Reply START to opt back in."
-        : "You're opted back in. How can we help?";
+        : keyword === "start"
+          ? "You're opted back in. How can we help?"
+          : "For help, reply with your question. Reply STOP to opt out of messages.";
     await sql`
-      INSERT INTO messages (conversation_id, direction, body, ai, channel)
-      VALUES (${conversation.id}, 'outbound', ${confirm}, false, ${msg.channel})`;
-    let optDelivery = "pull";
-    try {
-      optDelivery = (await getAdapter(msg.channel).send(msg.handle, confirm, env, venue))
-        .delivery;
-    } catch {
-      optDelivery = "failed";
-    }
+      INSERT INTO messages
+        (conversation_id, direction, body, ai, channel, ingress_id)
+      VALUES (${conversation.id}, 'outbound', ${confirm}, false, ${msg.channel},
+              ${ingressId ?? null})
+      ON CONFLICT (ingress_id, direction) WHERE ingress_id IS NOT NULL DO NOTHING`;
+    await queueOutbound(env, {
+      deliveryKey: `keyword:${eventKey}`,
+      venue,
+      sourceType: "keyword_reply",
+      sourceId: eventKey,
+      channel: msg.channel,
+      handle: msg.handle,
+      purpose: "utility",
+      body: confirm,
+    });
     await sql`UPDATE conversations SET last_message_at = now() WHERE id = ${conversation.id}`;
     return {
       conversationId: conversation.id,
       role,
       reply: confirm,
-      delivery: optDelivery,
+      delivery: "queued",
     };
   }
   const suppressed = await isSuppressed(sql, venue, msg.channel, msg.handle);
 
   // 5. Run the agent.
-  const result = await runAgent(
-    msg.text,
-    { venue, role, from: msg.platformUserId, name: msg.name ?? undefined },
-    env,
-  );
+  const [existingReply] = ingressId
+    ? await sql`
+        SELECT body, tool FROM messages
+        WHERE ingress_id = ${ingressId} AND direction = 'outbound' LIMIT 1`
+    : [];
+  const result = existingReply
+    ? { reply: String(existingReply.body), tool: existingReply.tool ?? undefined, escalate: false }
+    : await runAgent(
+        msg.text,
+        {
+          venue,
+          role,
+          from: msg.platformUserId,
+          name: msg.name ?? undefined,
+          operationKey: ingressId,
+        },
+        env,
+      );
 
   // 6. Persist the reply + status.
   await sql`
-    INSERT INTO messages (conversation_id, direction, body, ai, tool, channel)
-    VALUES (${conversation.id}, 'outbound', ${result.reply}, true, ${result.tool ?? null}, ${msg.channel})`;
+    INSERT INTO messages
+      (conversation_id, direction, body, ai, tool, channel, ingress_id)
+    VALUES (${conversation.id}, 'outbound', ${result.reply}, true,
+            ${result.tool ?? null}, ${msg.channel}, ${ingressId ?? null})
+    ON CONFLICT (ingress_id, direction) WHERE ingress_id IS NOT NULL DO NOTHING`;
   if (result.escalate) {
     await sql`UPDATE conversations SET status = 'escalated' WHERE id = ${conversation.id}`;
   }
@@ -159,22 +196,36 @@ export async function processInbound(
   //    DLQ (events.status = 'failed') with enough payload to retry.
   // Suppressed (opted-out) contacts: log the agent reply for staff but never
   // deliver unsolicited outbound.
-  let delivery = suppressed ? "suppressed" : "pull";
-  let failed = false;
+  const delivery = suppressed ? "suppressed" : "queued";
   if (!suppressed) {
-    try {
-      const out = await getAdapter(msg.channel).send(msg.handle, result.reply, env, venue);
-      delivery = out.delivery;
-    } catch {
-      delivery = "failed";
-      failed = true;
-    }
+    await queueOutbound(env, {
+      deliveryKey: `agent:${eventKey}`,
+      venue,
+      sourceType: "agent_reply",
+      sourceId: eventKey,
+      channel: msg.channel,
+      handle: msg.handle,
+      purpose: "utility",
+      body: result.reply,
+    });
   }
   await sql`
     INSERT INTO events (venue_id, channel, direction, conversation_id, type, status, payload)
-    VALUES (${venue}, ${msg.channel}, 'outbound', ${conversation.id}, 'message',
-            ${failed ? "failed" : delivery},
-            ${failed ? sql.json({ handle: msg.handle, text: result.reply }) : null})`;
+    SELECT ${venue}, ${msg.channel}, 'outbound', ${conversation.id}, 'message',
+           ${delivery}, ${sql.json({ handle: msg.handle, delivery_key: `agent:${eventKey}` })}
+    WHERE NOT EXISTS (
+      SELECT 1 FROM events
+      WHERE venue_id = ${venue} AND channel = ${msg.channel}
+        AND direction = 'outbound' AND payload->>'delivery_key' = ${`agent:${eventKey}`}
+    )`;
+  await sql`
+    INSERT INTO events
+      (venue_id, channel, direction, provider_msg_id, type, status, payload)
+    VALUES (${venue}, ${msg.channel}, 'inbound', ${msg.providerMsgId}, 'message',
+            'processed', ${sql.json({ account_id: accountId, ingress_id: ingressId ?? null })})
+    ON CONFLICT (channel, (payload->>'account_id'), provider_msg_id)
+      WHERE provider_msg_id IS NOT NULL AND payload->>'account_id' IS NOT NULL
+      DO NOTHING`;
 
   // 8. Nudge staff devices when a human is needed or a customer messages in.
   if (role === "customer") {

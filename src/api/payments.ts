@@ -7,23 +7,57 @@
 // --- Environment Config ---
 
 import { getSql } from "@/lib/db";
-import { partnerIdForVenue, postCommission } from "@/lib/commission";
-import { activateSubscription } from "@/lib/billing";
+import { partnerIdForVenue } from "@/lib/commission";
 import { requireAuth } from "@/api/auth";
 import { roleAtLeast } from "@/lib/rbac";
 import { venueFromPayload } from "@/lib/tenancy";
-import {
-  postCogsEntry,
-  postPaymentEntry,
-  postRefundEntry,
-} from "@/lib/accounting";
-import { recordPayment as recordInvoicePayment } from "@/lib/invoicing";
 import { isDisputeEvent, mapDisputeStatus } from "@/lib/disputes";
 import { computeFee, methodFromMetadata } from "@/lib/fees";
 import { captureException } from "@/lib/observability";
-import { loyaltyPointsFor } from "@/lib/loyalty";
-import { markPayLinkPaid } from "@/lib/pay-links";
 import { resolveInitiator } from "@/lib/tx-initiator";
+import { holdOrderShare, releaseOrderItemClaims, releaseOrderShare } from "@/lib/split-lock";
+import {
+  billTopic,
+  publishToTopic,
+  type BillEvent,
+} from "@/lib/realtime-bus";
+import { tokenHasScope } from "@/lib/api-tokens";
+import {
+  createPaymentIntent,
+  hashPaymentIntentToken,
+} from "@/lib/payment-intents";
+import {
+  DEFAULT_CURRENCY,
+  normalizeCurrency,
+} from "@/lib/currency";
+import { isProductionRuntime } from "@/lib/runtime-security";
+import {
+  PAYMENT_CONSUMERS,
+  REFUND_CONSUMERS,
+  enqueueFinancialEvent,
+} from "@/lib/financial-events";
+import { processFinancialOutbox } from "@/lib/financial-consumers";
+import { envVar } from "@/lib/env";
+import { verifyToken } from "@/lib/webhook-verify";
+import { sha256Hex } from "@/lib/hash";
+import { processInvoiceCommunications } from "@/lib/invoicing";
+import { reconcileTipPayouts } from "@/api/tips";
+import {
+  deliverStaffNotifications,
+  type StaffNotifyInput,
+} from "@/lib/staff-notify";
+import { classifyPaymentFailure } from "@/lib/staff-notifications";
+import {
+  canonicalKenyanPhone,
+  mapPesaSwapStatus,
+  normalizeKenyanPhone,
+  settledAmount,
+} from "@/lib/payment-status";
+export { settledAmount } from "@/lib/payment-status";
+import {
+  rememberPaymentIdempotency as rememberIdempotent,
+  reservePaymentIdempotency as idempotentGuard,
+} from "@/lib/payment-idempotency";
 
 type Env = {
   PESASWAP_API_KEY: string;
@@ -64,6 +98,7 @@ type PaymentRequest = {
   customer_id?: string;
   payment_method?: string;
   capture?: boolean;
+  payment_intent_token?: string;
   // Saved-method lifecycle (PesaSwap/Hyperswitch). Tokenise the card/wallet used in
   // this payment for future reuse; the SDK sends `customer_acceptance` in confirm.
   setup_future_usage?: "on_session" | "off_session";
@@ -81,120 +116,54 @@ type RefundRequest = {
   metadata?: Record<string, unknown>;
 };
 
-// --- In-memory stores (replace with Durable Objects or KV in production) ---
-
-const payments = new Map<
-  string,
-  {
-    id: string;
-    amount: number;
-    currency: string;
-    status: string;
-    metadata: Record<string, unknown>;
-    created_at: string;
-    refunds: Array<{ id: string; amount: number; reason: string; created_at: string }>;
-  }
->();
-
-const customerMethods = new Map<
-  string, // phone number
-  {
-    customer_id: string;
-    methods: Array<{ id: string; type: string; last4?: string; label: string }>;
-    default_method?: string;
-  }
->();
+// --- In-memory stores ---
 
 // WebSocket connections for real-time notifications
 const merchantConnections = new Map<string, Set<WebSocket>>();
 
-// Idempotency key cache (prevents double charges)
-const idempotencyCache = new Map<string, { response: unknown; expires: number }>();
-const IDEMPOTENCY_TTL_MS = 3_600_000;
-
-// Durable, cross-isolate idempotency for payment creation. `idempotentGuard`
-// atomically RESERVES the key (first writer wins): the winner proceeds and later
-// calls `rememberIdempotent` with its response; a concurrent duplicate finds the
-// key taken and waits briefly for that response, so a replayed create (offline
-// sync, a lost 200, a double-tap, a cross-isolate retry) returns the SAME result
-// instead of double-recording. Falls back to the in-memory cache when there's no
-// database (best-effort).
-async function idempotentGuard(
+/**
+ * The durable record of a payment, read from Postgres.
+ *
+ * This replaces a module-level `Map` that used to cache payments in memory. On
+ * Workers that Map is PER-ISOLATE, so it only ever held payments this particular
+ * isolate had created. Any other isolate saw a miss — and a provider webhook or
+ * a status poll almost never lands on the isolate that created the payment. The
+ * symptoms only appear under load, which is the worst way to find them: a status
+ * check 404ing on a payment that exists, and a webhook falling back to amount 0.
+ */
+async function loadPayment(
   env: unknown,
-  key: string,
-): Promise<{ replay: unknown } | { proceed: true }> {
-  const cached = idempotencyCache.get(key);
-  if (cached && cached.expires > Date.now()) return { replay: cached.response };
+  paymentId: string,
+  venue?: string | null,
+): Promise<{
+  id: string;
+  amount: number;
+  currency: string;
+  status: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+} | null> {
   const sql = getSql(env);
-  if (!sql) return { proceed: true };
+  if (!sql) return null;
   try {
-    const [reserved] = await sql`
-      INSERT INTO idempotency_keys (key) VALUES (${key})
-      ON CONFLICT (key) DO NOTHING RETURNING key`;
-    if (reserved) return { proceed: true }; // we own it
-    // Someone else owns it — poll briefly for their completed response.
-    for (let i = 0; i < 20; i++) {
-      const [row] = await sql`
-        SELECT response FROM idempotency_keys WHERE key = ${key}`;
-      if (row && row.response != null) {
-        idempotencyCache.set(key, {
-          response: row.response,
-          expires: Date.now() + IDEMPOTENCY_TTL_MS,
-        });
-        return { replay: row.response };
-      }
-      await new Promise((r) => setTimeout(r, 150));
-    }
-    // Timed out waiting (rare) — proceed; the ledger's id-conflict still guards.
-    return { proceed: true };
+    const [row] = venue
+      ? await sql`
+          SELECT id, amount, currency, status, metadata, created_at
+          FROM payments WHERE id = ${paymentId} AND venue_id = ${venue} LIMIT 1`
+      : await sql`
+          SELECT id, amount, currency, status, metadata, created_at
+          FROM payments WHERE id = ${paymentId} LIMIT 1`;
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      amount: Number(row.amount) || 0,
+      currency: String(row.currency ?? "KES"),
+      status: String(row.status ?? ""),
+      metadata: (row.metadata ?? {}) as Record<string, unknown>,
+      created_at: new Date(row.created_at as string).toISOString(),
+    };
   } catch {
-    return { proceed: true };
-  }
-}
-
-async function rememberIdempotent(
-  env: unknown,
-  key: string,
-  response: unknown,
-): Promise<void> {
-  idempotencyCache.set(key, {
-    response,
-    expires: Date.now() + IDEMPOTENCY_TTL_MS,
-  });
-  const sql = getSql(env);
-  if (!sql) return;
-  try {
-    await sql`
-      INSERT INTO idempotency_keys (key, response)
-      VALUES (${key}, ${sql.json(JSON.parse(JSON.stringify(response)))})
-      ON CONFLICT (key) DO UPDATE SET response = EXCLUDED.response`;
-  } catch {
-    /* best-effort durability — the in-memory cache still applies */
-  }
-}
-
-// Post cost-of-goods-sold for a paid order: match its line items to inventory
-// by name and expense the cost (Dr COGS, Cr Inventory). Idempotent per order;
-// best-effort. Unmatched items simply contribute no cost.
-async function postOrderCogs(
-  sql: NonNullable<ReturnType<typeof getSql>>,
-  venue: string,
-  meta: Record<string, unknown>,
-): Promise<void> {
-  const orderId =
-    typeof meta.order_id === "string" && /^[0-9a-f-]{36}$/i.test(meta.order_id)
-      ? meta.order_id
-      : null;
-  if (!orderId) return;
-  const [row] = await sql`
-    SELECT COALESCE(sum(oi.qty * inv.cost), 0)::bigint AS cogs
-    FROM order_items oi
-    JOIN inventory_items inv
-      ON inv.venue_id = ${venue} AND lower(inv.name) = lower(oi.name)
-    WHERE oi.order_id = ${orderId}`;
-  const cogs = Number(row?.cogs ?? 0);
-  if (cogs > 0) {
-    await postCogsEntry(sql, { venue, orderId, cost: cogs });
+    return null;
   }
 }
 
@@ -227,29 +196,9 @@ async function recordLedger(
   // Agent Pay Gateway: tag human- vs agent-initiated transactions.
   const initiator = resolveInitiator(meta);
 
-  // Loyalty is keyed on the customer phone (the unique loyalty reference). Award
-  // points only on the FIRST transition into a succeeded state, so re-recording
-  // the same payment id never double-counts.
   const SUCCEEDED = ["succeeded", "paid", "captured"];
-  const loyaltyPhone =
-    typeof meta.customer_phone === "string" ? meta.customer_phone.trim() : "";
-  // Side effects that must fire exactly once (loyalty accrual, invoice
-  // settlement) are gated on the FIRST transition of this payment id into a
-  // succeeded state, so re-recording the same payment never double-counts.
   const succeededNow =
     SUCCEEDED.includes(rec.status) && rec.kind !== "refund" && Boolean(rec.venue);
-  let alreadySucceeded = false;
-  if (succeededNow) {
-    try {
-      const [prev] = await sql`SELECT status FROM payments WHERE id = ${rec.id}`;
-      alreadySucceeded = prev
-        ? SUCCEEDED.includes(String((prev as { status?: string }).status ?? ""))
-        : false;
-    } catch {
-      /* treat as a new payment */
-    }
-  }
-  const firstSuccess = succeededNow && !alreadySucceeded;
 
   // Processing fee for the transparency cockpit: computed on a settled payment
   // from its billing method (never on a failed attempt), so the merchant sees the
@@ -263,23 +212,350 @@ async function recordLedger(
         ).fee
       : null;
 
+  let enqueued = false;
+  // Sunday-parity staff alerts (roadmap B2.1–B2.5, B2.10, B2.12). Collected
+  // inside the ledger transaction — the only place that knows whether THIS
+  // payment was the first success, and what balance is left on the bill — then
+  // delivered after commit so a push failure can never roll back a payment.
+  let notifications: StaffNotifyInput[] = [];
+  // A2.4 — the same numbers, pushed to every OTHER phone paying this check.
+  // Collected inside the transaction, published after commit for the same reason.
+  let billUpdate: BillEvent | null = null;
   try {
-    await sql`
-      INSERT INTO payments
-        (id, venue_id, kind, amount, currency, status, provider_ref, reference, metadata, tip_amount, staff_id, initiator, fee_amount)
-      VALUES (${rec.id}, ${rec.venue ?? null}, ${rec.kind ?? "payment"}, ${rec.amount},
-              ${rec.currency}, ${rec.status}, ${rec.providerRef ?? null}, ${rec.reference ?? null},
-              ${sql.json(JSON.parse(JSON.stringify(rec.metadata ?? {})))}, ${tipAmount}, ${staffId}, ${initiator}, ${feeAmount})
-      ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status,
-        tip_amount = EXCLUDED.tip_amount,
-        staff_id = COALESCE(EXCLUDED.staff_id, payments.staff_id),
-        provider_ref = COALESCE(EXCLUDED.provider_ref, payments.provider_ref),
-        fee_amount = COALESCE(EXCLUDED.fee_amount, payments.fee_amount),
-        amount = CASE
-          WHEN EXCLUDED.status IN ('succeeded', 'paid', 'captured')
-          THEN EXCLUDED.amount ELSE payments.amount END,
-        metadata = EXCLUDED.metadata,
-        updated_at = now()`;
+    enqueued = await sql.begin(async (tx) => {
+      notifications = [];
+      billUpdate = null;
+      await tx`SELECT pg_advisory_xact_lock(hashtextextended(${rec.id}, 0))`;
+      const [previous] = await tx`
+        SELECT venue_id, kind, amount, currency, status, provider_ref, reference,
+               metadata, tip_amount, staff_id, initiator, fee_amount
+        FROM payments WHERE id = ${rec.id} FOR UPDATE`;
+      if (previous?.venue_id && rec.venue && String(previous.venue_id) !== rec.venue) {
+        throw new Error(`payment ${rec.id} venue mismatch`);
+      }
+      if (previous?.currency && String(previous.currency) !== rec.currency) {
+        throw new Error(`payment ${rec.id} currency mismatch`);
+      }
+      const wasSucceeded = previous
+        ? SUCCEEDED.includes(String(previous.status ?? ""))
+          || ["partially_refunded", "refunded"].includes(String(previous.status ?? ""))
+        : false;
+      const canonicalVenue = previous?.venue_id
+        ? String(previous.venue_id)
+        : rec.venue ?? null;
+      const canonicalStatus = wasSucceeded
+        ? String(previous.status)
+        : rec.status;
+      const [persisted] = await tx`
+        INSERT INTO payments
+          (id, venue_id, kind, amount, currency, status, provider_ref, reference,
+           metadata, tip_amount, staff_id, initiator, fee_amount)
+        VALUES (${rec.id}, ${canonicalVenue}, ${rec.kind ?? "payment"},
+          ${rec.amount}, ${rec.currency}, ${canonicalStatus},
+                ${rec.providerRef ?? null}, ${rec.reference ?? null},
+                ${tx.json(JSON.parse(JSON.stringify(rec.metadata ?? {})))},
+                ${tipAmount}, ${staffId}, ${initiator}, ${feeAmount})
+        ON CONFLICT (id) DO UPDATE SET
+          status = CASE
+            WHEN payments.status IN ('succeeded','paid','captured','partially_refunded','refunded')
+              THEN payments.status
+            ELSE EXCLUDED.status
+          END,
+          tip_amount = CASE
+            WHEN payments.status IN ('succeeded','paid','captured','partially_refunded','refunded')
+              THEN payments.tip_amount ELSE EXCLUDED.tip_amount END,
+          staff_id = COALESCE(EXCLUDED.staff_id, payments.staff_id),
+          provider_ref = COALESCE(EXCLUDED.provider_ref, payments.provider_ref),
+          fee_amount = CASE
+            WHEN payments.status IN ('succeeded','paid','captured','partially_refunded','refunded')
+              THEN payments.fee_amount ELSE COALESCE(EXCLUDED.fee_amount, payments.fee_amount) END,
+          amount = CASE
+            WHEN payments.status IN ('succeeded','paid','captured','partially_refunded','refunded')
+              THEN payments.amount
+            WHEN EXCLUDED.status IN ('succeeded', 'paid', 'captured') THEN EXCLUDED.amount
+            ELSE payments.amount END,
+          metadata = CASE
+            WHEN payments.status IN ('succeeded','paid','captured','partially_refunded','refunded')
+              THEN payments.metadata ELSE EXCLUDED.metadata END,
+          updated_at = now()
+        RETURNING venue_id, kind, amount, currency, status, provider_ref,
+                  reference, metadata, tip_amount, fee_amount, settlement_id`;
+      // DO UPDATE always fires, so RETURNING always yields the row — re-reading
+      // it would be a third round-trip inside the FOR UPDATE window.
+      const payment = persisted ?? {
+        venue_id: canonicalVenue,
+        kind: rec.kind ?? "payment",
+        amount: rec.amount,
+        currency: rec.currency,
+        status: canonicalStatus,
+        provider_ref: rec.providerRef ?? null,
+        reference: rec.reference ?? null,
+        metadata: meta,
+        tip_amount: tipAmount,
+        fee_amount: feeAmount,
+        settlement_id: null,
+      };
+      const firstSuccess = succeededNow && !wasSucceeded && Boolean(canonicalVenue);
+      const isRefund = rec.kind === "refund" && rec.status === "refunded";
+      const eventVenue = String(payment.venue_id ?? canonicalVenue ?? "");
+      const persistedMeta = (payment.metadata ?? meta) as Record<string, unknown>;
+      if (((succeededNow && eventVenue) || isRefund) && eventVenue) {
+        let eventMetadata = persistedMeta;
+        if (firstSuccess) {
+          const sourceType = String(persistedMeta.flow_type ?? persistedMeta.source_type ?? "payment");
+          const sourceId = String(
+            persistedMeta.order_id ?? persistedMeta.invoice_number ?? persistedMeta.pay_link_id ?? rec.id,
+          );
+          let taxAmount = Math.max(0, Math.round(Number(persistedMeta.tax_amount ?? 0)) || 0);
+          let cogsAmount = 0;
+          const invoiceNumber = String(persistedMeta.invoice_number ?? "");
+          if (invoiceNumber) {
+            const [invoice] = await tx`
+              SELECT amount, tax_amount FROM invoices
+              WHERE venue_id = ${eventVenue} AND number = ${invoiceNumber}
+              LIMIT 1`;
+            if (invoice) {
+              const invoiceGrossMinor = Math.round(Number(invoice.amount) * 100);
+              const invoiceTaxMinor = Math.round(Number(invoice.tax_amount ?? 0) * 100);
+              taxAmount = invoiceGrossMinor > 0
+                ? Math.floor(invoiceTaxMinor * Math.max(0, Number(rec.amount) - tipAmount) / invoiceGrossMinor)
+                : 0;
+            }
+          }
+          const orderId = String(persistedMeta.order_id ?? "");
+          if (/^[0-9a-f-]{36}$/i.test(orderId)) {
+            const [cogs] = await tx`
+              SELECT COALESCE(sum(oi.qty * inv.cost), 0)::bigint AS amount
+              FROM order_items oi
+              JOIN inventory_items inv
+                ON inv.venue_id = ${eventVenue} AND inv.menu_item_id = oi.menu_item_id
+              WHERE oi.order_id = ${orderId}`;
+            cogsAmount = Number(cogs?.amount ?? 0);
+          }
+          const [org] = await tx`
+            SELECT o.commission_bps FROM venues v
+            JOIN organizations o ON o.id = v.org_id
+            WHERE v.id = ${eventVenue} LIMIT 1`;
+          const commission = Math.round(
+            Number(rec.amount) * Number(org?.commission_bps ?? 0) / 10000,
+          );
+          const principal = Math.max(0, Number(rec.amount) - tipAmount);
+          const loyaltyPoints = Math.max(0, Math.floor(principal / 1000));
+
+          // --- Staff alerts: full vs partial vs "table fully paid" -----------
+          // The outstanding balance is read the same way `split-lock.ts` grants
+          // a share (order total minus settled non-tip principal), so the number
+          // a server sees is the number the next payer is allowed to charge.
+          {
+            const notifyOrderId = /^[0-9a-f-]{36}$/i.test(orderId) ? orderId : null;
+            let tableHint: unknown =
+              persistedMeta.table_id ?? persistedMeta.table_number ?? null;
+            let outcome: StaffNotifyInput | null = null;
+            if (notifyOrderId) {
+              const [bill] = await tx`
+                SELECT o.table_id,
+                       o.total::bigint AS total,
+                    order_paid_minor(${eventVenue}, ${notifyOrderId}::uuid) AS paid
+                FROM orders o
+                WHERE o.id = ${notifyOrderId} AND o.venue_id = ${eventVenue}
+                LIMIT 1`;
+              if (bill) {
+                tableHint = bill.table_id ?? tableHint;
+                const remaining = Math.max(
+                  0,
+                  Number(bill.total) - Number(bill.paid),
+                );
+                // A2.4 — every other guest's phone learns the new balance from
+                // this exact number, so what they are allowed to charge and what
+                // they are shown can never drift apart.
+                billUpdate = {
+                  type: "bill.updated",
+                  data: {
+                    order_id: notifyOrderId,
+                    total: Number(bill.total) / 100,
+                    paid: Number(bill.paid) / 100,
+                    remaining: remaining / 100,
+                    timestamp: new Date().toISOString(),
+                  },
+                };
+                // `paid` already includes this payment (upserted above).
+                const paidBefore = Math.max(0, Number(bill.paid) - principal);
+                const base = {
+                  venue: eventVenue,
+                  table: tableHint,
+                  currency: String(payment.currency),
+                  amountMinor: principal,
+                  url: "/dashboard/orders",
+                  data: { payment_id: rec.id, order_id: notifyOrderId },
+                } as const;
+                outcome =
+                  remaining > 0
+                    ? {
+                        ...base,
+                        type: "payment.partial",
+                        remainingMinor: remaining,
+                        dedupeKey: `payment.partial:${rec.id}`,
+                      }
+                    : paidBefore > 0
+                      ? {
+                          ...base,
+                          type: "table.paid",
+                          remainingMinor: 0,
+                          dedupeKey: `table.paid:${notifyOrderId}`,
+                        }
+                      : {
+                          ...base,
+                          type: "payment.full",
+                          remainingMinor: 0,
+                          dedupeKey: `payment.full:${rec.id}`,
+                        };
+              }
+            }
+            if (tableHint) {
+              notifications.push({
+                venue: eventVenue,
+                type: "payment.received",
+                table: tableHint,
+                currency: String(payment.currency),
+                amountMinor: Number(payment.amount),
+                dedupeKey: `payment.received:${rec.id}`,
+                url: "/dashboard/payments",
+                data: { payment_id: rec.id },
+              });
+            }
+            if (outcome) notifications.push(outcome);
+            if (tipAmount > 0) {
+              notifications.push({
+                venue: eventVenue,
+                type: "tip.new",
+                table: tableHint,
+                targetStaffId: staffId,
+                currency: String(payment.currency),
+                amountMinor: tipAmount,
+                dedupeKey: `tip.new:${rec.id}`,
+                url: "/staff-console",
+                data: { payment_id: rec.id },
+              });
+            }
+          }
+          await tx`
+            INSERT INTO financial_payment_snapshots
+              (payment_id, venue_id, currency, gross_amount, principal_amount,
+               tax_amount, tip_amount, loyalty_points, commission_amount,
+               cogs_amount, source_type, source_id, metadata)
+            VALUES
+              (${rec.id}, ${eventVenue}, ${String(payment.currency)}, ${Number(payment.amount)}, ${principal},
+               ${taxAmount}, ${tipAmount}, ${loyaltyPoints}, ${commission},
+               ${cogsAmount}, ${sourceType}, ${sourceId},
+               ${tx.json(JSON.parse(JSON.stringify(persistedMeta)))})
+            ON CONFLICT (payment_id) DO NOTHING`;
+          eventMetadata = {
+            ...persistedMeta,
+            financial_snapshot: {
+              gross_amount: Number(payment.amount),
+              principal_amount: principal,
+              tax_amount: taxAmount,
+              tip_amount: tipAmount,
+              loyalty_points: loyaltyPoints,
+              commission_amount: commission,
+              cogs_amount: cogsAmount,
+            },
+          };
+        }
+        if (isRefund) {
+          const parentId = String(meta.refund_of ?? "");
+          const [parent] = await tx`
+            SELECT amount, currency, metadata, tip_amount, fee_amount,
+                   settlement_id
+            FROM payments
+            WHERE id = ${parentId} AND venue_id = ${eventVenue}
+            LIMIT 1`;
+          if (parent) {
+            const ratioBps = Math.min(
+              10000,
+              Math.max(0, Math.round(Number(rec.amount) * 10000 / Number(parent.amount))),
+            );
+            eventMetadata = {
+              ...((parent.metadata ?? {}) as Record<string, unknown>),
+              ...meta,
+              refund_of: parentId,
+              refund_ratio_bps: ratioBps,
+              original_amount: Number(parent.amount),
+              original_tip_amount: Number(parent.tip_amount ?? 0),
+              original_fee_amount: Number(parent.fee_amount ?? 0),
+              original_settlement_id: parent.settlement_id ?? null,
+            };
+            await tx`
+              INSERT INTO financial_reversals
+                (venue_id, refund_id, payment_id, amount, currency, ratio_bps,
+                 payload, source_settlement_id, reservation_id)
+              VALUES
+                (${eventVenue}, ${rec.id}, ${parentId}, ${rec.amount}, ${rec.currency},
+                 ${ratioBps}, ${tx.json(JSON.parse(JSON.stringify(eventMetadata)))},
+                 ${parent.settlement_id ?? null}, ${String(meta.refund_reservation_id ?? "") || null})
+              ON CONFLICT (refund_id) DO NOTHING`;
+          }
+        }
+        const eventType = isRefund ? "refund.succeeded" : "payment.succeeded";
+        const eventId = await enqueueFinancialEvent(tx, {
+          eventKey: `${eventType}:${rec.id}`,
+          venue: eventVenue,
+          aggregateId: rec.id,
+          eventType,
+          payload: {
+            paymentId: rec.id,
+            venue: eventVenue,
+            amount: Number(payment.amount),
+            currency: String(payment.currency),
+            status: String(payment.status),
+            kind: String(payment.kind ?? rec.kind ?? "payment"),
+            providerRef: (payment.provider_ref as string | null) ?? null,
+            reference: (payment.reference as string | null) ?? null,
+            metadata: eventMetadata,
+          },
+          consumers: isRefund ? REFUND_CONSUMERS : PAYMENT_CONSUMERS,
+        });
+        return Boolean(eventId);
+      }
+
+      // Declined attempt (B2.3 / B2.4 / B2.5). A server needs to know before the
+      // guest walks, so the alert fires on the FIRST terminal failure only — a
+      // redelivered webhook is absorbed by the per-recipient dedupe key.
+      const failedNow =
+        !wasSucceeded &&
+        rec.kind !== "refund" &&
+        Boolean(eventVenue) &&
+        ["failed", "cancelled"].includes(String(payment.status));
+      if (failedNow) {
+        const tableHint =
+          persistedMeta.table_id ?? persistedMeta.table_number ?? null;
+        if (tableHint) {
+          const failureType = classifyPaymentFailure({
+            errorCode: persistedMeta.error_code,
+            errorMessage: persistedMeta.error_message,
+            errorReason: persistedMeta.error_reason,
+            fraudDecision:
+              persistedMeta.merchant_decision ?? persistedMeta.frm_decision,
+            status: payment.status,
+          });
+          notifications.push({
+            venue: eventVenue,
+            type: failureType,
+            table: tableHint,
+            currency: String(payment.currency),
+            amountMinor: Number(payment.amount),
+            reason:
+              typeof persistedMeta.error_message === "string"
+                ? persistedMeta.error_message.slice(0, 120)
+                : null,
+            dedupeKey: `${failureType}:${rec.id}`,
+            url: "/dashboard/payments",
+            data: { payment_id: rec.id },
+          });
+        }
+      }
+      return false;
+    });
   } catch (err) {
     // The ledger write is best-effort so it never blocks a payment, but a failure
     // means a real transaction may be missing from the ledger — surface it (with
@@ -290,161 +566,169 @@ async function recordLedger(
       paymentId: rec.id,
       venue: rec.venue ?? null,
     });
+    throw err;
   }
 
-  // Post the double-entry accounting journal (best-effort — an unbalanced or
-  // failed post must never block a payment).
-  if (rec.venue) {
-    try {
-      if (rec.kind === "refund") {
-        await postRefundEntry(sql, {
+  if (enqueued) {
+    // Fast-path the durable outbox. Any failed consumer remains visible and due
+    // for retry; the source payment is already committed and never re-enqueued.
+    await processFinancialOutbox(sql, 25);
+  }
+
+  // Post-commit: wake only the servers following this table (B2.13). Never
+  // inside the transaction — a slow push endpoint must not hold a payment lock.
+  if (notifications.length > 0) {
+    await deliverStaffNotifications(env, notifications);
+  }
+
+  // Post-commit: A2.4 live remaining balance for the other guests on this check.
+  if (billUpdate) {
+    const update = billUpdate as BillEvent;
+    await publishToTopic(env, billTopic(update.data.order_id), update);
+  }
+}
+
+async function recordRefundLedger(
+  env: unknown,
+  rec: {
+    id: string;
+    paymentId: string;
+    amount: number;
+    currency: string;
+    venue: string;
+    reference?: string | null;
+    providerRef?: string | null;
+    reason?: string | null;
+    reservationId?: string | null;
+  },
+): Promise<boolean> {
+  const sql = getSql(env);
+  if (!sql) return false;
+  const amount = Math.round(Number(rec.amount));
+  if (!Number.isSafeInteger(amount) || amount <= 0) {
+    throw new Error("refund amount must be a positive safe integer");
+  }
+  let inserted = false;
+  let eventEnqueued = false;
+  await sql.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(hashtextextended(${rec.paymentId}, 0))`;
+    const [parent] = await tx`
+      SELECT id, venue_id, amount, currency, reference, metadata, tip_amount,
+             fee_amount, settlement_id
+      FROM payments
+      WHERE id = ${rec.paymentId} AND venue_id = ${rec.venue}
+        AND kind <> 'refund'
+        AND status IN ('succeeded','paid','captured','partially_refunded','refunded')
+      FOR UPDATE`;
+    if (!parent) throw new Error("refund parent payment not found");
+    if (String(parent.currency) !== rec.currency) {
+      throw new Error("refund currency does not match parent payment");
+    }
+    const [existing] = await tx`
+      SELECT id, venue_id, amount, currency, metadata FROM payments
+      WHERE id = ${rec.id} FOR UPDATE`;
+    if (existing) {
+      const existingMeta = (existing.metadata ?? {}) as Record<string, unknown>;
+      if (
+        String(existing.venue_id) !== rec.venue ||
+        Number(existing.amount) !== amount ||
+        String(existing.currency) !== rec.currency ||
+        String(existingMeta.refund_of ?? "") !== rec.paymentId
+      ) {
+        throw new Error(`refund ${rec.id} conflicts with its immutable ledger row`);
+      }
+    } else {
+      const [totals] = await tx`
+        SELECT COALESCE(sum(amount), 0)::bigint AS refunded
+        FROM payments
+        WHERE venue_id = ${rec.venue} AND kind = 'refund' AND status = 'refunded'
+          AND metadata->>'refund_of' = ${rec.paymentId}`;
+      if (Number(totals?.refunded ?? 0) + amount > Number(parent.amount)) {
+        throw new Error("cumulative settled refunds exceed parent payment");
+      }
+      const parentMeta = (parent.metadata ?? {}) as Record<string, unknown>;
+      const metadata = {
+        ...parentMeta,
+        refund_of: rec.paymentId,
+        refund_reason: rec.reason ?? null,
+        refund_reservation_id: rec.reservationId ?? null,
+      };
+      await tx`
+        INSERT INTO payments
+          (id, venue_id, kind, amount, currency, status, provider_ref, reference,
+           metadata, tip_amount, initiator)
+        VALUES
+          (${rec.id}, ${rec.venue}, 'refund', ${amount}, ${rec.currency}, 'refunded',
+           ${rec.providerRef ?? null}, ${rec.reference ?? parent.reference ?? null},
+           ${tx.json(JSON.parse(JSON.stringify(metadata)))}, 0, 'human')`;
+      const ratioBps = Math.min(10000, Math.round(amount * 10000 / Number(parent.amount)));
+      const eventMetadata = {
+        ...metadata,
+        refund_ratio_bps: ratioBps,
+        original_amount: Number(parent.amount),
+        original_tip_amount: Number(parent.tip_amount ?? 0),
+        original_fee_amount: Number(parent.fee_amount ?? 0),
+        original_settlement_id: parent.settlement_id ?? null,
+      };
+      const [reversal] = await tx`
+        INSERT INTO financial_reversals
+          (venue_id, refund_id, payment_id, amount, currency, ratio_bps, payload,
+           source_settlement_id, reservation_id)
+        VALUES
+          (${rec.venue}, ${rec.id}, ${rec.paymentId}, ${amount}, ${rec.currency},
+           ${ratioBps}, ${tx.json(JSON.parse(JSON.stringify(eventMetadata)))},
+           ${parent.settlement_id ?? null}, ${rec.reservationId ?? null})
+        ON CONFLICT (refund_id) DO NOTHING
+        RETURNING id`;
+      const eventId = await enqueueFinancialEvent(tx, {
+        eventKey: `refund.succeeded:${rec.id}`,
+        venue: rec.venue,
+        aggregateId: rec.id,
+        eventType: "refund.succeeded",
+        payload: {
+          paymentId: rec.id,
           venue: rec.venue,
-          id: rec.id,
-          amount: Number(rec.amount),
+          amount,
           currency: rec.currency,
-        });
-      } else if (SUCCEEDED.includes(rec.status)) {
-        const invoiceNumber =
-          typeof meta.invoice_number === "string"
-            ? meta.invoice_number.trim()
-            : "";
-        if (invoiceNumber) {
-          // Invoice payment: settle the receivable + mark the invoice paid via
-          // recordPayment (revenue was booked at issue, not here). Once only.
-          if (firstSuccess) {
-            const [inv] = await sql`
-              SELECT id FROM invoices
-              WHERE venue_id = ${rec.venue} AND number = ${invoiceNumber}
-              LIMIT 1`;
-            if (inv?.id) {
-              // recordPayment works in the invoice's whole-KES units; the
-              // payment amount is in minor units, so scale ÷100.
-              await recordInvoicePayment(
-                env,
-                rec.venue,
-                String(inv.id),
-                Math.round(Number(rec.amount) / 100),
-                rec.providerRef ?? null,
-              );
-            } else {
-              await postPaymentEntry(sql, {
-                venue: rec.venue,
-                id: rec.id,
-                amount: Number(rec.amount),
-                tip: tipAmount,
-                currency: rec.currency,
-              });
-            }
-          }
-        } else {
-          // Direct sale — recognise revenue on receipt (cash basis). Idempotent.
-          await postPaymentEntry(sql, {
-            venue: rec.venue,
-            id: rec.id,
-            amount: Number(rec.amount),
-            tip: tipAmount,
-            currency: rec.currency,
-          });
-          await postOrderCogs(sql, rec.venue, meta);
-        }
-      }
-    } catch {
-      /* best-effort accounting */
+          status: "refunded",
+          kind: "refund",
+          providerRef: rec.providerRef ?? null,
+          reference: rec.reference ?? (parent.reference as string | null) ?? null,
+          metadata: eventMetadata,
+        },
+        consumers: REFUND_CONSUMERS,
+      });
+      inserted = Boolean(reversal);
+      eventEnqueued = Boolean(eventId);
     }
-  }
-
-  // Reseller commission: post the org's revenue share once per succeeded payment
-  // (best-effort, idempotent on payment_id).
-  if (firstSuccess && rec.venue) {
-    await postCommission(sql, {
-      venue: rec.venue,
-      paymentId: rec.id,
-      gross: Number(rec.amount),
-    });
-  }
-
-  // Subscription billing: if this payment settled a plan purchase, activate/extend
-  // the venue's subscription (+ bump app_users.plan) once, on first success.
-  if (firstSuccess && rec.venue && typeof meta.subscription_plan === "string") {
-    try {
-      await activateSubscription(
-        sql,
-        rec.venue,
-        meta.subscription_plan,
-        rec.id,
-        Number(rec.amount),
-      );
-    } catch {
-      /* best-effort — never block the payment on billing activation */
+    const [refunded] = await tx`
+      SELECT COALESCE(sum(amount), 0)::bigint AS amount FROM payments
+      WHERE venue_id = ${rec.venue} AND kind = 'refund' AND status = 'refunded'
+        AND metadata->>'refund_of' = ${rec.paymentId}`;
+    const parentStatus = Number(refunded?.amount ?? 0) >= Number(parent.amount)
+      ? "refunded"
+      : "partially_refunded";
+    await tx`
+      UPDATE payments SET status = ${parentStatus}, updated_at = now()
+      WHERE id = ${rec.paymentId} AND venue_id = ${rec.venue}`;
+    if (rec.reservationId) {
+      await tx`
+        UPDATE refund_reservations
+        SET status = 'booked', provider_refund_id = ${rec.id},
+            provider_status = 'succeeded', updated_at = now()
+        WHERE id = ${rec.reservationId} AND venue_id = ${rec.venue}
+          AND payment_id = ${rec.paymentId}`;
+    } else {
+      await tx`
+        UPDATE refund_reservations
+        SET status = 'booked', provider_refund_id = ${rec.id},
+            provider_status = 'succeeded', updated_at = now()
+        WHERE venue_id = ${rec.venue} AND payment_id = ${rec.paymentId}
+          AND provider_refund_id = ${rec.id}`;
     }
-  }
-
-  // Accrue loyalty points to the contact identified by phone (upsert on the
-  // unique venue+phone key). Best-effort — never block the payment.
-  if (firstSuccess && loyaltyPhone) {
-    const points = loyaltyPointsFor(Number(rec.amount));
-    if (points > 0) {
-      try {
-        await sql`
-          INSERT INTO contacts (venue_id, name, phone, points, visits, last_visit)
-          VALUES (${rec.venue ?? null}, ${(meta.customer_name as string) || "Guest"},
-                  ${loyaltyPhone}, ${points}, 1, now())
-          ON CONFLICT (venue_id, phone) WHERE phone IS NOT NULL AND phone <> ''
-          DO UPDATE SET points = contacts.points + ${points},
-                        visits = contacts.visits + 1,
-                        last_visit = now()`;
-      } catch {
-        /* best-effort loyalty */
-      }
-    }
-    // Remember the M-Pesa number as a saved method (DB-backed, phone-keyed) so a
-    // returning guest can retrieve their method by phone. Best-effort.
-    try {
-      const last4 = loyaltyPhone.slice(-4);
-      await sql`
-        INSERT INTO customer_payment_methods (venue_id, phone, kind, label)
-        VALUES (${rec.venue ?? null}, ${loyaltyPhone}, 'mpesa', ${"M-Pesa •••" + last4})
-        ON CONFLICT (phone, COALESCE(provider_ref, kind))
-        DO UPDATE SET last_used_at = now(), venue_id = EXCLUDED.venue_id`;
-    } catch {
-      /* best-effort saved method */
-    }
-  }
-
-  // Mark a QR order as paid (one-time-use) once its payment succeeds, so its pay
-  // token cannot be replayed.
-  const paidOrderId =
-    typeof meta.order_id === "string" && /^[0-9a-f-]{36}$/i.test(meta.order_id)
-      ? meta.order_id
-      : null;
-  if (SUCCEEDED.includes(rec.status) && paidOrderId) {
-    try {
-      // Settle only once cumulative succeeded payments cover the order total, so a
-      // partial (split) payment never prematurely closes a shared bill.
-      const [row] = await sql`
-        SELECT o.total::bigint AS total,
-               COALESCE((SELECT sum(p.amount - COALESCE(p.tip_amount, 0)) FROM payments p
-                         WHERE p.metadata->>'order_id' = ${paidOrderId}
-                           AND p.status IN ('succeeded', 'paid', 'captured')
-                           AND p.kind <> 'refund'), 0)::bigint AS paid
-        FROM orders o WHERE o.id = ${paidOrderId} LIMIT 1`;
-      if (row && Number(row.paid) >= Number(row.total)) {
-        await sql`UPDATE orders SET paid_at = COALESCE(paid_at, now()) WHERE id = ${paidOrderId}`;
-      }
-    } catch {
-      /* best-effort */
-    }
-  }
-
-  // Mark a server-bound payment request (pay-link) paid once it succeeds, so its
-  // link closes and shows in the pay-links log as settled. Best-effort.
-  const payLinkId =
-    typeof meta.pay_link_id === "string" && /^[0-9a-f-]{36}$/i.test(meta.pay_link_id)
-      ? meta.pay_link_id
-      : null;
-  if (SUCCEEDED.includes(rec.status) && payLinkId) {
-    await markPayLinkPaid(sql, payLinkId, rec.id);
-  }
+  });
+  if (eventEnqueued) await processFinancialOutbox(sql, 25);
+  return inserted;
 }
 
 // Set a parent payment's status to `refunded` (fully) or `partially_refunded`
@@ -522,27 +806,21 @@ async function recordRefundRow(
   }
   if (!parent || !parent.venue_id) return false;
 
-  const amount = Math.max(0, Math.round(Number(refund.amount) || 0));
-  await recordLedger(runtimeEnv, {
+  const amount = Math.round(Number(refund.amount));
+  return recordRefundLedger(runtimeEnv, {
     id: refundId,
-    kind: "refund",
+    paymentId,
     amount,
     currency: String(refund.currency || "KES"),
-    status: "refunded",
     venue: parent.venue_id,
     reference: parent.reference ?? null,
     providerRef:
       (refund.connector_refund_id as string) ||
       (refund.refund_arn as string) ||
       null,
-    metadata: {
-      ...(parent.metadata ?? {}),
-      refund_of: paymentId,
-      refund_reason: (refund.reason as string) ?? null,
-    },
+    reason: (refund.reason as string) ?? null,
+    reservationId: (refund.refund_reservation_id as string) ?? null,
   });
-  await updateParentRefundStatus(runtimeEnv, paymentId);
-  return true;
 }
 
 // Persist an incoming TRUSTED webhook to the audit trail. Idempotent on the
@@ -726,21 +1004,24 @@ async function reconcileRefunds(
     const parentId = String(r.payment_id);
     const parent = parentMap.get(parentId)!;
     try {
-      await recordLedger(runtimeEnv, {
-        id: String(r.refund_id || r.id),
-        kind: "refund",
-        amount: Math.max(0, Math.round(Number(r.amount) || 0)),
+      const refundId = String(r.refund_id || r.id);
+      const parentVenue = String(parent.venue_id);
+      const [reservation] = await sql`
+        SELECT id FROM refund_reservations
+        WHERE venue_id = ${parentVenue} AND payment_id = ${parentId}
+          AND (provider_refund_id = ${refundId} OR provider_key = ${String(r.idempotency_key ?? "")})
+        ORDER BY created_at DESC LIMIT 1`;
+      await recordRefundLedger(runtimeEnv, {
+        id: refundId,
+        paymentId: parentId,
+        amount: Math.round(Number(r.amount)),
         currency: String(r.currency || "KES"),
-        status: "refunded",
-        venue: parent.venue_id ?? null,
+        venue: parentVenue,
         reference: parent.reference ?? null,
         providerRef:
           (r.connector_refund_id as string) || (r.refund_arn as string) || null,
-        metadata: {
-          ...(parent.metadata ?? {}),
-          refund_of: parentId,
-          refund_reason: (r.reason as string) ?? null,
-        },
+        reason: (r.reason as string) ?? null,
+        reservationId: reservation?.id ? String(reservation.id) : null,
       });
     } catch {
       /* best-effort per refund */
@@ -755,13 +1036,38 @@ async function reconcileRefunds(
   return toInsert.length;
 }
 
+export async function runFinancialRecovery(
+  runtimeEnv: unknown,
+): Promise<{
+  completed: number;
+  failed: number;
+  refundsSynced: number;
+  invoiceCommunications: { accepted: number; failed: number };
+  tipPayouts: { confirmed: number; failed: number };
+}> {
+  const sql = getSql(runtimeEnv);
+  if (!sql) {
+    return {
+      completed: 0,
+      failed: 0,
+      refundsSynced: 0,
+      invoiceCommunications: { accepted: 0, failed: 0 },
+      tipPayouts: { confirmed: 0, failed: 0 },
+    };
+  }
+  const refundsSynced = await reconcileRefunds(runtimeEnv, { limit: 100 });
+  const outbox = await processFinancialOutbox(sql, 100);
+  const invoiceCommunications = await processInvoiceCommunications(runtimeEnv, 100);
+  const tipPayouts = await reconcileTipPayouts(runtimeEnv);
+  return { ...outbox, refundsSynced, invoiceCommunications, tipPayouts };
+}
+
 // --- Route Handler ---
 
 export async function handlePaymentRoute(
   request: Request,
   env: unknown,
 ): Promise<Response | null> {
-  ensureIdempotencyCleanup();
   const url = new URL(request.url);
   const path = url.pathname;
 
@@ -769,13 +1075,8 @@ export async function handlePaymentRoute(
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Idempotency-Key, api-key",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, api-key",
   };
-
-  // Handle CORS preflight
-  if (request.method === "OPTIONS" && path.startsWith("/api/")) {
-    return new Response(null, { status: 204, headers: corsHeaders });
-  }
 
   // Public: expose the payment mode so the UI can show a "Sandbox / test
   // payments" badge. Test mode simulates payments (no real money); live mode
@@ -787,6 +1088,101 @@ export async function handlePaymentRoute(
       e.PAYMENTS_TEST_MODE !== "0" &&
       e.PAYMENTS_TEST_MODE.toLowerCase() !== "false";
     return withCors(jsonResponse({ testMode }), corsHeaders);
+  }
+
+  if (path === "/api/payments/intent" && request.method === "POST") {
+    const payload = await requireAuth(request, env);
+    if (!payload || !roleAtLeast(payload, "staff")) {
+      return withCors(jsonResponse({ error: { message: "unauthorized" } }, 401), corsHeaders);
+    }
+    if (!tokenHasScope(payload, "payments:write")) {
+      return withCors(jsonResponse({ error: { message: "forbidden" } }, 403), corsHeaders);
+    }
+    const body = (await request.json().catch(() => ({}))) as {
+      amount?: number;
+      currency?: string;
+      sourceId?: string;
+      maxTipAmount?: number;
+      metadata?: Record<string, unknown>;
+    };
+    const currency = normalizeCurrency(body.currency);
+    if (!currency) {
+      return withCors(
+        jsonResponse({ error: { message: "Unsupported currency." } }, 400),
+        corsHeaders,
+      );
+    }
+    const created = await createPaymentIntent(env, {
+      venue: venueFromPayload(payload, url),
+      amount: Math.round(Number(body.amount) || 0),
+      currency,
+      sourceType: "tapgo",
+      sourceId: body.sourceId ?? null,
+      allowedMethod: currency === DEFAULT_CURRENCY ? "m_pesa_express" : null,
+      maxTipAmount: Math.max(0, Math.round(Number(body.maxTipAmount) || 0)),
+      metadata: body.metadata ?? {},
+    });
+    return withCors(
+      "error" in created
+        ? jsonResponse({ error: { message: created.error } }, 400)
+        : jsonResponse({ paymentIntentToken: created.token, ...created }, 201),
+      corsHeaders,
+    );
+  }
+
+  if (path === "/api/financial-events/run" && request.method === "POST") {
+    const cronSecret = envVar(env, "CRON_SECRET");
+    const cron = cronSecret
+      ? verifyToken(request.headers.get("x-cron-secret"), cronSecret)
+      : false;
+    const principal = cron ? null : await requireAuth(request, env);
+    if (!cron && (!principal || principal.role !== "admin")) {
+      return withCors(jsonResponse({ error: { message: "unauthorized" } }, 401), corsHeaders);
+    }
+    const sql = getSql(env);
+    if (!sql) return withCors(jsonResponse({ error: { message: "database not configured" } }, 503), corsHeaders);
+    return withCors(jsonResponse(await runFinancialRecovery(env)), corsHeaders);
+  }
+
+  if (path === "/api/financial-events" && request.method === "GET") {
+    const principal = await requireAuth(request, env);
+    if (!principal || !roleAtLeast(principal, "manager")) {
+      return withCors(jsonResponse({ error: { message: "unauthorized" } }, 401), corsHeaders);
+    }
+    const venue = venueFromPayload(principal, url);
+    const sql = getSql(env);
+    if (!sql) return withCors(jsonResponse({ error: { message: "database not configured" } }, 503), corsHeaders);
+    const rows = await sql`
+      SELECT o.id, o.event_id, o.consumer, o.status, o.attempts,
+             o.next_attempt_at, o.last_error, o.claimed_at, o.lease_expires_at,
+             e.event_type, e.aggregate_id, e.occurred_at
+      FROM financial_outbox o
+      JOIN financial_events e ON e.id = o.event_id
+      WHERE e.venue_id = ${venue}
+        AND o.status IN ('failed','processing')
+      ORDER BY e.occurred_at DESC LIMIT 100`;
+    return withCors(jsonResponse({ events: rows }), corsHeaders);
+  }
+
+  const financialRetry = path.match(/^\/api\/financial-events\/([^/]+)\/retry$/);
+  if (financialRetry && request.method === "POST") {
+    const principal = await requireAuth(request, env);
+    if (!principal || !roleAtLeast(principal, "manager")) {
+      return withCors(jsonResponse({ error: { message: "unauthorized" } }, 401), corsHeaders);
+    }
+    const venue = venueFromPayload(principal, url);
+    const sql = getSql(env);
+    if (!sql) return withCors(jsonResponse({ error: { message: "database not configured" } }, 503), corsHeaders);
+    const [retried] = await sql`
+      UPDATE financial_outbox o
+      SET status = 'pending', next_attempt_at = now(), last_error = NULL,
+          claim_token = NULL, lease_expires_at = NULL
+      FROM financial_events e
+      WHERE o.id = ${financialRetry[1]}::uuid AND e.id = o.event_id
+        AND e.venue_id = ${venue} AND o.status IN ('failed','processing')
+      RETURNING o.id`;
+    if (!retried) return withCors(jsonResponse({ error: { message: "event not found" } }, 404), corsHeaders);
+    return withCors(jsonResponse({ retried: true, id: retried.id }), corsHeaders);
   }
 
   // --- Payment Routes ---
@@ -838,8 +1234,13 @@ export async function handlePaymentRoute(
 
   // --- Customer Payment Methods ---
   if (path === "/api/customers/payment-methods" && request.method === "GET") {
-    const phone = url.searchParams.get("phone") || "";
-    return withCors(await handleGetCustomerMethods(phone, env), corsHeaders);
+    return withCors(
+      jsonResponse(
+        { error: { message: "verified customer session required" } },
+        401,
+      ),
+      corsHeaders,
+    );
   }
 
   // --- Webhook from PesaSwap ---
@@ -849,12 +1250,21 @@ export async function handlePaymentRoute(
 
   // --- Polling notifications fallback ---
   if (path === "/api/notifications" && request.method === "GET") {
-    return withCors(await handleNotifications(url, env), corsHeaders);
+    const payload = await requireAuth(request, env);
+    if (!payload || !roleAtLeast(payload, "staff")) {
+      return withCors(jsonResponse({ error: { message: "unauthorized" } }, 401), corsHeaders);
+    }
+    const merchantId = venueFromPayload(payload, url);
+    return withCors(await handleNotifications(url, env, merchantId), corsHeaders);
   }
 
   // --- WebSocket upgrade for real-time ---
   if (path === "/api/realtime") {
-    return await handleRealtimeUpgrade(request, url, env);
+    const payload = await requireAuth(request, env);
+    if (!payload || !roleAtLeast(payload, "staff")) {
+      return withCors(jsonResponse({ error: { message: "unauthorized" } }, 401), corsHeaders);
+    }
+    return await handleRealtimeUpgrade(request, env, venueFromPayload(payload, url));
   }
 
   return null; // Not an API route
@@ -868,12 +1278,122 @@ async function handleCreatePayment(
 ): Promise<Response> {
   const body = (await request.json()) as PaymentRequest;
   const idempotencyKey = request.headers.get("Idempotency-Key");
+  const intentToken = String(body.payment_intent_token ?? "").trim();
+  const intentSql = getSql(workerEnv);
+  let reservedIntentId: string | null = null;
+  let boundProviderPaymentId: string | null = null;
+  // Split-pay hold taken further down; released again on any terminal failure.
+  let splitHold: { orderId: string; holdKey: string } | null = null;
+  // A2.2: the by-item claim behind that hold, if the guest picked dishes. The
+  // dishes must go back on the table the moment the charge is known to be dead.
+  let splitClaimKey: string | null = null;
 
-  // Check idempotency (durable, cross-isolate): a replayed create returns the
-  // same result instead of double-recording. Reserves the key for the winner.
+  // Replay before touching the one-time intent. A lost response retry must return
+  // the original payment even though that intent is already consumed.
   if (idempotencyKey) {
     const guard = await idempotentGuard(workerEnv, idempotencyKey);
     if ("replay" in guard) return jsonResponse(guard.replay, 200);
+  }
+
+  if (!/^[a-f0-9]{64}$/i.test(intentToken) || !intentSql) {
+    return jsonResponse(
+      { error: { message: "A valid server payment intent is required." } },
+      400,
+    );
+  }
+  const paymentIntentSql = intentSql;
+  const intentHash = await hashPaymentIntentToken(intentToken);
+  const [intent] = await paymentIntentSql`
+    UPDATE payment_intents
+    SET consumed_at = now()
+    WHERE token_hash = ${intentHash}
+      AND consumed_at IS NULL
+      AND expires_at > now()
+    RETURNING id, venue_id, amount, currency, source_type, source_id,
+              allowed_method, max_tip_amount, metadata`;
+  if (!intent) {
+    const [consumed] = await paymentIntentSql`
+      SELECT consumed_payment_id FROM payment_intents
+      WHERE token_hash = ${intentHash}
+      LIMIT 1`;
+    if (consumed?.consumed_payment_id) {
+      return handleGetPaymentStatus(String(consumed.consumed_payment_id), workerEnv);
+    }
+    return jsonResponse({ error: { message: "Payment intent is invalid or expired." } }, 409);
+  }
+  reservedIntentId = String(intent.id);
+  const requestedMetadata = (body.metadata ?? {}) as Record<string, unknown>;
+  const boundMetadata = (intent.metadata ?? {}) as Record<string, unknown>;
+  const customerPhone = canonicalKenyanPhone(
+    requestedMetadata.customer_phone ?? boundMetadata.customer_phone,
+  );
+  const tipAmount = Math.max(0, Math.round(Number(requestedMetadata.tip_amount) || 0));
+  if (tipAmount > Number(intent.max_tip_amount ?? 0)) {
+    await paymentIntentSql`
+      UPDATE payment_intents SET consumed_at = NULL
+      WHERE id = ${reservedIntentId} AND consumed_payment_id IS NULL`;
+    return jsonResponse({ error: { message: "Tip exceeds the payment intent limit." } }, 400);
+  }
+  if (
+    intent.allowed_method &&
+    body.payment_method &&
+    String(body.payment_method) !== String(intent.allowed_method)
+  ) {
+    await paymentIntentSql`
+      UPDATE payment_intents SET consumed_at = NULL
+      WHERE id = ${reservedIntentId} AND consumed_payment_id IS NULL`;
+    return jsonResponse({ error: { message: "Payment method is not allowed." } }, 400);
+  }
+  body.amount = Number(intent.amount) + tipAmount;
+  body.currency = String(intent.currency);
+  body.payment_method = String(intent.allowed_method ?? body.payment_method ?? "m_pesa_express");
+  body.metadata = {
+    ...boundMetadata,
+    customer_phone: customerPhone ?? undefined,
+    customer_name: requestedMetadata.customer_name,
+    staff_id:
+      typeof boundMetadata.staff_id === "string" &&
+      requestedMetadata.staff_id === boundMetadata.staff_id
+        ? boundMetadata.staff_id
+        : undefined,
+    tip_amount: tipAmount,
+    venue: String(intent.venue_id),
+    merchant_id: String(intent.venue_id),
+    source_type: String(intent.source_type),
+    source_id: intent.source_id ?? undefined,
+  };
+
+  async function finalizeIntent(paymentId: string | null): Promise<void> {
+    if (paymentId === null && splitHold) {
+      // Nothing will ever be charged against this attempt — hand the share back
+      // to the table immediately instead of waiting for the hold to expire.
+      if (splitClaimKey) {
+        // Releases the claimed dishes AND the money hold in one step.
+        await releaseOrderItemClaims(
+          paymentIntentSql,
+          splitHold.orderId,
+          splitClaimKey,
+        );
+      } else {
+        await releaseOrderShare(
+          paymentIntentSql,
+          splitHold.orderId,
+          splitHold.holdKey,
+        );
+      }
+      splitHold = null;
+    }
+    if (!reservedIntentId) return;
+    if (paymentId) {
+      boundProviderPaymentId = paymentId;
+      await paymentIntentSql`
+        UPDATE payment_intents SET consumed_payment_id = ${paymentId}
+        WHERE id = ${reservedIntentId}`;
+    } else {
+      await paymentIntentSql`
+        UPDATE payment_intents SET consumed_at = NULL
+        WHERE id = ${reservedIntentId} AND consumed_payment_id IS NULL`;
+    }
   }
 
   // Validate
@@ -917,8 +1437,11 @@ async function handleCreatePayment(
   const env = getEnv(workerEnv);
 
   // Split-pay guard: when charging against a shared order, never let a guest pay
-  // more than the outstanding balance (server-authoritative). Clamp the share to the
-  // remaining balance and reject if the bill is already settled.
+  // more than the outstanding balance (server-authoritative). The share is
+  // RESERVED under a per-order lock, so two guests checking out at the same
+  // instant can no longer both be granted the same remainder and overpay the
+  // check. The reservation expires on its own (see db/61) and is released
+  // explicitly by finalizeIntent(null) on any terminal failure.
   const guardMeta = (body.metadata ?? {}) as Record<string, unknown>;
   const guardOrderId =
     typeof guardMeta.order_id === "string" &&
@@ -928,37 +1451,43 @@ async function handleCreatePayment(
   if (guardOrderId) {
     const guardSql = getSql(workerEnv);
     if (guardSql) {
-      try {
-        const [row] = await guardSql`
-          SELECT o.total::bigint AS total,
-                 COALESCE((SELECT sum(p.amount - COALESCE(p.tip_amount, 0)) FROM payments p
-                           WHERE p.metadata->>'order_id' = ${guardOrderId}
-                             AND p.status IN ('succeeded', 'paid', 'captured')
-                             AND p.kind <> 'refund'), 0)::bigint AS paid
-          FROM orders o WHERE o.id = ${guardOrderId} LIMIT 1`;
-        if (row) {
-          const remainingMinor = Math.max(
-            0,
-            Number(row.total) - Number(row.paid),
-          );
-          // A tip rides ON TOP of the bill: clamp only the ORDER portion to the
-          // remaining balance, then re-add the tip. A guest can never overpay the
-          // bill, but can still leave a tip (even on an already-settled bill).
-          const tipMinor = Math.max(
-            0,
-            Math.round(Number(guardMeta.tip_amount) || 0),
-          );
-          const orderPortion = Math.max(0, body.amount - tipMinor);
-          body.amount = Math.min(orderPortion, remainingMinor) + tipMinor;
-          if (body.amount <= 0) {
-            return jsonResponse(
-              { error: { message: "This bill is already paid." } },
-              409,
-            );
-          }
+      // A tip rides ON TOP of the bill: reserve only the ORDER portion, then
+      // re-add the tip. A guest can never overpay the bill, but can still leave
+      // a tip (even on an already-settled bill).
+      const tipMinor = Math.max(
+        0,
+        Math.round(Number(guardMeta.tip_amount) || 0),
+      );
+      const orderPortion = Math.max(0, body.amount - tipMinor);
+      // A2.2: a split-by-item checkout already reserved its dishes AND the money
+      // they are worth under this key. Reuse it as the hold key so the charge
+      // re-competes for its own reservation instead of stacking a second hold on
+      // top of it and locking the guest out of the bill they just claimed.
+      const claimKey =
+        typeof guardMeta.item_claim_key === "string" &&
+        /^[A-Za-z0-9_-]{8,64}$/.test(guardMeta.item_claim_key)
+          ? guardMeta.item_claim_key
+          : null;
+      const holdKey = claimKey || idempotencyKey || `pay_${crypto.randomUUID()}`;
+      if (claimKey) splitClaimKey = claimKey;
+      const hold = await holdOrderShare(guardSql, {
+        orderId: guardOrderId,
+        venue: String(guardMeta.venue ?? "main"),
+        holdKey,
+        requestedMinor: orderPortion,
+      });
+      if (hold) {
+        if (hold.grantedMinor > 0) {
+          splitHold = { orderId: guardOrderId, holdKey };
         }
-      } catch {
-        /* best-effort — fall through to a normal charge */
+        body.amount = hold.grantedMinor + tipMinor;
+        if (body.amount <= 0) {
+          await finalizeIntent(null);
+          return jsonResponse(
+            { error: { message: "This bill is already paid." } },
+            409,
+          );
+        }
       }
     }
   }
@@ -984,23 +1513,8 @@ async function handleCreatePayment(
       .toLowerCase();
     if (["failed", "fail", "declined", "decline"].includes(simulate)) {
       const failedId = `test_${crypto.randomUUID().replace(/-/g, "")}`;
-      const reason =
-        typeof meta.error_message === "string" && meta.error_message.trim()
-          ? meta.error_message.trim()
-          : "Simulated decline (test mode)";
-      const code =
-        typeof meta.error_code === "string" && meta.error_code.trim()
-          ? meta.error_code.trim()
-          : "TEST_DECLINED";
-      payments.set(failedId, {
-        id: failedId,
-        amount: body.amount,
-        currency: body.currency || "KES",
-        status: "failed",
-        metadata: meta,
-        created_at: new Date().toISOString(),
-        refunds: [],
-      });
+      const reason = "Simulated decline (test mode)";
+      const code = "TEST_DECLINED";
       await recordLedger(workerEnv, {
         id: failedId,
         amount: body.amount,
@@ -1022,18 +1536,27 @@ async function handleCreatePayment(
       if (idempotencyKey) {
         await rememberIdempotent(workerEnv, idempotencyKey, failBody);
       }
+      // A declined attempt is never charged: hand the reserved share back now.
+      if (splitHold) {
+        if (splitClaimKey) {
+          await releaseOrderItemClaims(
+            paymentIntentSql,
+            splitHold.orderId,
+            splitClaimKey,
+          );
+        } else {
+          await releaseOrderShare(
+            paymentIntentSql,
+            splitHold.orderId,
+            splitHold.holdKey,
+          );
+        }
+        splitHold = null;
+      }
+      await finalizeIntent(failedId);
       return jsonResponse(failBody, 200);
     }
     const paymentId = `test_${crypto.randomUUID().replace(/-/g, "")}`;
-    payments.set(paymentId, {
-      id: paymentId,
-      amount: body.amount,
-      currency: body.currency || "KES",
-      status: "succeeded",
-      metadata: meta,
-      created_at: new Date().toISOString(),
-      refunds: [],
-    });
     await recordLedger(workerEnv, {
       id: paymentId,
       amount: body.amount,
@@ -1054,6 +1577,7 @@ async function handleCreatePayment(
     if (idempotencyKey) {
       await rememberIdempotent(workerEnv, idempotencyKey, responseBody);
     }
+    await finalizeIntent(paymentId);
     return jsonResponse(responseBody, 201);
   }
 
@@ -1111,6 +1635,7 @@ async function handleCreatePayment(
       const intent = (await apiResponse.json()) as Record<string, any>;
       if (!apiResponse.ok || intent.error) {
         console.error("[PesaSwap] M-Pesa STK error:", JSON.stringify(intent.error));
+        await finalizeIntent(null);
         return jsonResponse(
           { error: intent.error || { message: "M-Pesa STK failed" } },
           apiResponse.status || 502,
@@ -1118,15 +1643,18 @@ async function handleCreatePayment(
       }
       const paymentId = intent.payment_id || intent.id;
       const status = mapPesaSwapStatus(intent.status);
-      payments.set(paymentId, {
-        id: paymentId,
+      const responseBody = {
+        payment_id: paymentId,
+        client_secret: intent.client_secret ?? null,
+        status,
         amount: body.amount,
         currency: body.currency || "KES",
-        status,
-        metadata: liveMeta,
-        created_at: new Date().toISOString(),
-        refunds: [],
-      });
+        stk: true,
+      };
+      await finalizeIntent(String(paymentId));
+      if (idempotencyKey) {
+        await rememberIdempotent(workerEnv, idempotencyKey, responseBody);
+      }
       // Record the attempt in the durable ledger immediately (usually status=
       // "processing" while the customer approves the STK on their handset), so EVERY
       // attempt is visible to the merchant. The client poll / webhook later updates
@@ -1146,20 +1674,10 @@ async function handleCreatePayment(
       } catch {
         /* best-effort ledger */
       }
-      const responseBody = {
-        payment_id: paymentId,
-        client_secret: intent.client_secret ?? null,
-        status,
-        amount: body.amount,
-        currency: body.currency || "KES",
-        stk: true,
-      };
-      if (idempotencyKey) {
-        await rememberIdempotent(workerEnv, idempotencyKey, responseBody);
-      }
       return jsonResponse(responseBody, 201);
     } catch (err) {
       console.error("[PesaSwap] M-Pesa STK exception:", err);
+      await finalizeIntent(null);
       return jsonResponse({ error: { message: "M-Pesa STK failed" } }, 502);
     }
   }
@@ -1197,10 +1715,10 @@ async function handleCreatePayment(
     const paymentIntent = await apiResponse.json();
 
     if (paymentIntent.error) {
+      await finalizeIntent(null);
       return jsonResponse({ error: paymentIntent.error }, apiResponse.status);
     }
 
-    // Store locally for tracking
     const paymentRecord = {
       id: paymentIntent.payment_id || paymentIntent.id,
       amount: body.amount,
@@ -1208,9 +1726,19 @@ async function handleCreatePayment(
       status: paymentIntent.status || "requires_payment_method",
       metadata: (body.metadata as Record<string, unknown>) || {},
       created_at: new Date().toISOString(),
-      refunds: [],
     };
-    payments.set(paymentRecord.id, paymentRecord);
+
+    const responseBody = {
+      payment_id: paymentRecord.id,
+      client_secret: paymentIntent.client_secret,
+      status: paymentRecord.status,
+      amount: body.amount,
+      currency: body.currency || "KES",
+    };
+    await finalizeIntent(String(paymentRecord.id));
+    if (idempotencyKey) {
+      await rememberIdempotent(workerEnv, idempotencyKey, responseBody);
+    }
 
     // Persist to the durable ledger (survives restarts, shared across workers).
     const meta = (body.metadata ?? {}) as Record<string, unknown>;
@@ -1224,22 +1752,12 @@ async function handleCreatePayment(
       metadata: meta,
     });
 
-    const responseBody = {
-      payment_id: paymentRecord.id,
-      client_secret: paymentIntent.client_secret,
-      status: paymentRecord.status,
-      amount: body.amount,
-      currency: body.currency || "KES",
-    };
-
-    // Cache idempotent response (1 hour)
-    if (idempotencyKey) {
-      await rememberIdempotent(workerEnv, idempotencyKey, responseBody);
-    }
-
     return jsonResponse(responseBody, 201);
   } catch (err) {
     console.error("[PesaSwap] Payment creation error:", err);
+    // finalizeIntent(paymentId) already bound any provider-created payment. Only
+    // pre-provider failures release the one-time intent and split reservation.
+    if (!boundProviderPaymentId) await finalizeIntent(null);
     return jsonResponse({ error: { message: "Failed to create payment" } }, 500);
   }
 }
@@ -1258,7 +1776,7 @@ async function handleRetryPayment(
   const url = new URL(request.url);
   const payload = await requireAuth(request, workerEnv);
   if (!payload) return jsonResponse({ error: { message: "unauthorized" } }, 401);
-  if (!roleAtLeast(payload, "manager")) {
+  if (!roleAtLeast(payload, "manager") || !tokenHasScope(payload, "payments:write")) {
     return jsonResponse({ error: { message: "forbidden" } }, 403);
   }
   const venue = venueFromPayload(payload, url);
@@ -1278,10 +1796,8 @@ async function handleRetryPayment(
     );
   }
   const meta = (row.metadata ?? {}) as Record<string, unknown>;
-  // Optional overrides from the merchant re-request modal: a new amount and/or a
-  // corrected phone. Amount is in MINOR units (cents), matching the ledger.
+  // A retry may correct the destination phone, but never the authoritative amount.
   const overrides = (await request.json().catch(() => ({}))) as {
-    amount?: number;
     phone?: string;
   };
   if (typeof overrides.phone === "string" && overrides.phone.trim()) {
@@ -1293,27 +1809,49 @@ async function handleRetryPayment(
       400,
     );
   }
-  const amount =
-    typeof overrides.amount === "number" && overrides.amount > 0
-      ? Math.round(overrides.amount)
-      : Number(row.amount) || 0;
+  const amount = Number(row.amount) || 0;
   if (amount <= 0) {
     return jsonResponse({ error: { message: "amount must be positive" } }, 400);
   }
 
-  // Reuse the full create path (venue default + STK + ledger recording) by replaying
-  // the original parameters (with any overrides) as a fresh create request.
+  const retryKey = `payment-retry:${venue}:${paymentId}`;
+  const retryGuard = await idempotentGuard(workerEnv, retryKey);
+  if ("replay" in retryGuard) return jsonResponse(retryGuard.replay, 200);
+
+  const retryIntent = await createPaymentIntent(workerEnv, {
+    venue,
+    amount,
+    currency: String(row.currency ?? "KES"),
+    sourceType: "tapgo",
+    sourceId: paymentId,
+    allowedMethod: "m_pesa_express",
+    maxTipAmount: 0,
+    metadata: meta,
+  });
+  if ("error" in retryIntent) {
+    return jsonResponse({ error: { message: retryIntent.error } }, 503);
+  }
+  // Reuse the full create path with a newly bound one-time intent.
   const replay = new Request("https://internal/api/payments/create", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       amount,
       currency: String(row.currency ?? "KES"),
+      payment_intent_token: retryIntent.token,
       description: `Re-request of ${paymentId}`,
       metadata: meta,
     }),
   });
-  return handleCreatePayment(replay, workerEnv);
+  const response = await handleCreatePayment(replay, workerEnv);
+  if (response.ok) {
+    await rememberIdempotent(
+      workerEnv,
+      retryKey,
+      await response.clone().json().catch(() => ({ ok: true })),
+    );
+  }
+  return response;
 }
 
 // --- DB-backed payments ledger (merchant view) ---
@@ -1327,7 +1865,7 @@ async function handleListPayments(
   const url = new URL(request.url);
   const payload = await requireAuth(request, workerEnv);
   if (!payload) return jsonResponse({ error: { message: "unauthorized" } }, 401);
-  if (!roleAtLeast(payload, "manager")) {
+  if (!roleAtLeast(payload, "manager") || !tokenHasScope(payload, "payments:read")) {
     return jsonResponse({ error: { message: "forbidden" } }, 403);
   }
   const venue = venueFromPayload(payload, url);
@@ -1396,6 +1934,7 @@ async function handleListPayments(
           customerPhone: (meta.customer_phone as string) || null,
           customerName: (meta.customer_name as string) || null,
           flowType: (meta.flow_type as string) || null,
+          sourceId: (meta.source_id as string) || null,
           invoiceNumber: (meta.invoice_number as string) || null,
           errorMessage: (meta.error_message as string) || null,
           // Refund context: how much has been refunded on this payment (minor
@@ -1425,7 +1964,7 @@ async function handleSyncPayments(
   const url = new URL(request.url);
   const payload = await requireAuth(request, workerEnv);
   if (!payload) return jsonResponse({ error: { message: "unauthorized" } }, 401);
-  if (!roleAtLeast(payload, "manager")) {
+  if (!roleAtLeast(payload, "manager") || !tokenHasScope(payload, "payments:write")) {
     return jsonResponse({ error: { message: "forbidden" } }, 403);
   }
   const venue = venueFromPayload(payload, url);
@@ -1557,8 +2096,6 @@ async function handleGetPaymentStatus(
             }
           }
         }
-        const cached = payments.get(paymentId);
-        if (cached) cached.status = status;
         return jsonResponse({
           payment_id: paymentId,
           status,
@@ -1570,11 +2107,13 @@ async function handleGetPaymentStatus(
         });
       }
     } catch {
-      /* fall through to the in-memory record */
+      /* fall through to the durable ledger */
     }
   }
 
-  const payment = payments.get(paymentId);
+  // The ledger, not an isolate-local cache. A payment created by another isolate
+  // is still a real payment; answering 404 for it was a load-only bug.
+  const payment = await loadPayment(workerEnv, paymentId);
   if (!payment) {
     return jsonResponse({ error: { message: "Payment not found" } }, 404);
   }
@@ -1585,7 +2124,6 @@ async function handleGetPaymentStatus(
     amount: payment.amount,
     currency: payment.currency,
     metadata: payment.metadata,
-    refunds: payment.refunds,
     created_at: payment.created_at,
   });
 }
@@ -1599,15 +2137,25 @@ async function handleCapture(
   request: Request,
   workerEnv: unknown,
 ): Promise<Response> {
-  if (!(await requireAuth(request, workerEnv))) {
-    return jsonResponse({ error: { message: "unauthorized" } }, 401);
+  const payload = await requireAuth(request, workerEnv);
+  if (!payload) return jsonResponse({ error: { message: "unauthorized" } }, 401);
+  if (!roleAtLeast(payload, "manager") || !tokenHasScope(payload, "payments:write")) {
+    return jsonResponse({ error: { message: "forbidden" } }, 403);
   }
+  const venue = venueFromPayload(payload, new URL(request.url));
+  const sql = getSql(workerEnv);
+  if (!sql) return jsonResponse({ error: { message: "database not configured" } }, 503);
+  const [stored] = await sql`
+    SELECT amount, currency, metadata
+    FROM payments
+    WHERE id = ${paymentId} AND venue_id = ${venue}
+    LIMIT 1`;
+  if (!stored) return jsonResponse({ error: { message: "payment not found" } }, 404);
   const env = getEnv(workerEnv);
   const body = (await request.json().catch(() => ({}))) as { amount?: number };
-  const payment = payments.get(paymentId);
-  const amount = payment?.amount ?? Number(body.amount ?? 0);
-  const currency = payment?.currency ?? "KES";
-  const venue = (payment?.metadata?.venue as string) ?? null;
+  const amount = Number(stored.amount) || Number(body.amount ?? 0);
+  const currency = String(stored.currency ?? "KES");
+  const metadata = (stored.metadata ?? {}) as Record<string, unknown>;
 
   const testMode =
     typeof env.PAYMENTS_TEST_MODE === "string" &&
@@ -1616,14 +2164,13 @@ async function handleCapture(
     env.PAYMENTS_TEST_MODE.toLowerCase() !== "false";
 
   async function settleCaptured() {
-    if (payment) payment.status = "captured";
     await recordLedger(workerEnv, {
       id: paymentId,
       amount,
       currency,
       status: "captured",
       venue,
-      metadata: payment?.metadata ?? {},
+      metadata,
     });
   }
 
@@ -1662,33 +2209,154 @@ async function handleRefund(
   request: Request,
   runtimeEnv: unknown,
 ): Promise<Response> {
-  const body = (await request.json()) as RefundRequest;
+  const payload = await requireAuth(request, runtimeEnv);
+  if (!payload) {
+    return jsonResponse({ error: { message: "unauthorized" } }, 401);
+  }
+  if (!roleAtLeast(payload, "manager") || !tokenHasScope(payload, "payments:write")) {
+    return jsonResponse({ error: { message: "forbidden" } }, 403);
+  }
+  const url = new URL(request.url);
+  const venue = venueFromPayload(payload, url);
+  const body = (await request.json().catch(() => ({}))) as RefundRequest;
 
   if (!body.payment_id) {
     return jsonResponse({ error: { message: "payment_id is required" } }, 400);
   }
-
-  const env = getEnv(runtimeEnv);
-  const payment = payments.get(body.payment_id);
-
-  // Calculate refund amount
-  const refundAmount = body.amount || payment?.amount;
-  if (!refundAmount || refundAmount <= 0) {
-    return jsonResponse({ error: { message: "Invalid refund amount" } }, 400);
+  if (
+    ![
+      "customer_request",
+      "item_quality",
+      "overcharge",
+      "duplicate",
+      "other",
+    ].includes(body.reason)
+  ) {
+    return jsonResponse({ error: { message: "invalid refund reason" } }, 400);
   }
 
-  // Check for over-refund
-  if (payment) {
-    const totalRefunded = payment.refunds.reduce((sum, r) => sum + r.amount, 0);
-    if (totalRefunded + refundAmount > payment.amount) {
-      return jsonResponse(
-        { error: { message: `Refund would exceed original payment. Already refunded: ${totalRefunded}` } },
-        400,
-      );
+  const env = getEnv(runtimeEnv);
+  if (!env.PESASWAP_API_KEY && isProductionRuntime(runtimeEnv)) {
+    return jsonResponse({ error: { message: "refund service unavailable" } }, 503);
+  }
+  const sql = getSql(runtimeEnv);
+  if (!sql) {
+    return jsonResponse({ error: { message: "database not configured" } }, 503);
+  }
+  const idempotencyKey = request.headers.get("Idempotency-Key")?.trim();
+  if (!idempotencyKey) {
+    return jsonResponse({ error: { message: "Idempotency-Key required" } }, 400);
+  }
+  const requestedInput = body.amount == null ? null : Math.round(Number(body.amount));
+  const requestHash = await sha256Hex(JSON.stringify({
+    venue,
+    paymentId: body.payment_id,
+    amount: requestedInput,
+    reason: body.reason,
+    items: body.items ?? [],
+  }));
+  const providerKey = `refund:${venue}:${body.payment_id}:${await sha256Hex(idempotencyKey)}`;
+  const reservationId = `rr_${crypto.randomUUID().replace(/-/g, "")}`;
+  const reserved = await sql.begin(async (tx) => {
+    const [parent] = await tx`
+      SELECT p.amount::bigint AS amount, p.currency, p.metadata
+      FROM payments p
+      WHERE p.id = ${body.payment_id}
+        AND p.venue_id = ${venue}
+        AND p.kind <> 'refund'
+        AND p.status IN ('succeeded','paid','captured','partially_refunded','refunded')
+      FOR UPDATE`;
+    if (!parent) return { error: "not_found" as const };
+    const [existing] = await tx`
+      SELECT id, amount, status, request_hash, provider_key,
+             provider_refund_id, provider_status, provider_response
+      FROM refund_reservations
+      WHERE venue_id = ${venue} AND payment_id = ${body.payment_id}
+        AND idempotency_key = ${idempotencyKey}
+      LIMIT 1
+      FOR UPDATE`;
+    if (existing) {
+      if (String(existing.request_hash) !== requestHash) {
+        return { error: "idempotency_conflict" as const };
+      }
+      return {
+        id: String(existing.id),
+        amount: Number(existing.amount),
+        parent,
+        replay: true,
+        status: String(existing.status),
+        providerKey: String(existing.provider_key),
+        providerRefundId: existing.provider_refund_id
+          ? String(existing.provider_refund_id)
+          : null,
+        providerStatus: existing.provider_status
+          ? String(existing.provider_status)
+          : null,
+        providerResponse: existing.provider_response as Record<string, unknown> | null,
+      };
     }
+    const [totals] = await tx`
+      SELECT
+        COALESCE((SELECT sum(r.amount) FROM payments r
+                  WHERE r.kind = 'refund' AND r.status = 'refunded'
+                    AND r.metadata->>'refund_of' = ${body.payment_id}), 0)::bigint AS settled,
+        COALESCE((SELECT sum(rr.amount) FROM refund_reservations rr
+                  WHERE rr.venue_id = ${venue} AND rr.payment_id = ${body.payment_id}
+                    AND rr.status IN ('reserved','submitting','unknown','pending')), 0)::bigint AS reserved`;
+    const original = Number(parent.amount) || 0;
+    const used = Number(totals?.settled ?? 0) + Number(totals?.reserved ?? 0);
+    const requested = body.amount == null ? original - used : Number(body.amount);
+    const amount = Number.isFinite(requested) ? Math.round(requested) : 0;
+    if (amount <= 0) return { error: "invalid" as const };
+    if (used + amount > original) return { error: "exceeds" as const, used };
+    await tx`
+      INSERT INTO refund_reservations
+        (id, venue_id, payment_id, idempotency_key, amount,
+         request_hash, provider_key)
+      VALUES
+        (${reservationId}, ${venue}, ${body.payment_id}, ${idempotencyKey}, ${amount},
+         ${requestHash}, ${providerKey})`;
+    return {
+      id: reservationId,
+      amount,
+      parent,
+      replay: false,
+      status: "reserved",
+      providerKey,
+      providerRefundId: null,
+      providerStatus: null,
+      providerResponse: null,
+    };
+  });
+  if ("error" in reserved) {
+    if (reserved.error === "not_found") return jsonResponse({ error: { message: "payment not found" } }, 404);
+    if (reserved.error === "exceeds") return jsonResponse({ error: { message: "Refund would exceed original payment." } }, 409);
+    if (reserved.error === "idempotency_conflict") return jsonResponse({ error: { message: "Idempotency-Key was already used for different refund inputs." } }, 409);
+    return jsonResponse({ error: { message: "Invalid refund amount" } }, 400);
+  }
+  const parent = reserved.parent;
+  const refundAmount = reserved.amount;
+
+  if (reserved.replay && ["pending", "booked", "failed", "cancelled"].includes(reserved.status)) {
+    const response = reserved.providerResponse ?? {};
+    const settled = reserved.status === "booked";
+    return jsonResponse({
+      ...response,
+      refund_id: reserved.providerRefundId,
+      payment_id: body.payment_id,
+      amount: refundAmount,
+      status: settled ? "succeeded" : reserved.status,
+      replay: true,
+    }, settled ? 200 : reserved.status === "pending" ? 202 : 409);
   }
 
   try {
+    await sql`
+      UPDATE refund_reservations
+      SET status = 'submitting', submitted_at = COALESCE(submitted_at, now()),
+          updated_at = now()
+      WHERE id = ${reserved.id}
+        AND status IN ('reserved','submitting','unknown')`;
     // Call PesaSwap Refund API
     const apiResponse = await fetch(`${env.PESASWAP_URL}/refunds`, {
       method: "POST",
@@ -1696,80 +2364,117 @@ async function handleRefund(
         "Content-Type": "application/json",
         Accept: "application/json",
         "api-key": env.PESASWAP_API_KEY,
-        "Idempotency-Key": request.headers.get("Idempotency-Key") || `refund-${body.payment_id}-${Date.now()}`,
+        "Idempotency-Key": reserved.providerKey,
       },
       body: JSON.stringify({
         payment_id: body.payment_id,
         amount: refundAmount,
         reason: body.reason,
         metadata: {
-          refunded_by: body.refunded_by,
           refunded_items: body.items ? JSON.stringify(body.items) : undefined,
-          original_payment_metadata: payment?.metadata,
+          original_payment_metadata: parent.metadata,
           ...body.metadata,
+          refunded_by:
+            (payload.name as string) ||
+            (payload.sub as string) ||
+            (payload.tokenId as string) ||
+            "manager",
         },
       }),
     });
 
-    const refundResult = await apiResponse.json();
+    const refundResult = (await apiResponse.json().catch(() => null)) as
+      | Record<string, unknown>
+      | null;
 
-    if (refundResult.error) {
-      return jsonResponse({ error: refundResult.error }, apiResponse.status);
+    if (!apiResponse.ok || !refundResult || refundResult.error) {
+      const definitive = apiResponse.status >= 400 && apiResponse.status < 500;
+      await sql`
+        UPDATE refund_reservations
+        SET status = ${definitive ? "failed" : "unknown"},
+            provider_status = ${String(refundResult?.status ?? apiResponse.status)},
+            provider_response = ${refundResult ? sql.json(JSON.parse(JSON.stringify(refundResult))) : null},
+            last_error = ${String(refundResult?.message ?? `provider HTTP ${apiResponse.status}`)},
+            next_reconcile_at = now() + interval '1 minute', updated_at = now()
+        WHERE id = ${reserved.id}`;
+      return jsonResponse(
+        {
+          error:
+            refundResult?.error ?? {
+              message: String(refundResult?.message ?? "Refund provider outcome is pending reconciliation"),
+            },
+        },
+        definitive ? apiResponse.status : 202,
+      );
     }
 
+    const providerStatus = String(refundResult.status ?? "pending").toLowerCase();
+    const settled = providerStatus === "succeeded" || providerStatus === "refunded";
+    const providerRefundId = refundResult.refund_id || refundResult.id;
+    if (typeof providerRefundId !== "string" || !providerRefundId.trim()) {
+      await sql`
+        UPDATE refund_reservations
+        SET status = 'unknown', provider_status = ${providerStatus},
+            provider_response = ${sql.json(JSON.parse(JSON.stringify(refundResult)))},
+            last_error = 'provider response omitted refund id',
+            next_reconcile_at = now() + interval '1 minute', updated_at = now()
+        WHERE id = ${reserved.id}`;
+      return jsonResponse({ error: { message: "Refund accepted but awaiting provider reconciliation" } }, 202);
+    }
     const refundRecord = {
-      id: refundResult.refund_id || refundResult.id || `ref_${Date.now()}`,
+      id: providerRefundId.trim(),
       amount: refundAmount,
       reason: body.reason,
       created_at: new Date().toISOString(),
     };
+    await sql`
+      UPDATE refund_reservations
+        SET status = ${settled ? "pending" : "pending"},
+          provider_refund_id = ${refundRecord.id}, provider_status = ${providerStatus},
+          provider_response = ${sql.json(JSON.parse(JSON.stringify(refundResult)))},
+          last_error = NULL, updated_at = now()
+      WHERE id = ${reserved.id}`;
 
-    // Update local payment record
-    if (payment) {
-      payment.refunds.push(refundRecord);
-      const totalRefunded = payment.refunds.reduce((sum, r) => sum + r.amount, 0);
-      if (totalRefunded >= payment.amount) {
-        payment.status = "refunded";
-      } else {
-        payment.status = "partially_refunded";
-      }
-    }
+    // A provider acceptance is not a settlement. Only a terminal succeeded
+    // refund may change the parent, GL, loyalty, or local UI state. Pending
+    // refunds are learned later through the authenticated pull reconcile.
+    // The parent's refunded/partially_refunded status is set by
+    // `updateParentRefundStatus` against the ledger, not here.
 
     // Notify merchant via WebSocket
-    const merchantId = (payment?.metadata?.merchant_id as string) || "";
+    const parentMeta = (parent.metadata ?? {}) as Record<string, unknown>;
+    const merchantId = (parentMeta.merchant_id as string) || venue;
     await broadcastToMerchant(runtimeEnv, merchantId, {
-      type: "payment.refunded",
+      type: settled ? "payment.refunded" : "payment.refund_pending",
       data: {
         refund_id: refundRecord.id,
         payment_id: body.payment_id,
         amount: refundAmount,
         reason: body.reason,
-        refunded_by: body.refunded_by,
+        refunded_by:
+          (payload.name as string) || (payload.sub as string) || "manager",
         timestamp: refundRecord.created_at,
       },
     });
 
-    // Persist the refund to the durable ledger + post its accounting entry
-    // (best-effort — never fail the refund on a bookkeeping error).
-    try {
-      await recordLedger(env, {
-        id: refundRecord.id,
-        kind: "refund",
+    // Use the shared idempotent refund recorder; it deliberately ignores
+    // pending/failed refunds and derives tenant metadata from the parent row.
+    if (settled) {
+      const booked = await recordRefundRow(runtimeEnv, {
+        ...refundResult,
+        refund_id: String(refundRecord.id),
+        payment_id: body.payment_id,
         amount: refundAmount,
-        currency: (payment?.currency as string) || "KES",
-        status: "refunded",
-        venue: (payment?.metadata?.venue as string) || null,
-        reference: body.payment_id,
-        metadata: { ...(payment?.metadata ?? {}), refund_of: body.payment_id },
+        currency: String(parent.currency || "KES"),
+        status: "succeeded",
+        reason: body.reason,
+        refund_reservation_id: reserved.id,
       });
-    } catch {
-      /* best-effort */
-    }
-
-    // Deduct loyalty points for refunded amount
-    if (payment?.metadata?.customer_phone) {
-      const pointsToDeduct = Math.floor(refundAmount / 1000); // 1 point per KES 10 in minor units
-      console.info(`[Loyalty] Deducting ${pointsToDeduct} points for refund on ${payment.metadata.customer_phone}`);
+      await sql`
+        UPDATE refund_reservations
+        SET status = 'booked', provider_status = 'succeeded', updated_at = now()
+        WHERE id = ${reserved.id}
+          AND (${booked} OR EXISTS (SELECT 1 FROM payments WHERE id = ${refundRecord.id}))`;
     }
 
     return jsonResponse(
@@ -1777,63 +2482,20 @@ async function handleRefund(
         refund_id: refundRecord.id,
         payment_id: body.payment_id,
         amount: refundAmount,
-        status: refundResult.status || "succeeded",
+        status: settled ? "succeeded" : "pending",
         created_at: refundRecord.created_at,
       },
-      201,
+      settled ? 201 : 202,
     );
   } catch (err) {
+    await sql`
+      UPDATE refund_reservations
+      SET status = 'unknown', last_error = ${err instanceof Error ? err.message.slice(0, 1000) : String(err).slice(0, 1000)},
+          next_reconcile_at = now() + interval '1 minute', updated_at = now()
+      WHERE id = ${reserved.id} AND status <> 'booked'`.catch(() => {});
     console.error("[PesaSwap] Refund error:", err);
     return jsonResponse({ error: { message: "Failed to process refund" } }, 500);
   }
-}
-
-// --- Customer Payment Methods ---
-
-async function handleGetCustomerMethods(
-  phone: string,
-  env: unknown,
-): Promise<Response> {
-  const cleaned = phone.trim();
-  if (cleaned) {
-    const sql = getSql(env);
-    if (sql) {
-      try {
-        const rows = await sql`
-          SELECT kind, label, brand, last4 FROM customer_payment_methods
-          WHERE phone = ${cleaned}
-          ORDER BY is_default DESC, last_used_at DESC
-          LIMIT 5`;
-        if (rows.length > 0) {
-          return jsonResponse({
-            // has_saved stays false: M-Pesa STK is not a stored one-tap token, so
-            // the pay flow keeps prompting the number. `methods` is for display.
-            has_saved: false,
-            known: true,
-            methods: rows.map((r) => ({
-              kind: String(r.kind),
-              label: String(r.label ?? ""),
-              brand: r.brand ? String(r.brand) : null,
-              last4: r.last4 ? String(r.last4) : null,
-            })),
-            default_method: String(rows[0].kind),
-          });
-        }
-      } catch {
-        /* fall through to the in-memory / empty response */
-      }
-    }
-  }
-  const customer = customerMethods.get(cleaned);
-  if (!customer) {
-    return jsonResponse({ has_saved: false, known: false, methods: [] });
-  }
-  return jsonResponse({
-    has_saved: customer.methods.length > 0,
-    known: customer.methods.length > 0,
-    methods: customer.methods,
-    default_method: customer.default_method,
-  });
 }
 
 // --- Webhook Handler ---
@@ -1957,10 +2619,9 @@ async function processWebhook(
       eventType === "payment_intent.payment_failed");
 
   if (isSuccess) {
-      const payment = payments.get(paymentId);
-      if (payment) {
-        payment.status = "succeeded";
-      }
+      // A provider webhook is an inbound request: it almost never lands on the
+      // isolate that created the payment, so this MUST come from the ledger.
+      const payment = await loadPayment(runtimeEnv, paymentId);
 
       // Award loyalty points. Capture what ACTUALLY settled (amount_received) for a
       // succeeded payment — M-Pesa rounds decimals to whole shillings — falling back
@@ -2039,10 +2700,7 @@ async function processWebhook(
         },
       });
   } else if (isFailure) {
-      const payment = payments.get(paymentId);
-      if (payment) {
-        payment.status = "failed";
-      }
+      const payment = await loadPayment(runtimeEnv, paymentId);
 
       const metadata = (payment?.metadata || resource.metadata || {}) as Record<string, unknown>;
       const venue =
@@ -2183,11 +2841,9 @@ function realtimeHub(env: unknown, merchantId: string): HubStub | null {
 
 async function handleRealtimeUpgrade(
   request: Request,
-  url: URL,
   env: unknown,
+  merchantId: string,
 ): Promise<Response> {
-  const merchantId = url.searchParams.get("merchant") || "";
-
   // Check for WebSocket upgrade
   const upgradeHeader = request.headers.get("Upgrade") || "";
   if (upgradeHeader.toLowerCase() !== "websocket") {
@@ -2238,8 +2894,11 @@ async function handleRealtimeUpgrade(
 // Store recent events for polling clients
 const recentEvents = new Map<string, Array<{ event: unknown; timestamp: string }>>();
 
-async function handleNotifications(url: URL, env: unknown): Promise<Response> {
-  const merchantId = url.searchParams.get("merchant") || "";
+async function handleNotifications(
+  url: URL,
+  env: unknown,
+  merchantId: string,
+): Promise<Response> {
   const since = url.searchParams.get("since") || "";
 
   // Cloudflare: read the merchant DO's durable buffer (correct across isolates).
@@ -2384,54 +3043,6 @@ function extractSavedMethod(resource: Record<string, any>): {
 
 // --- Utilities ---
 
-// Normalise a Kenyan MSISDN to the PesaSwap/Daraja shape: a 9-digit subscriber
-// number (no leading 0, no country code) + a "+254" country code. Returns null if
-// the input isn't a plausible Kenyan mobile number.
-function normalizeKenyanPhone(
-  phone: string,
-): { number: string; country_code: string } | null {
-  const digits = (phone || "").replace(/\D/g, "");
-  let local = "";
-  if (digits.startsWith("254")) local = digits.slice(3);
-  else if (digits.startsWith("0")) local = digits.slice(1);
-  else local = digits;
-  // Kenyan mobile numbers are 9 digits starting 7 or 1 (e.g. 7XXXXXXXX / 1XXXXXXXX).
-  if (!/^[71]\d{8}$/.test(local)) return null;
-  return { number: local, country_code: "+254" };
-}
-
-// Map a PesaSwap (Hyperswitch) payment status to the app's PaymentStatus vocabulary.
-function mapPesaSwapStatus(status: unknown): string {
-  switch (String(status)) {
-    case "succeeded":
-    case "partially_captured":
-    case "partially_captured_and_capturable":
-      return "succeeded";
-    case "failed":
-      return "failed";
-    case "cancelled":
-      return "cancelled";
-    case "requires_capture":
-      return "requires_capture";
-    default:
-      // requires_customer_action / processing / requires_confirmation / etc.
-      return "processing";
-  }
-}
-
-// The amount to CAPTURE for a succeeded payment = what actually settled
-// (`amount_received`), NOT the requested `amount`. M-Pesa/Daraja only moves whole
-// shillings, so a decimal request (e.g. KES 1.01 = 101) settles as KES 1.00 (100);
-// recording amount_received keeps the ledger, loyalty and settlement exact. For a
-// non-succeeded payment there is nothing received, so we keep the requested amount
-// (what was attempted) for visibility.
-export function settledAmount(p: Record<string, any>, mappedStatus: string): number {
-  const requested = Number(p.amount) || 0;
-  if (mappedStatus !== "succeeded") return requested;
-  const received = Number(p.amount_received);
-  return received > 0 ? received : requested;
-}
-
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
@@ -2451,19 +3062,3 @@ function withCors(response: Response, corsHeaders: Record<string, string>): Resp
   });
 }
 
-// --- Cleanup stale idempotency cache every 10 minutes ---
-// Started lazily from within a request handler because Cloudflare Workers
-// disallow timers (setInterval/setTimeout) in global (module top-level) scope.
-
-let idempotencyCleanupStarted = false;
-
-function ensureIdempotencyCleanup(): void {
-  if (idempotencyCleanupStarted || typeof setInterval === "undefined") return;
-  idempotencyCleanupStarted = true;
-  setInterval(() => {
-    const now = Date.now();
-    idempotencyCache.forEach((value, key) => {
-      if (value.expires < now) idempotencyCache.delete(key);
-    });
-  }, 600000);
-}

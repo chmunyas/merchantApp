@@ -1,4 +1,4 @@
-import { mintToken, requireAuth } from "@/api/auth";
+import { mintToken, requireHumanAuth } from "@/api/auth";
 import { getSql } from "@/lib/db";
 import { verifyIdToken } from "@/lib/oidc";
 import { roleAtLeast } from "@/lib/rbac";
@@ -20,6 +20,19 @@ function redirect(location: string): Response {
   return new Response(null, { status: 302, headers: { location } });
 }
 
+function safeRedirectPath(value: string | null): string {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) {
+    return "/sign-in";
+  }
+  try {
+    const parsed = new URL(value, "https://local.invalid");
+    if (parsed.origin !== "https://local.invalid") return "/sign-in";
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return "/sign-in";
+  }
+}
+
 // Enterprise OIDC single sign-on. A reseller (bank/enterprise) configures its IdP
 // once; its people sign in via the authorization-code flow. The id_token is
 // verified (RS256 against the IdP JWKS) before we ever mint a session.
@@ -36,7 +49,7 @@ export async function handleSsoRoute(
 
   // --- Reseller config: set / read the org's OIDC connection (admins only) -----
   if (path === "/api/org/sso") {
-    const payload = await requireAuth(request, env);
+    const payload = await requireHumanAuth(request, env);
     if (!payload) return json({ error: "unauthorized" }, 401);
     if (!roleAtLeast(payload, "reseller_admin")) {
       return json({ error: "forbidden" }, 403);
@@ -58,13 +71,17 @@ export async function handleSsoRoute(
       for (const k of required) {
         if (!b[k]?.trim()) return json({ error: `${k} is required` }, 400);
       }
+      const defaultRole = b.defaultRole || "reseller_admin";
+      if (defaultRole !== "reseller_admin") {
+        return json({ error: "defaultRole must be reseller_admin" }, 400);
+      }
       await sql`
         INSERT INTO sso_connections
           (org_id, provider, issuer, client_id, client_secret, authorize_url,
            token_url, jwks_url, email_domain, default_role, enabled, updated_at)
         VALUES (${orgId}, 'oidc', ${b.issuer}, ${b.clientId}, ${b.clientSecret},
                 ${b.authorizeUrl}, ${b.tokenUrl}, ${b.jwksUrl},
-                ${b.emailDomain || null}, ${b.defaultRole || "reseller_admin"},
+                ${b.emailDomain || null}, ${defaultRole},
                 ${b.enabled === "false" ? false : true}, now())
         ON CONFLICT (org_id) DO UPDATE SET
           issuer = EXCLUDED.issuer, client_id = EXCLUDED.client_id,
@@ -93,7 +110,7 @@ export async function handleSsoRoute(
     const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     await sql`
       INSERT INTO sso_states (state, org_id, nonce, redirect_to, expires_at)
-      VALUES (${state}, ${org.id}, ${nonce}, ${url.searchParams.get("redirect_to")}, ${expires})`;
+      VALUES (${state}, ${org.id}, ${nonce}, ${safeRedirectPath(url.searchParams.get("redirect_to"))}, ${expires})`;
 
     const redirectUri = `${url.origin}/api/auth/sso/callback`;
     const authUrl = new URL(String(conn.authorize_url));
@@ -162,7 +179,7 @@ export async function handleSsoRoute(
     }
 
     // Find or provision the user, attaching them to the org.
-    const role = String(conn.default_role || "reseller_admin");
+    const role = "reseller_admin";
     const name = String(claims.name || email.split("@")[0]);
     let [user] = await sql`
       SELECT id, email, name, role, org_id, venue_id, plan
@@ -187,7 +204,7 @@ export async function handleSsoRoute(
     });
     if (!token) return redirect("/sign-in?sso_error=mint");
     // Hand the session to the SPA via the URL fragment (never sent to a server).
-    const dest = st.redirect_to ? String(st.redirect_to) : "/sign-in";
+    const dest = safeRedirectPath(st.redirect_to ? String(st.redirect_to) : null);
     return redirect(`${dest}#sso_token=${encodeURIComponent(token)}`);
   }
 

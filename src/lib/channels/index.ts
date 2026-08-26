@@ -19,7 +19,9 @@ const registry: Record<string, ChannelAdapter> = {
 };
 
 export function getAdapter(channel: ChannelId | string): ChannelAdapter {
-  return registry[channel] ?? webAdapter;
+  const adapter = registry[channel];
+  if (!adapter) throw new Error(`unsupported channel: ${channel}`);
+  return adapter;
 }
 
 export function listChannels(): ChannelId[] {

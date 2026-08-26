@@ -6,9 +6,35 @@ import { describe, it, expect, vi } from "vitest";
 const h = vi.hoisted(() => {
   const reserved = new Set<string>();
   const responses = new Map<string, unknown>();
+  const intents = new Map<string, { id: string; consumed: boolean; paymentId?: string }>();
   const ledger: Array<{ text: string; values: unknown[] }> = [];
   const sql = ((strings: TemplateStringsArray, ...values: unknown[]) => {
     const text = strings.join("?");
+    if (/UPDATE payment_intents\s+SET consumed_at = now\(\)/i.test(text) && /RETURNING id/i.test(text)) {
+      const hash = String(values[0]);
+      const intent = intents.get(hash);
+      if (!intent || intent.consumed) return Promise.resolve([] as unknown[]);
+      intent.consumed = true;
+      return Promise.resolve([
+        {
+          id: intent.id,
+          venue_id: "v1",
+          amount: 1000,
+          currency: "KES",
+          source_type: "tapgo",
+          source_id: "test",
+          allowed_method: "m_pesa_express",
+          max_tip_amount: 0,
+          metadata: { venue: "v1", merchant_id: "v1" },
+        },
+      ] as unknown[]);
+    }
+    if (/UPDATE payment_intents SET consumed_payment_id/i.test(text)) {
+      for (const intent of intents.values()) {
+        if (intent.id === String(values[1])) intent.paymentId = String(values[0]);
+      }
+      return Promise.resolve([] as unknown[]);
+    }
     // Atomic reserve: first writer gets the row, others get [].
     if (/INSERT INTO idempotency_keys \(key\) VALUES/i.test(text)) {
       const key = String(values[0]);
@@ -43,7 +69,9 @@ const h = vi.hoisted(() => {
     json: (v: unknown) => unknown;
   };
   sql.json = (v: unknown) => v;
-  return { sql, ledger, reserved, responses };
+  (sql as typeof sql & { begin: <T>(fn: (tx: typeof sql) => Promise<T>) => Promise<T> }).begin =
+    async <T>(fn: (tx: typeof sql) => Promise<T>) => fn(sql);
+  return { sql, ledger, reserved, responses, intents };
 });
 
 vi.mock("../../src/lib/db", async (importOriginal) => {
@@ -53,7 +81,11 @@ vi.mock("../../src/lib/db", async (importOriginal) => {
 
 import { handlePaymentRoute } from "../../src/api/payments";
 
-function createReq(key: string): Request {
+async function createReq(key: string): Promise<Request> {
+  const token = key === "k-b" ? "b".repeat(64) : "a".repeat(64);
+  const { hashPaymentIntentToken } = await import("../../src/lib/payment-intents");
+  const hash = await hashPaymentIntentToken(token);
+  if (!h.intents.has(hash)) h.intents.set(hash, { id: `pi-${key}`, consumed: false });
   return new Request("https://app.example.com/api/payments/create", {
     method: "POST",
     headers: { "content-type": "application/json", "Idempotency-Key": key },
@@ -61,6 +93,7 @@ function createReq(key: string): Request {
       amount: 1000,
       currency: "KES",
       description: "idem",
+      payment_intent_token: token,
       metadata: {
         venue: "v1",
         merchant_id: "v1",
@@ -78,11 +111,12 @@ describe("payment idempotency (durable, cross-isolate)", () => {
     h.ledger.length = 0;
     h.reserved.clear();
     h.responses.clear();
+    h.intents.clear();
     const env = { PAYMENTS_TEST_MODE: "1" };
     const key = "idem-unit-1";
 
-    const r1 = await handlePaymentRoute(createReq(key), env);
-    const r2 = await handlePaymentRoute(createReq(key), env);
+    const r1 = await handlePaymentRoute(await createReq(key), env);
+    const r2 = await handlePaymentRoute(await createReq(key), env);
     const b1 = (await r1!.json()) as { payment_id?: string; status?: string };
     const b2 = (await r2!.json()) as { payment_id?: string };
 
@@ -98,12 +132,13 @@ describe("payment idempotency (durable, cross-isolate)", () => {
     h.ledger.length = 0;
     h.reserved.clear();
     h.responses.clear();
+    h.intents.clear();
     const env = { PAYMENTS_TEST_MODE: "1" };
 
-    const a = (await (await handlePaymentRoute(createReq("k-a"), env))!.json()) as {
+    const a = (await (await handlePaymentRoute(await createReq("k-a"), env))!.json()) as {
       payment_id?: string;
     };
-    const b = (await (await handlePaymentRoute(createReq("k-b"), env))!.json()) as {
+    const b = (await (await handlePaymentRoute(await createReq("k-b"), env))!.json()) as {
       payment_id?: string;
     };
     expect(a.payment_id).not.toBe(b.payment_id);

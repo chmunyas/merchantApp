@@ -65,6 +65,39 @@ test.describe("PWA UI (browser)", () => {
     ).toBeVisible();
   });
 
+  test("operator app adapts to desktop, phone and Android handheld profiles", async ({
+    page,
+  }) => {
+    await page.goto("/pesaswapApp");
+    const shell = page.getByTestId("operator-shell");
+    await expect(shell).toBeVisible();
+    const navigation = page.getByRole("navigation", {
+      name: "Operator sections",
+    });
+    await expect(navigation).toBeVisible();
+
+    const viewport = page.viewportSize();
+    const shellBox = await shell.boundingBox();
+    expect(shellBox).not.toBeNull();
+    if ((viewport?.width ?? 0) >= 768) {
+      expect(shellBox?.width ?? 0).toBeGreaterThan(600);
+    } else {
+      expect(shellBox?.width ?? 0).toBeLessThanOrEqual(viewport?.width ?? 0);
+    }
+
+    const targetHeights = await navigation
+      .getByRole("button")
+      .evaluateAll((buttons) =>
+        buttons.map((button) => button.getBoundingClientRect().height),
+      );
+    expect(targetHeights.every((height) => height >= 44)).toBe(true);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+  });
+
   test("public pay link shows the invoice amount", async ({ page, request }) => {
     // Seed a merchant + invoice via the API, then open the customer pay page.
     const email = `e2e-pw-${rnd()}@e2e.test`;

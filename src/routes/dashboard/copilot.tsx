@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { authFetch } from "@/lib/auth";
-import { getCurrentVenueId } from "@/lib/merchant-dashboard";
+import { getCurrentVenueId } from "@/lib/tenant-store";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/dashboard/copilot")({

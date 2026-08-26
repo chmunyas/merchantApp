@@ -1,5 +1,5 @@
 import { getSql } from "@/lib/db";
-import { requireAuth } from "@/api/auth";
+import { requireAuth, requireHumanAuth } from "@/api/auth";
 import { roleAtLeast } from "@/lib/rbac";
 import { venueFromPayload } from "@/lib/tenancy";
 
@@ -45,7 +45,7 @@ export async function handleBrandingRoute(
   if (request.method === "GET") {
     // Prefer the caller's own venue when authenticated (so the settings page can
     // load its own branding); otherwise the public ?venue= (pay/booking pages).
-    const payload = await requireAuth(request, env);
+    const payload = await requireHumanAuth(request, env);
     const venue = payload
       ? venueFromPayload(payload, url)
       : (url.searchParams.get("venue") ?? "main");
@@ -92,7 +92,10 @@ export async function handleBrandingRoute(
     if (body.logoUrl && body.logoUrl.length > MAX_LOGO_BYTES) {
       return json({ error: "logo too large (max 512KB)" }, 413);
     }
-    if (body.logoUrl && !/^(data:image\/|https:\/\/)/.test(body.logoUrl)) {
+    if (
+      body.logoUrl &&
+      !/^(data:image\/(?:png|webp);base64,|https:\/\/)/i.test(body.logoUrl)
+    ) {
       return json({ error: "invalid logo url" }, 400);
     }
     if (body.primaryColor && !/^#[0-9a-fA-F]{3,8}$/.test(body.primaryColor)) {

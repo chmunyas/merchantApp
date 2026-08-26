@@ -5,12 +5,22 @@ import { describe, it, expect, vi } from "vitest";
 // (400/413) return before any query runs.
 vi.mock("../../src/api/auth", () => ({
   requireAuth: vi.fn(async () => ({ venue: "main", role: "merchant" })),
+  requireHumanAuth: vi.fn(async () => ({
+    kind: "human-jwt",
+    sub: "owner@example.com",
+    venue: "main",
+    role: "merchant",
+  })),
 }));
 vi.mock("../../src/lib/db", () => ({
   getSql: () => ({}) as unknown,
 }));
 
-import { handleStateRoute, isAllowedStateKey } from "../../src/api/state";
+import {
+  containsPlaintextPin,
+  handleStateRoute,
+  isAllowedStateKey,
+} from "../../src/api/state";
 
 const post = (body: unknown) =>
   new Request("https://x.dev/api/state?venue=main", {
@@ -36,6 +46,21 @@ describe("isAllowedStateKey", () => {
 });
 
 describe("/api/state hardening", () => {
+  it("detects nested plaintext PIN fields", () => {
+    expect(containsPlaintextPin({ staffMembers: [{ pin: "123456" }] })).toBe(true);
+    expect(containsPlaintextPin({ staffMembers: [{ name: "Amina" }] })).toBe(false);
+  });
+
+  it("rejects plaintext PINs in otherwise allowed state", async () => {
+    const res = await handleStateRoute(
+      post({
+        key: "fxengine.merchant.settings",
+        value: { staffMembers: [{ pin: "123456" }] },
+      }),
+      {},
+    );
+    expect(res!.status).toBe(400);
+  });
   it("rejects a key outside the mirrored namespaces with 400", async () => {
     const res = await handleStateRoute(post({ key: "attacker.blob", value: {} }), {});
     expect(res!.status).toBe(400);
@@ -54,5 +79,14 @@ describe("/api/state hardening", () => {
       {},
     );
     expect(res!.status).toBe(413);
+  });
+
+  it("requires an optimistic concurrency revision", async () => {
+    const res = await handleStateRoute(
+      post({ key: "fxengine.merchant.settings", value: { theme: "dark" } }),
+      {},
+    );
+    expect(res!.status).toBe(428);
+    expect((await res!.json()).error).toContain("revision");
   });
 });

@@ -7,6 +7,7 @@ import {
   planLimit,
   planLimitMessage,
   planOf,
+  principalVenue,
   venueFromPayload,
 } from "../../src/lib/tenancy";
 
@@ -32,6 +33,16 @@ describe("venueFromPayload (tenant isolation)", () => {
     // another tenant when its token carries no valid venue claim.
     expect(venueFromPayload({ venue: 123 } as never, url)).toBe("main");
     expect(venueFromPayload({ role: "merchant" }, url)).toBe("main");
+  });
+});
+
+describe("principalVenue (strict authenticated tenant policy)", () => {
+  it("requires a non-empty venue claim", () => {
+    expect(principalVenue({ venue: "v_1" })).toBe("v_1");
+    expect(principalVenue({ venue: "" })).toBeNull();
+    expect(principalVenue({ role: "merchant" })).toBeNull();
+    expect(principalVenue({ role: "admin" })).toBeNull();
+    expect(principalVenue(null)).toBeNull();
   });
 });
 
@@ -72,9 +83,10 @@ describe("canGrantRole / canRemoveMember (multi-store RBAC)", () => {
     expect(canGrantRole("merchant", "merchant")).toBe(true);
   });
 
-  it("stops a manager from granting a higher (owner) role", () => {
+  it("lets a manager grant only roles below manager", () => {
     expect(canGrantRole("manager", "staff")).toBe(true);
-    expect(canGrantRole("manager", "manager")).toBe(true);
+    expect(canGrantRole("manager", "supervisor")).toBe(true);
+    expect(canGrantRole("manager", "manager")).toBe(false);
     expect(canGrantRole("manager", "merchant")).toBe(false);
   });
 
@@ -91,7 +103,8 @@ describe("canGrantRole / canRemoveMember (multi-store RBAC)", () => {
 
   it("never lets a member remove someone who outranks them", () => {
     expect(canRemoveMember("manager", "staff")).toBe(true);
-    expect(canRemoveMember("manager", "manager")).toBe(true);
+    expect(canRemoveMember("manager", "supervisor")).toBe(true);
+    expect(canRemoveMember("manager", "manager")).toBe(false);
     expect(canRemoveMember("manager", "merchant")).toBe(false);
     expect(canRemoveMember("merchant", "merchant")).toBe(true);
     expect(canRemoveMember("staff", "staff")).toBe(false);

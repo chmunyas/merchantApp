@@ -67,10 +67,16 @@ export const instagramAdapter: ChannelAdapter = {
   },
   async send(handle, text, env): Promise<OutboundResult> {
     const token = envVar(env, "INSTAGRAM_TOKEN");
-    if (!token) return { delivery: "simulated" };
+    if (!token) {
+      return {
+        delivery: "failed",
+        retryable: false,
+        error: "channel credentials missing",
+      };
+    }
     const recipientId = handle.replace(/^ig:/, "");
     try {
-      await fetch(
+      const response = await fetch(
         `https://graph.facebook.com/v21.0/me/messages?access_token=${token}`,
         {
           method: "POST",
@@ -81,9 +87,35 @@ export const instagramAdapter: ChannelAdapter = {
           }),
         },
       );
-      return { delivery: "sent" };
+      const body = (await response.json().catch(() => null)) as
+        | { message_id?: string; error?: { message?: string; code?: number } }
+        | null;
+      if (!response.ok) {
+        return {
+          delivery: "failed",
+          providerCode: String(body?.error?.code ?? response.status),
+          retryable: response.status === 429 || response.status >= 500,
+          error: body?.error?.message,
+        };
+      }
+      return body?.message_id
+        ? {
+            delivery: "accepted",
+            providerMessageId: body.message_id,
+            providerCode: String(response.status),
+            retryable: false,
+          }
+        : {
+            delivery: "unknown",
+            providerCode: String(response.status),
+            retryable: false,
+          };
     } catch {
-      return { delivery: "simulated" };
+      return {
+        delivery: "unknown",
+        retryable: true,
+        error: "network outcome unknown",
+      };
     }
   },
 };

@@ -16,6 +16,7 @@ data-collection point, not just a payment tool. This is the Alipay/WeChat "one
 code" insight localized to M-Pesa.
 
 ## Key files
+
 - `src/api/qr.ts` — resolve/create codes, log scans, build an order + pay URL.
 - `src/lib/ke-qr.ts` — **CBK KE-QR** EMVCo-TLV generator (CRC-16, static/dynamic).
 - `src/components/pay/PaymentQr.tsx` — shared KE-QR + camera-URL QR renderer.
@@ -24,6 +25,7 @@ code" insight localized to M-Pesa.
 - `db/23-qr.sql` — `qr_codes`, `qr_scans`.
 
 ## Endpoints
+
 - `GET /api/qr` / `POST /api/qr` — list / create codes (authed, venue-scoped).
 - `GET /api/qr/:code` — **public**; resolve → { venue, branding, table?, items };
   logs a `qr_scans` row.
@@ -34,7 +36,12 @@ code" insight localized to M-Pesa.
   amount from here, never from the URL.
 
 ## Conventions
+
 - Reuse the existing pay flow (`/pay?…`) — never rebuild payments here.
+- Order requests contain only stable menu UUIDs + quantities. The server resolves
+  names, availability, currency, and price and snapshots them into the order.
+- Resolving the order pay token mints a short-lived single-use payment intent;
+  `/api/payments/create` consumes it and ignores client financial metadata.
 - Loyalty enrolls through the pay flow (points on success by `customer_phone`).
 - Amounts are minor units, KES; authed routes scope by venue.
 - **The order pay link is a server-bound token** (`/pay?o=<token>`) — single-use,
@@ -42,6 +49,7 @@ code" insight localized to M-Pesa.
 - The printed code carries only an opaque id; resolve server-side.
 
 ## Guidelines
+
 - Keep the public page dependency-light and resilient (works on a cheap phone).
 - Log every scan — that behavioural data is the product.
 - Prefer per-table codes so a scan knows the seat; a venue code still works.
@@ -59,6 +67,7 @@ code" insight localized to M-Pesa.
 > other banks activates once the real id is set.
 
 **Core:** `src/lib/ke-qr.ts` — pure, isomorphic TLV builder.
+
 - `buildKeQr(merchant, options)` emits the full payload: `00` Payload Format
   Indicator `"01"`, `01` POI (`11` static / `12` dynamic), `28` Merchant Account
   Info (GUID `ke.go.qr` + till), `52` MCC, `53` Currency `404`, `54` Amount (KES,
@@ -75,6 +84,7 @@ code" insight localized to M-Pesa.
 (KE-QR is a KES-only domestic standard).
 
 **Wired surfaces (merchant-presented, KES):**
+
 - `features/TapGoPOS.tsx` — dynamic (amount-bound) KE-QR + camera toggle.
 - `features/TableServiceView.tsx` — table sticker, static KE-QR + camera.
 - `routes/dashboard/qr.tsx` — printable unified sticker, camera-primary + KE-QR toggle.
@@ -94,9 +104,28 @@ city overrides) is a platform-global setting entered in **Admin → Settings →
 `src/lib/ke-qr-config.ts` and consumed by `PaymentQr`). Flipping in the real CBK
 `pspId` needs **no deploy**. See `BACKLOG.md` (Payments) for the dependency.
 
-## Definition of Done — full parity
-A feature is not done until it has **full parity across all three runtime tiers** —
-validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
-the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
-`db/*.sql` migration applied to dev, prod-local **and** Neon. See
-`.claude/DEPLOYMENT-PARITY.md`.
+<!-- PRODUCTION_GO_LIVE_CONTRACT:START -->
+<!-- PRODUCTION_GO_LIVE_DOMAIN: unified-qr -->
+
+## Production go-live ownership
+
+This skill inherits the [Production Go-Live Capability Contract](../../../docs/PRODUCTION-GO-LIVE-CAPABILITIES.md)
+(`PRODUCTION_GO_LIVE_CONTRACT: v1`). The
+[Global Enterprise Roadmap](../../../docs/GLOBAL-ENTERPRISE-ROADMAP.md) defines delivery order, and the
+[Global Readiness Review](../../../docs/GLOBAL-READINESS-REVIEW.md) records the current verdict.
+
+It owns production acceptance for:
+
+- One secure venue/table code for accurate browse, order, server-bound split/tip/payment, loyalty enrollment, receipt, self-service, expiration, regeneration, and staff recovery.
+- Tamper, replay, enumeration, wrong-table, stale-menu, duplicate-order, partial-payment, offline/resume, accessibility, camera, and cross-device behavior with no amount or tenant authority in the URL.
+
+For every change in this domain:
+
+- Preserve default-deny tenant, role, scope, capability, sensitivity, and audit policy.
+- Test the applicable owner, manager, supervisor, staff, finance, customer, and partner journey, including denial, concurrency, duplicate, timeout, and recovery paths.
+- Apply financial, API/SDK, device, accessibility, localization, observability, security, data-governance, and disaster-recovery gates wherever the change crosses those boundaries.
+- Report only the evidence produced. Use designed, source complete, environment verified, production ready, and certified exactly as defined by the contract.
+
+A capability is not production-ready until the applicable checklist passes in dev, prod-local, sandbox, and production with retained evidence. Follow the [deployment parity procedure](../../DEPLOYMENT-PARITY.md); never infer live readiness from source tests or a single environment.
+
+<!-- PRODUCTION_GO_LIVE_CONTRACT:END -->

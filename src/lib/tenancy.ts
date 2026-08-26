@@ -22,6 +22,17 @@ export function venueFromPayload(
   return url.searchParams.get("venue") || "main";
 }
 
+// Strict tenant derivation for authenticated venue actions. Unlike the legacy
+// public-selector helper above, this never falls back to `main` or accepts a
+// query parameter when an authenticated principal lacks a venue claim.
+export function principalVenue(
+  payload: Record<string, unknown> | null,
+): string | null {
+  if (!payload || typeof payload.venue !== "string") return null;
+  const venue = payload.venue.trim();
+  return venue || null;
+}
+
 // Per-tenant plan limits. Tokens without a plan claim (admin/demo/session) are
 // treated as unlimited ("pro") so single-venue and demo flows are never capped.
 // Caps are per-VENUE row counts, enforced on create (existing data is never
@@ -86,25 +97,74 @@ export function planLimitMessage(plan: string, entity: PlanEntity): string {
   return `Your ${plan} plan allows up to ${planLimit(plan, entity)} ${nice[entity]}. Upgrade to add more.`;
 }
 
-// Role hierarchy for RBAC gating. A higher rank inherits lower-rank abilities
-// (e.g. a manager passes a `roleAtLeast(payload, "supervisor")` check).
-export const ROLE_RANK: Record<string, number> = {
-  customer: 0,
+// Roles live in separate authority domains. Only venue roles form an inheritance
+// ladder; organization and platform administrators never implicitly inherit a
+// venue owner's permissions (or each other's permissions).
+export const VENUE_ROLES = [
+  "staff",
+  "supervisor",
+  "manager",
+  "merchant",
+] as const;
+export type VenueRole = (typeof VENUE_ROLES)[number];
+
+export const PLATFORM_ROLES = ["admin"] as const;
+export type PlatformRole = (typeof PLATFORM_ROLES)[number];
+
+export const ORGANIZATION_ROLES = ["reseller_admin"] as const;
+export type OrganizationRole = (typeof ORGANIZATION_ROLES)[number];
+
+export type CustomerRole = "customer";
+export type AppRole =
+  | VenueRole
+  | PlatformRole
+  | OrganizationRole
+  | CustomerRole;
+
+const APP_ROLES: readonly AppRole[] = [
+  "customer",
+  ...VENUE_ROLES,
+  ...ORGANIZATION_ROLES,
+  ...PLATFORM_ROLES,
+];
+
+export function isAppRole(value: unknown): value is AppRole {
+  return (
+    typeof value === "string" &&
+    (APP_ROLES as readonly string[]).includes(value)
+  );
+}
+
+export function isVenueRole(value: unknown): value is VenueRole {
+  return (
+    typeof value === "string" &&
+    (VENUE_ROLES as readonly string[]).includes(value)
+  );
+}
+
+export const ROLE_RANK: Record<string, number> & Record<VenueRole, number> = {
   staff: 1,
   supervisor: 2,
   manager: 3,
   merchant: 4,
-  reseller_admin: 4,
-  admin: 5,
 };
 
+export function venueRoleAtLeast(
+  actual: unknown,
+  minimum: VenueRole,
+): boolean {
+  return isVenueRole(actual) && ROLE_RANK[actual] >= ROLE_RANK[minimum];
+}
+
+// Backwards-compatible helper for existing venue guards plus exact platform and
+// organization checks. Cross-domain comparisons always fail closed.
 export function roleAtLeast(
   payload: Record<string, unknown> | null,
-  min: string,
+  minimum: AppRole,
 ): boolean {
-  const role =
-    payload && typeof payload.role === "string" ? payload.role : "customer";
-  return (ROLE_RANK[role] ?? 0) >= (ROLE_RANK[min] ?? 99);
+  const role = payload?.role;
+  if (isVenueRole(minimum)) return venueRoleAtLeast(role, minimum);
+  return role === minimum;
 }
 
 // The per-store team roles an owner/manager may assign to a member. Excludes
@@ -116,7 +176,7 @@ export const MANAGEABLE_ROLES = [
   "manager",
   "merchant",
 ] as const;
-export type ManageableRole = (typeof MANAGEABLE_ROLES)[number];
+export type ManageableRole = VenueRole;
 
 export function isManageableRole(role: string): role is ManageableRole {
   return (MANAGEABLE_ROLES as readonly string[]).includes(role);
@@ -127,17 +187,28 @@ export function isManageableRole(role: string): role is ManageableRole {
 // the caller must be manager+, the target must be a known team role, and it may
 // never outrank the caller (no privilege escalation).
 export function canGrantRole(callerRole: string, targetRole: string): boolean {
-  const callerRank = ROLE_RANK[callerRole] ?? 0;
-  if (callerRank < ROLE_RANK.manager) return false;
-  if (!isManageableRole(targetRole)) return false;
-  return (ROLE_RANK[targetRole] ?? 99) <= callerRank;
+  if (!isVenueRole(callerRole) || !isManageableRole(targetRole)) return false;
+  if (!venueRoleAtLeast(callerRole, "manager")) return false;
+  if (
+    (targetRole === "manager" || targetRole === "merchant") &&
+    callerRole !== "merchant"
+  ) {
+    return false;
+  }
+  return ROLE_RANK[targetRole] <= ROLE_RANK[callerRole];
 }
 
 // True when a member holding `callerRole` may remove a member holding
 // `targetRole` from the same store (manager+, and never someone who outranks
 // them). Owner-of-last-resort protection is enforced separately in the API.
 export function canRemoveMember(callerRole: string, targetRole: string): boolean {
-  const callerRank = ROLE_RANK[callerRole] ?? 0;
-  if (callerRank < ROLE_RANK.manager) return false;
-  return (ROLE_RANK[targetRole] ?? 0) <= callerRank;
+  if (!isVenueRole(callerRole) || !isVenueRole(targetRole)) return false;
+  if (!venueRoleAtLeast(callerRole, "manager")) return false;
+  if (
+    (targetRole === "manager" || targetRole === "merchant") &&
+    callerRole !== "merchant"
+  ) {
+    return false;
+  }
+  return ROLE_RANK[targetRole] <= ROLE_RANK[callerRole];
 }

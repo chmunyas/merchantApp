@@ -10,7 +10,46 @@ export type MenuItem = {
   currency: string;
   dietary: string[];
   available: boolean;
+  revision: number;
+  // C6.5 — guest-facing overrides. `name` above stays the operational name the
+  // kitchen and the agent use; `displayName` is what the guest reads.
+  displayName: string | null;
+  description: string | null;
+  allergens: string[];
+  tags: string[];
+  // A6.4 — media. Alt text and the video description are authored by the
+  // merchant so allergen/dietary meaning is never carried by a picture alone.
+  imageUrl: string | null;
+  imageAlt: string | null;
+  videoUrl: string | null;
+  videoDescription: string | null;
 };
+
+function toMenuItem(r: Record<string, unknown>): MenuItem {
+  return {
+    id: String(r.id),
+    name: String(r.name),
+    category: String(r.category),
+    price: Number(r.price),
+    currency: String(r.currency),
+    dietary: (r.dietary as string[]) ?? [],
+    available: Boolean(r.available),
+    revision: Number(r.revision),
+    displayName: (r.display_name as string | null) ?? null,
+    description: (r.description as string | null) ?? null,
+    allergens: (r.allergens as string[]) ?? [],
+    tags: (r.tags as string[]) ?? [],
+    imageUrl: (r.image_url as string | null) ?? null,
+    imageAlt: (r.image_alt as string | null) ?? null,
+    videoUrl: (r.video_url as string | null) ?? null,
+    videoDescription: (r.video_description as string | null) ?? null,
+  };
+}
+
+/** What the guest should read: the override if the merchant wrote one. */
+export function guestName(item: Pick<MenuItem, "name" | "displayName">): string {
+  return item.displayName?.trim() || item.name;
+}
 
 const CATEGORY_ORDER = [
   "Starters",
@@ -27,20 +66,14 @@ export async function getMenu(
   includeUnavailable = false,
 ): Promise<MenuItem[]> {
   const rows = await sql`
-    SELECT id, name, category, price, currency, dietary, available
+    SELECT id, name, category, price, currency, dietary, available, revision,
+           display_name, description, allergens, tags,
+           image_url, image_alt, video_url, video_description
     FROM menu_items
     WHERE venue_id = ${venue}
       AND (${includeUnavailable} OR available = true)
     ORDER BY category, price`;
-  return rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    category: r.category,
-    price: Number(r.price),
-    currency: r.currency,
-    dietary: r.dietary ?? [],
-    available: r.available,
-  }));
+  return rows.map(toMenuItem);
 }
 
 // A compact, WhatsApp-friendly rendering of the menu grouped by category.
@@ -60,7 +93,9 @@ export function formatMenu(items: MenuItem[]): string {
   for (const category of categories) {
     lines.push(`\n*${category}*`);
     for (const item of byCategory.get(category)!) {
-      lines.push(`• ${item.name} — ${item.currency} ${item.price.toLocaleString()}`);
+      lines.push(
+        `• ${guestName(item)} — ${item.currency} ${item.price.toLocaleString()}`,
+      );
     }
   }
   lines.push("\nReply with an item to hear more, or 'book' to reserve a table.");
@@ -82,21 +117,15 @@ export async function findMenuItem(
   );
   if (words.length === 0) return null;
   const [row] = await sql`
-    SELECT id, name, category, price, currency, dietary, available
+    SELECT id, name, category, price, currency, dietary, available, revision,
+           display_name, description, allergens, tags,
+           image_url, image_alt, video_url, video_description
     FROM menu_items
     WHERE venue_id = ${venue}
       AND EXISTS (SELECT 1 FROM unnest(${words}::text[]) w
-                  WHERE lower(name) LIKE '%' || w || '%')
+                  WHERE lower(name) LIKE '%' || w || '%'
+                     OR lower(coalesce(display_name, '')) LIKE '%' || w || '%')
     ORDER BY available DESC, price
     LIMIT 1`;
-  if (!row) return null;
-  return {
-    id: row.id,
-    name: row.name,
-    category: row.category,
-    price: Number(row.price),
-    currency: row.currency,
-    dietary: row.dietary ?? [],
-    available: row.available,
-  };
+  return row ? toMenuItem(row) : null;
 }

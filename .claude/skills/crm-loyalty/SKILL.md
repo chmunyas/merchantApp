@@ -12,6 +12,7 @@ The contact graph behind every channel — contacts are venue-scoped and shared 
 the agent, invoicing and campaigns.
 
 ## Key files
+
 - `src/api/backend.ts` — `/api/contacts` (GET/POST) + `/api/ai/command` (NL CRM).
 - `src/routes/dashboard/contacts.tsx` — the back-office UI.
 - `db/01-schema.sql` — `contacts` table (tier, points, total_spent, visits, tags).
@@ -22,12 +23,14 @@ the agent, invoicing and campaigns.
   `tierBenefits`, `pointsExpiry`.
 
 ## Endpoints
+
 - `GET /api/contacts?venue=` — list (dashboard sends the token → venue-pinned).
 - `POST /api/contacts` — create a contact.
 - `POST /api/ai/command` — **gated** NL admin ("top spenders", "new enquiries",
   "covers today") → runs `runAiCommand`.
 
 ## Conventions
+
 - Venue is resolved from the JWT (`resolveVenue`) — see the auth-tenancy skill.
 - **Loyalty is keyed on the customer phone number** — `(venue_id, phone)` is unique
   (`contacts_venue_phone_key`). Points accrue via a phone-keyed UPSERT in
@@ -39,18 +42,39 @@ the agent, invoicing and campaigns.
   see the omnichannel-agent skill for the cross-channel timeline.
 
 ## Common tasks
+
 - **Segment for a campaign:** segments (`all`, tier-based, etc.) are consumed by
   the campaigns-automations skill's broadcast endpoint.
 - **Add a loyalty rule:** update points/tier logic where contacts are written and
   keep it venue-scoped.
 
 ## Guidelines
+
 - Always scope contact reads/writes by the resolved venue.
 - Keep `/api/ai/command` gated (it exposes business data).
 
-## Definition of Done — full parity
-A feature is not done until it has **full parity across all three runtime tiers** —
-validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
-the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
-`db/*.sql` migration applied to dev, prod-local **and** Neon. See
-`.claude/DEPLOYMENT-PARITY.md`.
+<!-- PRODUCTION_GO_LIVE_CONTRACT:START -->
+<!-- PRODUCTION_GO_LIVE_DOMAIN: crm-loyalty -->
+
+## Production go-live ownership
+
+This skill inherits the [Production Go-Live Capability Contract](../../../docs/PRODUCTION-GO-LIVE-CAPABILITIES.md)
+(`PRODUCTION_GO_LIVE_CONTRACT: v1`). The
+[Global Enterprise Roadmap](../../../docs/GLOBAL-ENTERPRISE-ROADMAP.md) defines delivery order, and the
+[Global Readiness Review](../../../docs/GLOBAL-READINESS-REVIEW.md) records the current verdict.
+
+It owns production acceptance for:
+
+- Tenant-scoped contact identity, deduplication, consent and suppression, profile history, imports/exports, segmentation, and access appropriate to personal data sensitivity.
+- Immutable loyalty earn, redeem, expire, reverse, and adjust events with server-derived balances, approval controls, receipt visibility, and reconciliation to originating commerce.
+
+For every change in this domain:
+
+- Preserve default-deny tenant, role, scope, capability, sensitivity, and audit policy.
+- Test the applicable owner, manager, supervisor, staff, finance, customer, and partner journey, including denial, concurrency, duplicate, timeout, and recovery paths.
+- Apply financial, API/SDK, device, accessibility, localization, observability, security, data-governance, and disaster-recovery gates wherever the change crosses those boundaries.
+- Report only the evidence produced. Use designed, source complete, environment verified, production ready, and certified exactly as defined by the contract.
+
+A capability is not production-ready until the applicable checklist passes in dev, prod-local, sandbox, and production with retained evidence. Follow the [deployment parity procedure](../../DEPLOYMENT-PARITY.md); never infer live readiness from source tests or a single environment.
+
+<!-- PRODUCTION_GO_LIVE_CONTRACT:END -->

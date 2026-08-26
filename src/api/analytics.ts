@@ -1,5 +1,7 @@
 import { getSql } from "@/lib/db";
 import { requireAuth, resolveVenue } from "@/api/auth";
+import { roleAtLeast } from "@/lib/rbac";
+import { tokenHasScope } from "@/lib/api-tokens";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,8 +26,12 @@ export async function handleAnalyticsRoute(
   if (path !== "/api/analytics/agent") return null;
   if (request.method !== "GET") return null;
 
-  if (!(await requireAuth(request, env))) {
+  const payload = await requireAuth(request, env);
+  if (!payload) {
     return json({ error: "unauthorized" }, 401);
+  }
+  if (!roleAtLeast(payload, "manager") || !tokenHasScope(payload, "analytics:read")) {
+    return json({ error: "forbidden" }, 403);
   }
   const sql = getSql(env);
   if (!sql) return json({ error: "database not configured" }, 503);
@@ -62,6 +68,23 @@ export async function handleAnalyticsRoute(
     SELECT count(*)::int AS total
     FROM events WHERE venue_id = ${venue} AND type = 'broadcast'`;
 
+  const deliveryStates = await sql`
+    SELECT status, count(*)::int AS count
+    FROM outbound_deliveries WHERE venue_id = ${venue}
+    GROUP BY status ORDER BY status`;
+
+  const consentStates = await sql`
+    SELECT purpose, state, count(*)::int AS count
+    FROM channel_consent_events e
+    WHERE venue_id = ${venue}
+      AND NOT EXISTS (
+        SELECT 1 FROM channel_consent_events newer
+        WHERE newer.venue_id = e.venue_id AND newer.channel = e.channel
+          AND newer.handle = e.handle AND newer.purpose = e.purpose
+          AND (newer.effective_at, newer.created_at) > (e.effective_at, e.created_at)
+      )
+    GROUP BY purpose, state ORDER BY purpose, state`;
+
   const escalationRate =
     conv.total > 0 ? Math.round((conv.escalated / conv.total) * 100) : 0;
   const automationRate =
@@ -77,6 +100,8 @@ export async function handleAnalyticsRoute(
     tools,
     conversations: conv,
     broadcasts: broadcasts.total,
+    deliveryStates,
+    consentStates,
     escalationRate,
     automationRate,
   });

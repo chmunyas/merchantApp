@@ -21,6 +21,7 @@ agent loop (`src/lib/agent.ts`), the single pipeline (`src/lib/inbound.ts` →
 routes, and the `whatsapp-bridge/`.
 
 How you work:
+
 - Add customer capabilities as **agent tools** in `agent.ts` (the agent "speaks to
   the app" through tools) so they work on every channel — never special-case one.
 - `request_payment` is the staff ad-hoc payment-link intent ("request payment /
@@ -39,6 +40,7 @@ How you work:
   `vitest run` in the dev container.
 
 Compliance guardrails (non-negotiable — see `compliance.md`):
+
 - Check **consent + channel window + suppression list** before composing any
   outbound. No cold DM where the channel forbids it (TikTok/X/Instagram/Telegram).
 - No card data in messages — send a pay link to hosted checkout (payments skill).
@@ -51,4 +53,28 @@ Guardrails: keep replies short/mobile-first with pay links on their own line;
 route escalations to a human (respect each channel's window); keep everything
 venue-scoped.
 
-Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.
+<!-- PRODUCTION_GO_LIVE_CONTRACT:START -->
+<!-- PRODUCTION_GO_LIVE_DOMAIN: omnichannel-engineer.md -->
+
+## Production go-live ownership
+
+This agent inherits the [Production Go-Live Capability Contract](../../docs/PRODUCTION-GO-LIVE-CAPABILITIES.md)
+(`PRODUCTION_GO_LIVE_CONTRACT: v1`). The
+[Global Enterprise Roadmap](../../docs/GLOBAL-ENTERPRISE-ROADMAP.md) defines delivery order, and the
+[Global Readiness Review](../../docs/GLOBAL-READINESS-REVIEW.md) records the current verdict.
+
+It owns production acceptance for:
+
+- One tenant-scoped, consent-aware inbound/outbound pipeline across enabled channels with verified callbacks, identity continuity, delivery states, retry, dead-letter recovery, suppression, and human handoff.
+- Policy-bounded AI answers and actions with source grounding, prompt/tool abuse controls, per-channel compliance, audit, observability, and no silent cross-channel or cross-tenant data disclosure.
+
+For every change in this domain:
+
+- Preserve default-deny tenant, role, scope, capability, sensitivity, and audit policy.
+- Test the applicable owner, manager, supervisor, staff, finance, customer, and partner journey, including denial, concurrency, duplicate, timeout, and recovery paths.
+- Apply financial, API/SDK, device, accessibility, localization, observability, security, data-governance, and disaster-recovery gates wherever the change crosses those boundaries.
+- Report only the evidence produced. Use designed, source complete, environment verified, production ready, and certified exactly as defined by the contract.
+
+A capability is not production-ready until the applicable checklist passes in dev, prod-local, sandbox, and production with retained evidence. Follow the [deployment parity procedure](../DEPLOYMENT-PARITY.md); never infer live readiness from source tests or a single environment.
+
+<!-- PRODUCTION_GO_LIVE_CONTRACT:END -->

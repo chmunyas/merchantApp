@@ -58,7 +58,7 @@ export function InstallBanner() {
                 <strong>Add to Home Screen</strong>
               </>
             ) : (
-              "Add to your home screen — works offline, feels native."
+              "Add to your home screen — cached views work offline; changes require a connection."
             )}
           </p>
         </div>

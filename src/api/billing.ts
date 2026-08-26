@@ -1,5 +1,6 @@
 import { handlePaymentRoute } from "@/api/payments";
-import { requireAuth } from "@/api/auth";
+import { createPaymentIntent } from "@/lib/payment-intents";
+import { requireHumanAuth } from "@/api/auth";
 import {
   BILLING_PLANS,
   downgradeToFree,
@@ -63,7 +64,7 @@ export async function handleBillingRoute(
   if (path === "/api/billing/run" && request.method === "POST") {
     const secret = envVar(env, "CRON_SECRET");
     const provided = request.headers.get("x-cron-secret") ?? "";
-    const admin = await requireAuth(request, env);
+    const admin = await requireHumanAuth(request, env);
     const isAdmin = admin ? roleAtLeast(admin, "admin") : false;
     if (!isAdmin && !(secret && provided === secret)) {
       return json({ error: "unauthorized" }, 401);
@@ -89,8 +90,11 @@ export async function handleBillingRoute(
   }
 
   // Everything below is per-merchant + authed.
-  const payload = await requireAuth(request, env);
+  const payload = await requireHumanAuth(request, env);
   if (!payload) return json({ error: "unauthorized" }, 401);
+  if (!roleAtLeast(payload, "merchant")) {
+    return json({ error: "Only the account owner can manage billing." }, 403);
+  }
   const venue = venueFromPayload(payload, url);
   const sql = getSql(env);
   if (!sql) return json({ error: "database not configured" }, 503);
@@ -148,15 +152,36 @@ export async function handleBillingRoute(
       return json({ error: "An M-Pesa phone number is required to subscribe." }, 400);
     }
     const amount = planPriceMinor(plan.id);
+    const intent = await createPaymentIntent(env, {
+      venue,
+      amount,
+      currency: "KES",
+      sourceType: "subscription",
+      sourceId: plan.id,
+      allowedMethod: "m_pesa_express",
+      maxTipAmount: 0,
+      metadata: {
+        subscription_plan: plan.id,
+        billing: "1",
+        customer_phone: phone,
+        customer_name: "Subscription",
+        till: `SUB-${plan.id.toUpperCase()}`,
+      },
+    });
+    if ("error" in intent) return json({ error: intent.error }, 503);
     // Reuse the exact payments integration (test-mode sim, live M-Pesa STK, ledger
     // + webhook reconcile) by driving its own create endpoint.
     const payReq = new Request(new URL("/api/payments/create", url.origin), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "Idempotency-Key": `subscription:${venue}:${plan.id}:${intent.token.slice(0, 32)}`,
+      },
       body: JSON.stringify({
         amount,
         currency: "KES",
         payment_method: "m_pesa_express",
+        payment_intent_token: intent.token,
         metadata: {
           venue,
           subscription_plan: plan.id,

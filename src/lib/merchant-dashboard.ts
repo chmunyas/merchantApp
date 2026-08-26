@@ -36,7 +36,38 @@ import type {
   WorkflowTrigger,
   Zone,
 } from "@/components/merchant/features/types";
-import { authFetch } from "@/lib/auth";
+import {
+  hydrateMerchantState,
+  isOnlineForMutation,
+  readStorage,
+  writeStorage,
+} from "@/lib/browser-storage";
+export {
+  hydrateMerchantState,
+  isOnlineForMutation,
+  readStorage,
+  writeStorage,
+} from "@/lib/browser-storage";
+import {
+  getCurrentVenue,
+  getCurrentVenueId,
+  getVenues,
+  isDemoVenue,
+  resetTenant,
+  setCurrentVenueId,
+  setVenues,
+  type Venue,
+} from "@/lib/tenant-store";
+export {
+  getCurrentVenue,
+  getCurrentVenueId,
+  getVenues,
+  isDemoVenue,
+  resetTenant,
+  setCurrentVenueId,
+  setVenues,
+  type Venue,
+} from "@/lib/tenant-store";
 
 export const MERCHANT_NAME = "Sade's Atelier";
 export const TILL_NUMBER = "247365";
@@ -146,6 +177,7 @@ export type MerchantTable = {
   closedAt?: string;
   paidAmount: number;
   payments: MerchantPayment[];
+  revision?: number;
 };
 
 export type MerchantReview = {
@@ -1477,7 +1509,6 @@ export function generateStaffDemoData(now = new Date()): StaffDemoData {
       name: "Grace M.",
       phone: "254711110022",
       role: "waiter",
-      pin: "1122",
       isActive: true,
       hiredAt: "2025-11-08T09:00:00.000Z",
       assignedZones: [zones[0]?.id, zones[1]?.id].filter(Boolean),
@@ -1491,7 +1522,6 @@ export function generateStaffDemoData(now = new Date()): StaffDemoData {
       name: "James K.",
       phone: "254722330099",
       role: "waiter",
-      pin: "2200",
       isActive: true,
       hiredAt: "2025-09-14T09:00:00.000Z",
       assignedZones: [zones[1]?.id].filter(Boolean),
@@ -1506,7 +1536,6 @@ export function generateStaffDemoData(now = new Date()): StaffDemoData {
       name: "Faith W.",
       phone: "254733114499",
       role: "bartender",
-      pin: "4499",
       isActive: true,
       hiredAt: "2025-07-19T09:00:00.000Z",
       assignedZones: [zones[2]?.id].filter(Boolean),
@@ -1521,7 +1550,6 @@ export function generateStaffDemoData(now = new Date()): StaffDemoData {
       name: "Peter O.",
       phone: "254744920011",
       role: "kitchen",
-      pin: "9011",
       isActive: true,
       hiredAt: "2025-05-03T09:00:00.000Z",
       assignedZones: [zones[1]?.id].filter(Boolean),
@@ -1535,7 +1563,6 @@ export function generateStaffDemoData(now = new Date()): StaffDemoData {
       name: "Amina N.",
       phone: "254701884422",
       role: "host",
-      pin: "8422",
       isActive: true,
       hiredAt: "2026-01-11T09:00:00.000Z",
       assignedZones: [zones[0]?.id].filter(Boolean),
@@ -1549,7 +1576,6 @@ export function generateStaffDemoData(now = new Date()): StaffDemoData {
       name: "Kevin O.",
       phone: "254798556611",
       role: "manager",
-      pin: "6611",
       isActive: true,
       hiredAt: "2025-03-22T09:00:00.000Z",
       assignedZones: zones.map((zone) => zone.id),
@@ -1939,164 +1965,10 @@ function canUseStorage() {
   );
 }
 
-export function readStorage<T>(key: string, fallback: T): T {
-  if (!canUseStorage()) return fallback;
-  try {
-    const raw = window.localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-let suppressStateSync = false;
-
-export function writeStorage<T>(key: string, value: T) {
-  if (!canUseStorage()) return;
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    console.warn("[merchant-dashboard] Storage quota exceeded for key:", key);
-  }
-  // Mirror merchant/retail/services data to Postgres so the PWA and back office
-  // share one source of truth (venue selection + schema markers stay local).
-  if (
-    !suppressStateSync &&
-    (key.startsWith("fxengine.") || key.startsWith("pesaswap.services.")) &&
-    !key.endsWith("schemaVersion") &&
-    !key.endsWith("currentVenue")
-  ) {
-    pushMerchantState(key, value);
-  }
-}
-
-// Fire-and-forget push of one localStorage key to the shared Postgres store.
-function pushMerchantState(key: string, value: unknown): void {
-  if (typeof fetch === "undefined") return;
-  const venue = getCurrentVenueId();
-  authFetch(`/api/state?venue=${encodeURIComponent(venue)}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ key, value }),
-    keepalive: true,
-  }).catch(() => {});
-}
-
-// Seed Postgres from whatever is already in localStorage (first run only).
-function seedMerchantState(): void {
-  if (!canUseStorage()) return;
-  for (let i = 0; i < window.localStorage.length; i += 1) {
-    const key = window.localStorage.key(i);
-    if (
-      !key ||
-      !key.startsWith("fxengine.") ||
-      key.endsWith("schemaVersion") ||
-      key.endsWith("currentVenue")
-    ) {
-      continue;
-    }
-    try {
-      pushMerchantState(key, JSON.parse(window.localStorage.getItem(key) ?? "null"));
-    } catch {
-      /* skip malformed entry */
-    }
-  }
-}
-
-// Pull the shared state from Postgres into localStorage before the dashboard
-// renders, so both surfaces work off the same data. Best-effort + non-blocking.
-export async function hydrateMerchantState(): Promise<void> {
-  if (!canUseStorage() || typeof fetch === "undefined") return;
-  try {
-    const venue = getCurrentVenueId();
-    const res = await authFetch(`/api/state?venue=${encodeURIComponent(venue)}`);
-    if (!res.ok) return;
-    const data = (await res.json()) as { state?: Record<string, unknown> };
-    const state = data.state ?? {};
-    const keys = Object.keys(state);
-    if (keys.length === 0) {
-      seedMerchantState();
-      return;
-    }
-    suppressStateSync = true;
-    for (const key of keys) writeStorage(key, state[key]);
-    suppressStateSync = false;
-    window.dispatchEvent(new Event("pesaswap:state-hydrated"));
-  } catch {
-    /* offline — fall back to local data */
-  }
-}
-
 // --- Multi-venue scoping ---
 // Merchant data is namespaced per venue. The "main" venue keeps the base keys
 // so existing single-venue data is preserved; other venues get a suffix.
 
-export type Venue = {
-  id: string;
-  name: string;
-  code: string;
-  active: boolean;
-};
-
-const VENUES_KEY = "fxengine.merchant.venues";
-const CURRENT_VENUE_KEY = "fxengine.merchant.currentVenue";
-
-function buildVenues(): Venue[] {
-  return [
-    {
-      id: "main",
-      name: "Sade's Atelier — Westlands",
-      code: "WL-001",
-      active: true,
-    },
-    { id: "cbd", name: "Sade's Atelier — CBD", code: "CBD-002", active: true },
-    {
-      id: "kisumu",
-      name: "Sade's Lakeside — Kisumu",
-      code: "KSM-003",
-      active: true,
-    },
-  ];
-}
-
-export function getVenues(): Venue[] {
-  return readStorage<Venue[]>(VENUES_KEY, buildVenues());
-}
-
-export function getCurrentVenueId(): string {
-  return readStorage<string>(CURRENT_VENUE_KEY, "main");
-}
-
-export function setCurrentVenueId(id: string): void {
-  writeStorage(CURRENT_VENUE_KEY, id);
-}
-
-export function getCurrentVenue(): Venue {
-  const venues = getVenues();
-  const id = getCurrentVenueId();
-  return venues.find((venue) => venue.id === id) ?? venues[0];
-}
-
-// Replace the browser's venue list (e.g. pin it to the logged-in merchant's own
-// venue so the picker + identity reflect the tenant, not the demo venues).
-export function setVenues(venues: Venue[]): void {
-  writeStorage(VENUES_KEY, venues);
-}
-
-// The seeded demo venues carry the rich "Sade's Atelier" showcase data. A real,
-// self-serve merchant (venue id like `v_xxxxxxxx`) must NEVER inherit that — they
-// get an empty starter keyed to their own business instead.
-const DEMO_VENUE_IDS = new Set(["main", "cbd", "kisumu"]);
-export function isDemoVenue(id: string): boolean {
-  return DEMO_VENUE_IDS.has(id);
-}
-
-// Reset tenant state back to the demo venue (used on logout so the marketing demo
-// keeps working in the same browser).
-export function resetTenant(): void {
-  setCurrentVenueId("main");
-  if (canUseStorage()) window.localStorage.removeItem(VENUES_KEY);
-}
 
 // An EMPTY starter snapshot for a freshly onboarded merchant: their own business
 // name, a blank till (they configure M-Pesa in Settings), sensible config

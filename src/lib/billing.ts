@@ -66,7 +66,7 @@ const PERIOD_MS = 30 * 24 * 60 * 60 * 1000;
 // token refresh) and upserts the subscription with a fresh 30-day period. Called
 // once per payment from recordLedger's first-success gate, so it never double-runs.
 export async function activateSubscription(
-  sql: Sql,
+  sql: import("@/lib/db").QuerySql,
   venue: string,
   plan: string,
   paymentId: string,

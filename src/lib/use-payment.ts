@@ -81,7 +81,7 @@ export function usePayment(options: UsePaymentOptions): PaymentResult {
 
   // Preload HyperLoader
   useEffect(() => {
-    loadHyperLoader().catch(() => {});
+    void loadHyperLoader().catch(() => {});
   }, []);
 
   const pay = useCallback(

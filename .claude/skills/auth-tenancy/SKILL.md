@@ -12,12 +12,19 @@ description: >-
 The security spine. Read `SECURITY.md` for the full posture.
 
 ## Key files
+
 - `src/api/auth.ts` — `/api/auth/{login,signup,session,me,password,google,
-  google/config,switch-venue}`, plus `requireAuth`, `requireRole`, `resolveVenue`.
+google/config,switch-venue}`, plus `requireAuth`, `requireRole`, `resolveVenue`.
 - `src/api/venues.ts` — `GET /api/venues` (member stores) + `POST /api/venues` (add a store).
 - `src/api/multistore.ts` — `GET/POST/DELETE /api/venues/members` (per-store team +
   roles) + `GET /api/venues/rollup` (cross-store revenue rollup).
 - `src/lib/tenancy.ts` — pure helpers `venueFromPayload`, `planOf`, `planLimit`, `PLAN_LIMITS`.
+- `src/lib/route-policy.ts` — canonical method/path inventory and access/tenant/
+  sensitivity/role/PAT-scope metadata; owns API 404/405/`OPTIONS` behavior.
+- `src/lib/route-authorization.ts`, `src/lib/principals.ts` — pre-dispatch
+  human/PAT authorization and typed principal/context helpers.
+- `db/57-api-token-principals.sql` — immutable PAT creator binding, legacy
+  `agent` scope conversion, and orphan-token revocation.
 - `db/42-user-venues.sql` — `user_venues` membership (multi-store).
 - `src/lib/jwt.ts` — HS256 sign/verify + PBKDF2 hashing.
 - `src/lib/rate-limit.ts` — `enforceRateLimit` (central gate) + `RULES`.
@@ -31,9 +38,20 @@ The security spine. Read `SECURITY.md` for the full posture.
 - `db/10-users.sql`, `db/11-ratelimit.sql`, `db/12-plan.sql`.
 
 ## Rules (do not regress)
-- **Tenant isolation:** venue-scoped handlers derive the venue via
-  `resolveVenue(request, env, url)` — the JWT `venue` claim wins over `?venue=` /
-  `body.venue`. Never trust `body.venue` for a tenant write.
+
+- **Tenant isolation:** authenticated venue actions use the route policy's
+  `principalVenue` boundary and fail closed when the principal lacks a venue
+  claim. `resolveVenue`/`venueFromPayload` remain for explicitly public selector
+  routes; never use their `main` fallback as an authenticated tenant boundary.
+- **Route inventory:** every API method/path must exist in `ROUTE_POLICIES`, have
+  a registered handler, and pass ambiguity/completeness tests. Unknown APIs never
+  reach SSR; wrong methods return 405; preflight is declared-route-only.
+- **Role domains:** only `staff → supervisor → manager → merchant` is an
+  inheritance ladder. `reseller_admin` and `admin` are exact organization and
+  platform roles and never inherit venue authority.
+- **PATs:** `agent:invoke` is entry-only, never a wildcard. A PAT needs exact
+  domain scopes, a bound venue, current creator membership, and cannot call
+  human-only account/credential/membership/billing/org/staff/token routes.
 - **`app_settings` is GLOBAL** (PK on `key` only, no `venue_id`). For per-venue
   config, **namespace the key** as `<key>:<venue>` (e.g. `whatsapp_cloud:<venue>`,
   `telegram:<venue>`, `push_latest:<venue>`) and read the venue key first with a
@@ -54,7 +72,7 @@ The security spine. Read `SECURITY.md` for the full posture.
   user doesn't own). Each store is fully isolated (all entities are `venue_id`-scoped).
 - **Store roles (per-store RBAC):** `user_venues.role` is the **authoritative
   per-store** role (not the token's current-venue claim). `GET/POST/DELETE
-  /api/venues/members` (`src/api/multistore.ts`) let a **manager+ at that store**
+/api/venues/members` (`src/api/multistore.ts`) let a **manager+ at that store**
   invite/re-role/remove members. Guards are pure + unit-tested in `tenancy.ts`:
   `canGrantRole` (target role ≤ caller rank, known team role only — never `admin`/
   `customer`) and `canRemoveMember` (never remove someone who outranks you); the API
@@ -64,9 +82,10 @@ The security spine. Read `SECURITY.md` for the full posture.
 - **Chain rollup:** `GET /api/venues/rollup` aggregates net/gross/tips/refunds/txns
   across every store the login is **manager+** of (revenue never leaks to a
   staff-level membership). UI: `/dashboard/chain`; team UI: `/dashboard/team`.
-- **Enforcement:** staff mutations are gated with `requireAuth`; **public**
-  (pay/chat/enquiries/webhooks) and **service** (bridge sweeps `invoicing/run`,
-  `sequences/run`, `bridge/inbound`) routes stay open.
+- **Enforcement:** staff mutations use role/action policy. Customer routes use
+  their explicit public/opaque-token boundary. Service routes never use human JWT
+  auth but must validate their provider signature/shared secret; they are not
+  anonymous privileged routes.
 - **RBAC:** `requireRole(request, env, ["admin"])` for platform-admin actions
   (e.g. changing the admin password).
 - **Rate limiting:** add new public endpoints to `RULES` in `rate-limit.ts` so the
@@ -81,24 +100,51 @@ The security spine. Read `SECURITY.md` for the full posture.
   for the Workers path (cross-request I/O is forbidden).
 
 ## Toggles (env)
+
 - `AUTH_REQUIRE_LOGIN=1` — disable anonymous session bootstrap (force real login).
+- `APP_ENV=production`, `AUTH_OTP_DEBUG=0`, `ALLOW_SIMULATORS=0`, and
+  `PAYMENTS_TEST_MODE=0` are mandatory in production; runtime validation fails
+  closed before dispatch.
 - `AUTH_DISABLE_SIGNUP=1` — close self-serve signup.
 - `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `GOOGLE_CLIENT_ID`,
   `GOOGLE_ALLOWED_EMAILS`.
 
 ## Common tasks
-- **New tenant endpoint:** gate mutations with `requireAuth`, resolve venue with
-  `resolveVenue`, and (if public) add it to the rate-limit `RULES`.
-- **New role-gated action:** use `requireRole`.
+
+- **New endpoint:** add one policy row, its registered handler key, role/scopes,
+  tenant source, sensitivity, tests, and a fail-closed rate rule when public and
+  identity/money/PII/compute-sensitive.
+- **New venue action:** prefer `principalVenue` and include the tenant in the same
+  SQL object predicate. Use exact organization/platform checks across domains.
 
 ## Guidelines
+
 - Rotate the default admin password (`pesaswap-admin`) and `JWT_SECRET` before
   production.
 - Keep pure logic in `src/lib/tenancy.ts` (unit-tested); import into `api/auth.ts`.
 
-## Definition of Done — full parity
-A feature is not done until it has **full parity across all three runtime tiers** —
-validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
-the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
-`db/*.sql` migration applied to dev, prod-local **and** Neon. See
-`.claude/DEPLOYMENT-PARITY.md`.
+<!-- PRODUCTION_GO_LIVE_CONTRACT:START -->
+<!-- PRODUCTION_GO_LIVE_DOMAIN: auth-tenancy -->
+
+## Production go-live ownership
+
+This skill inherits the [Production Go-Live Capability Contract](../../../docs/PRODUCTION-GO-LIVE-CAPABILITIES.md)
+(`PRODUCTION_GO_LIVE_CONTRACT: v1`). The
+[Global Enterprise Roadmap](../../../docs/GLOBAL-ENTERPRISE-ROADMAP.md) defines delivery order, and the
+[Global Readiness Review](../../../docs/GLOBAL-READINESS-REVIEW.md) records the current verdict.
+
+It owns production acceptance for:
+
+- Revocable organisation and venue membership, least-privilege RBAC and scopes, membership-version session invalidation, secure recovery, rate limits, device/session controls, and immutable identity events.
+- Default-deny tenant isolation in every query, mutation, queue, webhook, export, support action, personal token, service principal, and agent tool path.
+
+For every change in this domain:
+
+- Preserve default-deny tenant, role, scope, capability, sensitivity, and audit policy.
+- Test the applicable owner, manager, supervisor, staff, finance, customer, and partner journey, including denial, concurrency, duplicate, timeout, and recovery paths.
+- Apply financial, API/SDK, device, accessibility, localization, observability, security, data-governance, and disaster-recovery gates wherever the change crosses those boundaries.
+- Report only the evidence produced. Use designed, source complete, environment verified, production ready, and certified exactly as defined by the contract.
+
+A capability is not production-ready until the applicable checklist passes in dev, prod-local, sandbox, and production with retained evidence. Follow the [deployment parity procedure](../../DEPLOYMENT-PARITY.md); never infer live readiness from source tests or a single environment.
+
+<!-- PRODUCTION_GO_LIVE_CONTRACT:END -->

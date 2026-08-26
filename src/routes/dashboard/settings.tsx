@@ -6,8 +6,18 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ModalOverlay } from "@/components/ui/modal-overlay";
 import { authFetch, useAuth } from "@/lib/auth";
+import {
+  DEFAULT_VENUE_SERVICE_SETTINGS,
+  formatMinutes,
+  parseTime,
+  type ServiceHour,
+  type ServiceName,
+  type VenueServiceSettings,
+} from "@/lib/business-day";
 import { buildKeQr, resolveKeQrMerchant } from "@/lib/ke-qr";
+import { isValidStaffPin, isWeakStaffPin } from "@/lib/staff-pin";
 import {
   ensureMerchantDemoData,
   loadMerchantSnapshot,
@@ -138,6 +148,10 @@ function AccountSecuritySection() {
 
 function DashboardSettingsPage() {
   const [snapshot, setSnapshot] = useState<MerchantSnapshot | null>(null);
+  const [serviceSettings, setServiceSettings] = useState<VenueServiceSettings>(
+    DEFAULT_VENUE_SERVICE_SETTINGS,
+  );
+  const [savingServiceSettings, setSavingServiceSettings] = useState(false);
   const [newUser, setNewUser] = useState<MerchantUser>({
     id: "",
     name: "",
@@ -148,6 +162,10 @@ function DashboardSettingsPage() {
   const qrRefs = useRef<Record<number, HTMLCanvasElement | null>>({});
   const logoInputRef = useRef<HTMLInputElement | null>(null);
   const [savingBrand, setSavingBrand] = useState(false);
+  const [pinTarget, setPinTarget] = useState<{ id: string; name: string } | null>(null);
+  const [pinValue, setPinValue] = useState("");
+  const [pinVisible, setPinVisible] = useState(false);
+  const [rotatingPin, setRotatingPin] = useState(false);
   const [staff, setStaff] = useState<
     Array<{
       id: string;
@@ -155,6 +173,9 @@ function DashboardSettingsPage() {
       role: string;
       phone: string | null;
       active: boolean;
+      credential_configured?: boolean;
+      credential_reset_required?: boolean;
+      pin_locked_until?: string | null;
     }>
   >([]);
 
@@ -189,6 +210,12 @@ function DashboardSettingsPage() {
     generateDemoData();
     setSnapshot(loadMerchantSnapshot());
     void loadStaff();
+    authFetch("/api/venue-service-settings")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (data?.settings) setServiceSettings(data.settings as VenueServiceSettings);
+      })
+      .catch(() => {});
     // Load server-persisted branding (logo / colour / name) for this merchant.
     authFetch("/api/branding")
       .then((r) => (r.ok ? r.json() : null))
@@ -231,6 +258,67 @@ function DashboardSettingsPage() {
     const nextSettings = updater(snapshot.settings);
     saveMerchantSettings(nextSettings);
     setSnapshot({ ...snapshot, settings: nextSettings });
+  }
+
+  function updateServiceHour(
+    day: number,
+    service: ServiceName,
+    field: "startMinutes" | "endMinutes",
+    time: string,
+  ) {
+    const minutes = parseTime(time);
+    if (minutes === null) return;
+    setServiceSettings((current) => {
+      const existing = current.serviceHours.find(
+        (hour) => hour.day === day && hour.service === service,
+      );
+      const next: ServiceHour = {
+        day,
+        service,
+        startMinutes: existing?.startMinutes ?? (service === "lunch" ? 12 * 60 : 18 * 60),
+        endMinutes: existing?.endMinutes ?? (service === "lunch" ? 15 * 60 : 23 * 60),
+        [field]: minutes,
+      };
+      return {
+        ...current,
+        serviceHours: [
+          ...current.serviceHours.filter(
+            (hour) => hour.day !== day || hour.service !== service,
+          ),
+          next,
+        ],
+      };
+    });
+  }
+
+  function removeServiceHour(day: number, service: ServiceName) {
+    setServiceSettings((current) => ({
+      ...current,
+      serviceHours: current.serviceHours.filter(
+        (hour) => hour.day !== day || hour.service !== service,
+      ),
+    }));
+  }
+
+  async function saveServiceSettings() {
+    if (serviceSettings.serviceHours.some((hour) => hour.startMinutes === hour.endMinutes)) {
+      toast.error("A service must have different start and end times");
+      return;
+    }
+    setSavingServiceSettings(true);
+    try {
+      const response = await authFetch("/api/venue-service-settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(serviceSettings),
+      });
+      if (!response.ok) throw new Error("save failed");
+      toast.success("Service hours and business day saved");
+    } catch {
+      toast.error("Could not save service settings");
+    } finally {
+      setSavingServiceSettings(false);
+    }
   }
 
   function handleLogoUpload(file: File | undefined) {
@@ -316,6 +404,22 @@ function DashboardSettingsPage() {
     } else {
       toast.error("Could not add user");
     }
+  }
+
+  async function resetStaffPin(staffId: string, temporaryPin: string) {
+    const res = await authFetch(`/api/staff/${staffId}/pin/reset`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ temporaryPin }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      toast.error(body.error ?? "Could not rotate PIN.");
+      return false;
+    }
+    toast.success("PIN rotated. Existing staff sessions were revoked.");
+    void loadStaff();
+    return true;
   }
 
   if (!snapshot) {
@@ -485,6 +589,71 @@ function DashboardSettingsPage() {
       </div>
 
       <div className="rounded-2xl border border-border bg-card p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="text-lg font-semibold">Service hours & business day</h3>
+            <p className="text-sm text-muted-foreground">
+              Define lunch and dinner for reporting. Your business day is calculated in the venue's local timezone.
+            </p>
+          </div>
+          <Button onClick={() => void saveServiceSettings()} disabled={savingServiceSettings}>
+            {savingServiceSettings ? "Saving…" : "Save service settings"}
+          </Button>
+        </div>
+        <div className="mt-5 max-w-xs">
+          <label className="mb-2 block text-sm font-medium">Business day starts at</label>
+          <Input
+            type="time"
+            value={formatMinutes(serviceSettings.businessDayStartMinutes)}
+            onChange={(event) => {
+              const minutes = parseTime(event.target.value);
+              if (minutes !== null) {
+                setServiceSettings((current) => ({ ...current, businessDayStartMinutes: minutes }));
+              }
+            }}
+          />
+          <p className="mt-2 text-xs text-muted-foreground">
+            Default: 04:00. Transactions before this time belong to the previous business date.
+          </p>
+        </div>
+        <div className="mt-6 overflow-x-auto">
+          <table className="w-full min-w-[680px] text-sm">
+            <thead className="text-left text-muted-foreground">
+              <tr><th className="pb-2">Day</th><th className="pb-2">Lunch</th><th className="pb-2">Dinner</th></tr>
+            </thead>
+            <tbody>
+              {[
+                "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+              ].map((label, day) => (
+                <tr key={label} className="border-t border-border">
+                  <td className="py-3 font-medium">{label}</td>
+                  {(["lunch", "dinner"] as const).map((service) => {
+                    const hour = serviceSettings.serviceHours.find(
+                      (item) => item.day === day && item.service === service,
+                    );
+                    return (
+                      <td key={service} className="py-3">
+                        {hour ? (
+                          <div className="flex items-center gap-2">
+                            <Input className="w-28" type="time" value={formatMinutes(hour.startMinutes)} onChange={(event) => updateServiceHour(day, service, "startMinutes", event.target.value)} />
+                            <span>–</span>
+                            <Input className="w-28" type="time" value={formatMinutes(hour.endMinutes)} onChange={(event) => updateServiceHour(day, service, "endMinutes", event.target.value)} />
+                            <Button variant="ghost" size="sm" onClick={() => removeServiceHour(day, service)}>Remove</Button>
+                          </div>
+                        ) : (
+                          <Button variant="outline" size="sm" onClick={() => updateServiceHour(day, service, "startMinutes", service === "lunch" ? "12:00" : "18:00")}>Add {service}</Button>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-border bg-card p-6">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h3 className="text-lg font-semibold">QR code management</h3>
@@ -600,6 +769,13 @@ function DashboardSettingsPage() {
                   <p className="text-sm text-muted-foreground">
                     {user.role} · {user.phone}
                   </p>
+                  <p className="text-xs text-muted-foreground">
+                    {user.pin_locked_until
+                      ? "PIN locked"
+                      : user.credential_configured
+                        ? "PIN configured"
+                        : "PIN not configured"}
+                  </p>
                 </div>
                 <div className="flex items-center gap-2">
                   <span
@@ -607,6 +783,17 @@ function DashboardSettingsPage() {
                   >
                     {user.active ? "Active" : "Inactive"}
                   </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setPinTarget({ id: user.id, name: user.name });
+                      setPinValue("");
+                      setPinVisible(false);
+                    }}
+                  >
+                    Rotate PIN
+                  </Button>
                   <Button
                     variant="destructive"
                     size="icon"
@@ -665,6 +852,94 @@ function DashboardSettingsPage() {
           </div>
         </div>
       </div>
+
+      {pinTarget && (
+        <ModalOverlay
+          onClose={() => setPinTarget(null)}
+          labelledBy="rotate-pin-heading"
+          closeLabel="Close PIN dialog"
+          className="flex items-center justify-center p-4"
+          panelClassName="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl"
+        >
+          <h2 id="rotate-pin-heading" className="text-base font-bold">
+            Rotate PIN for {pinTarget.name}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            This signs {pinTarget.name} out everywhere immediately. Give them the new
+            PIN in person — it cannot be read back afterwards, only replaced.
+          </p>
+
+          <label htmlFor="staff-pin" className="mt-4 block text-sm font-medium">
+            New PIN (6–8 digits)
+          </label>
+          <div className="mt-1 flex gap-2">
+            <Input
+              id="staff-pin"
+              // Masked by default: this is a live credential on a shared screen.
+              type={pinVisible ? "text" : "password"}
+              value={pinValue}
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={8}
+              onChange={(event) => setPinValue(event.target.value.replace(/\D/g, ""))}
+              className="font-mono tracking-widest"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPinVisible((v) => !v)}
+            >
+              {pinVisible ? "Hide" : "Show"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                // Randomly generated beats manager-chosen: people pick 123456.
+                const bytes = crypto.getRandomValues(new Uint32Array(1))[0];
+                setPinValue(String(bytes % 1_000_000).padStart(6, "0"));
+                setPinVisible(true);
+              }}
+            >
+              Generate
+            </Button>
+          </div>
+
+          {pinValue !== "" && !isValidStaffPin(pinValue) && (
+            <p className="mt-2 text-sm text-red-600">A PIN must be 6 to 8 digits.</p>
+          )}
+          {isValidStaffPin(pinValue) && isWeakStaffPin(pinValue) && (
+            <p className="mt-2 text-sm text-red-600">
+              Too easy to guess — avoid repeated digits, runs like 123456, and
+              repeating blocks. The server rejects these too.
+            </p>
+          )}
+
+          <div className="mt-5 flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setPinTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={
+                rotatingPin || !isValidStaffPin(pinValue) || isWeakStaffPin(pinValue)
+              }
+              onClick={async () => {
+                setRotatingPin(true);
+                try {
+                  if (await resetStaffPin(pinTarget.id, pinValue)) {
+                    setPinTarget(null);
+                    setPinValue("");
+                  }
+                } finally {
+                  setRotatingPin(false);
+                }
+              }}
+            >
+              {rotatingPin ? "Rotating…" : "Rotate PIN"}
+            </Button>
+          </div>
+        </ModalOverlay>
+      )}
     </div>
   );
 }

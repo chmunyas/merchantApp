@@ -233,34 +233,13 @@ function DashboardAutomationsPage() {
       toast.error("No contacts in this segment.");
       return;
     }
-    const entries: MessageLogEntry[] = recipients.map((customer) => ({
-      id: createId("msg"),
-      channel: campaign.channel,
-      to: `${customer.name} (${customer.phone})`,
-      body: renderTemplate(campaign.message, { name: customer.name, venue }),
-      source: campaign.name,
-      createdAt: new Date().toISOString(),
-    }));
-    setMessageLog((current) => [...entries, ...current]);
-    setCampaigns((current) =>
-      current.map((entry) =>
-        entry.id === campaign.id
-          ? {
-              ...entry,
-              status: "sent",
-              sentAt: new Date().toISOString(),
-              recipients: recipients.length,
-            }
-          : entry,
-      ),
-    );
-    setActiveTab("activity");
-    // Live dispatch across the channel (best-effort). The localStorage log above
-    // is the demo fallback when the cloud backend is offline.
     try {
       const res = await authFetch(`/api/broadcast?venue=${venue}`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": `campaign:${campaign.id}:${crypto.randomUUID()}`,
+        },
         body: JSON.stringify({
           venue,
           segment: campaign.segment,
@@ -271,20 +250,22 @@ function DashboardAutomationsPage() {
       if (res.ok) {
         const stats = (await res.json()) as {
           total?: number;
-          sent?: number;
-          simulated?: number;
+          queued?: number;
         };
-        toast.success(
-          `Broadcast to ${stats.total ?? recipients.length} contact(s)` +
-            (stats.sent
-              ? ` · ${stats.sent} delivered`
-              : " · simulated (no live channel creds)"),
+        setCampaigns((current) =>
+          current.map((entry) =>
+            entry.id === campaign.id
+              ? { ...entry, status: "draft", recipients: stats.total ?? recipients.length }
+              : entry,
+          ),
         );
+        toast.success(`Queued ${stats.queued ?? 0} of ${stats.total ?? recipients.length} recipient(s).`);
+        setActiveTab("activity");
       } else {
-        toast.success(`Sent to ${recipients.length} contact(s).`);
+        toast.error("Campaign was not queued.");
       }
     } catch {
-      toast.success(`Sent to ${recipients.length} contact(s).`);
+      toast.error("Campaign was not queued.");
     }
   }
 

@@ -1,7 +1,7 @@
 // End-of-shift Z-report maths. Pure (no DB/network) so it is unit-testable.
 // All amounts are in MINOR units (cents), matching the payments ledger.
 
-const SUCCEEDED = ["succeeded", "paid", "captured"];
+const SUCCEEDED = ["succeeded", "paid", "captured", "partially_refunded", "refunded"];
 
 export type ShiftPayment = {
   amount: number | string;

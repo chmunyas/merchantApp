@@ -2,12 +2,81 @@ import { describe, it, expect } from "vitest";
 
 import {
   DEFAULT_FEE_SCHEDULE,
+  DEFAULT_GUEST_FEE,
+  GUEST_FEE_BENEFITS,
+  GUEST_FEE_OPT_OUT,
   INSTANT_PAYOUT_PERCENT,
+  MAX_GUEST_FEE_PERCENT,
   blendedRate,
   computeFee,
+  computeGuestServiceFee,
   feeTierFor,
   methodFromMetadata,
+  normalizeGuestFeeConfig,
 } from "../../src/lib/fees";
+
+describe("guest service fee (A5.5)", () => {
+  it("charges the guest nothing by default", () => {
+    expect(DEFAULT_GUEST_FEE.enabled).toBe(false);
+    const quote = computeGuestServiceFee(100000);
+    expect(quote.enabled).toBe(false);
+    expect(quote.fee).toBe(0);
+    expect(quote.total).toBe(100000);
+  });
+
+  it("always carries the explainer copy so checkout never invents it", () => {
+    const quote = computeGuestServiceFee(100000);
+    expect(quote.benefits).toEqual(GUEST_FEE_BENEFITS);
+    expect(quote.optOut).toBe(GUEST_FEE_OPT_OUT);
+    // The opt-out promise is contractual: the fee is avoidable.
+    expect(quote.optOut).toMatch(/optional/i);
+    expect(quote.optOut).toMatch(/card machine/i);
+  });
+
+  it("applies percent + fixed once enabled", () => {
+    const quote = computeGuestServiceFee(100000, {
+      enabled: true,
+      percent: 1,
+      fixed: 500,
+      cap: null,
+    });
+    expect(quote.fee).toBe(1500);
+    expect(quote.total).toBe(101500);
+  });
+
+  it("honours the per-transaction cap", () => {
+    const quote = computeGuestServiceFee(1000000, {
+      enabled: true,
+      percent: 2,
+      fixed: 0,
+      cap: 5000,
+    });
+    expect(quote.fee).toBe(5000);
+  });
+
+  it("never charges a fee on a zero or negative amount", () => {
+    const cfg = { enabled: true, percent: 2, fixed: 500, cap: null };
+    expect(computeGuestServiceFee(0, cfg).fee).toBe(0);
+    expect(computeGuestServiceFee(-100, cfg).fee).toBe(0);
+  });
+
+  it("clamps a configured percent to the published ceiling", () => {
+    const cfg = normalizeGuestFeeConfig({ enabled: true, percent: 99 });
+    expect(cfg.percent).toBe(MAX_GUEST_FEE_PERCENT);
+  });
+
+  it("rejects negative configuration", () => {
+    const cfg = normalizeGuestFeeConfig({
+      enabled: true,
+      percent: -3,
+      fixed: -100,
+      cap: -1,
+    });
+    expect(cfg.percent).toBe(0);
+    expect(cfg.fixed).toBe(0);
+    expect(cfg.cap).toBe(0);
+  });
+});
 
 describe("fees — per-method engine", () => {
   it("applies the published percent per method (minor units)", () => {

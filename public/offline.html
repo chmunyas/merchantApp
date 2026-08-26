@@ -56,8 +56,9 @@
         line-height: 1.5;
         margin: 0 0 20px;
       }
-      button {
-        border: 0;
+      .retry {
+        display: inline-block;
+        text-decoration: none;
         border-radius: 12px;
         background: #10b981;
         color: #04170f;
@@ -73,10 +74,10 @@
       <div class="badge"><div class="dot"></div></div>
       <h1>You're offline</h1>
       <p>
-        PesaSwap can't reach the network right now. Your saved tables, orders
-        and bookings are still on this device — reconnect to sync.
+        PesaSwap can't reach the network right now. Cached information is
+        read-only. Reconnect before changing business data or making a payment.
       </p>
-      <button onclick="location.reload()">Try again</button>
+      <a href="/" class="retry">Try again</a>
     </div>
   </body>
 </html>

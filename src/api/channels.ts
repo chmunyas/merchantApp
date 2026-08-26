@@ -2,8 +2,13 @@ import { getAdapter } from "@/lib/channels";
 import type { ChannelId } from "@/lib/channels/types";
 import { envVar } from "@/lib/env";
 import { processInbound } from "@/lib/inbound";
+import { persistIngress } from "@/lib/channel-ingress";
+import { resolveVenueForAccount } from "@/lib/venue-routing";
 import { verifyHubSignature, verifyToken } from "@/lib/webhook-verify";
 import { requireAuth } from "@/api/auth";
+import { roleAtLeast } from "@/lib/rbac";
+import { venueFromPayload } from "@/lib/tenancy";
+import { simulatorsAllowed } from "@/lib/runtime-security";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,6 +29,11 @@ function readBody(rawBody: string, contentType: string): unknown {
     return Object.fromEntries(new URLSearchParams(rawBody).entries());
   }
   return JSON.parse(rawBody);
+}
+
+async function payloadEventId(rawBody: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawBody));
+  return `payload:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 // Build a collision-free handle + identity id for a simulated inbound message.
@@ -67,6 +77,27 @@ function defaultFrom(channel: ChannelId): string {
   }
 }
 
+function receivingAccount(channel: ChannelId, body: unknown): string | null {
+  const value = body as Record<string, unknown>;
+  if (channel === "telegram") {
+    const bot = value.bot_id ?? value.botId;
+    return bot == null ? null : String(bot);
+  }
+  if (channel === "instagram") {
+    const entry = Array.isArray(value.entry) ? value.entry[0] as Record<string, unknown> : null;
+    return entry?.id == null ? null : String(entry.id);
+  }
+  if (channel === "sms") {
+    const id = value.to ?? value.shortCode ?? value.keyword;
+    return id == null ? null : String(id);
+  }
+  if (channel === "email") {
+    const id = value.to ?? value.recipient ?? value.envelope;
+    return id == null ? null : String(id).trim().toLowerCase();
+  }
+  return null;
+}
+
 export async function handleChannelRoute(
   request: Request,
   env: unknown,
@@ -76,9 +107,12 @@ export async function handleChannelRoute(
 
   // Multi-channel simulator — drive any channel's pipeline without credentials.
   if (path === "/api/channels/simulate" && request.method === "POST") {
-    if (!(await requireAuth(request, env))) {
+    if (!simulatorsAllowed(env)) return json({ error: "not found" }, 404);
+    const payload = await requireAuth(request, env);
+    if (!payload) {
       return json({ error: "unauthorized" }, 401);
     }
+    if (!roleAtLeast(payload, "manager")) return json({ error: "forbidden" }, 403);
     const body = (await request.json()) as {
       channel?: string;
       venue?: string;
@@ -98,7 +132,7 @@ export async function handleChannelRoute(
         text: String(body.text ?? ""),
         providerMsgId: null,
       },
-      body.venue ?? "main",
+      venueFromPayload(payload, url),
       env,
     );
     return json(result);
@@ -106,11 +140,17 @@ export async function handleChannelRoute(
 
   // Generic inbound webhook for Telegram / Instagram / SMS / Email.
   // (WhatsApp keeps its dedicated /api/whatsapp/webhook route.)
-  const match = path.match(
+  const legacyMatch = path.match(
     /^\/api\/(telegram|instagram|sms|email)\/(webhook|inbound)$/,
   );
-  if (!match) return null;
-  const channel = match[1] as ChannelId;
+  const accountMatch = path.match(
+    /^\/api\/channel-webhooks\/(telegram|instagram|sms|email)\/([^/]+)$/,
+  );
+  if (!legacyMatch && !accountMatch) return null;
+  const channel = (legacyMatch?.[1] ?? accountMatch?.[1]) as ChannelId;
+  const routeAccount = accountMatch?.[2]
+    ? decodeURIComponent(accountMatch[2])
+    : null;
   const adapter = getAdapter(channel);
 
   if (request.method === "GET") {
@@ -120,6 +160,9 @@ export async function handleChannelRoute(
   if (request.method === "POST") {
     if (channel === "telegram") {
       const secret = envVar(env, "TELEGRAM_WEBHOOK_SECRET");
+      if (!secret && !simulatorsAllowed(env)) {
+        return json({ error: "service unavailable" }, 503);
+      }
       if (
         secret &&
         !verifyToken(
@@ -133,6 +176,19 @@ export async function handleChannelRoute(
 
     if (channel === "sms") {
       const secret = envVar(env, "BRIDGE_SECRET");
+      if (!secret && !simulatorsAllowed(env)) {
+        return json({ error: "service unavailable" }, 503);
+      }
+      if (secret && !verifyToken(request.headers.get("x-webhook-secret"), secret)) {
+        return json({ error: "unauthorized" }, 401);
+      }
+    }
+
+    if (channel === "email") {
+      const secret = envVar(env, "EMAIL_WEBHOOK_SECRET");
+      if (!secret && !simulatorsAllowed(env)) {
+        return json({ error: "service unavailable" }, 503);
+      }
       if (secret && !verifyToken(request.headers.get("x-webhook-secret"), secret)) {
         return json({ error: "unauthorized" }, 401);
       }
@@ -142,6 +198,9 @@ export async function handleChannelRoute(
 
     if (channel === "instagram") {
       const secret = envVar(env, "INSTAGRAM_APP_SECRET");
+      if (!secret && !simulatorsAllowed(env)) {
+        return json({ error: "service unavailable" }, 503);
+      }
       if (
         secret &&
         !(await verifyHubSignature(
@@ -156,13 +215,26 @@ export async function handleChannelRoute(
 
     try {
       const body = readBody(rawBody, request.headers.get("content-type") ?? "");
+      const accountId = routeAccount ?? receivingAccount(channel, body);
+      const venue = await resolveVenueForAccount(env, channel, accountId);
+      if (!accountId || !venue) return json({ error: "unknown receiving account" }, 404);
+      const fallbackEventId = await payloadEventId(rawBody);
       for (const message of adapter.parseInbound?.(body) ?? []) {
-        await processInbound(message, "main", env);
+        await persistIngress(env, {
+          channel,
+          accountId,
+          venue,
+          providerEventId: message.providerMsgId ?? fallbackEventId,
+          message,
+        });
       }
-    } catch {
-      // Always 200 so providers do not retry a malformed event.
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : "webhook persistence failed" },
+        503,
+      );
     }
-    return json({ received: true });
+    return json({ received: true, queued: true }, 202);
   }
 
   return null;

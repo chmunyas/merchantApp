@@ -1,12 +1,11 @@
 import { getToken } from "@/lib/auth";
 import {
-  getCurrentVenueId,
-  isDemoVenue,
   loadMerchantSnapshot,
   saveMerchantCatalogue,
   saveMerchantTables,
   type MerchantTable,
 } from "@/lib/merchant-dashboard";
+import { getCurrentVenueId, isDemoVenue } from "@/lib/tenant-store";
 import type { CatalogueItem } from "@/components/merchant/features/types";
 
 // Server → localStorage hydration for the entities that are now server-
@@ -31,6 +30,7 @@ export type ApiMenuItem = {
   description?: string | null;
   dietary?: string[];
   available?: boolean;
+  revision?: number;
 };
 
 export type ApiDiningTable = {
@@ -40,6 +40,7 @@ export type ApiDiningTable = {
   section?: string | null;
   active?: boolean;
   created_at?: string;
+  revision?: number;
 };
 
 function shouldHydrate(): boolean {
@@ -47,7 +48,7 @@ function shouldHydrate(): boolean {
 }
 
 // Map a server menu row → the richer client CatalogueItem, PRESERVING client-only
-// decorations (image, modifiers, links, description) from the existing snapshot
+// decorations (image, modifiers and links) from the existing snapshot
 // entry when present.
 export function mapApiMenuItem(
   item: ApiMenuItem,
@@ -66,6 +67,7 @@ export function mapApiMenuItem(
     description: existing?.description || item.description || "",
     modifiers: existing?.modifiers ?? [],
     linkedProductIds: existing?.linkedProductIds ?? [],
+    revision: item.revision ?? existing?.revision,
   };
 }
 
@@ -94,6 +96,7 @@ export function mapApiTable(
     closedAt: existing?.closedAt,
     paidAmount: existing?.paidAmount ?? 0,
     payments: existing?.payments ?? [],
+    revision: table.revision,
   };
 }
 

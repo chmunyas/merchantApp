@@ -19,12 +19,13 @@ export type WhatsappConfig = {
 export async function getWhatsappConfig(
   env: unknown,
   venue?: string,
+  accountId?: string,
 ): Promise<WhatsappConfig> {
-  let token = envVar(env, "WHATSAPP_TOKEN");
-  let phoneId = envVar(env, "WHATSAPP_PHONE_ID");
+  let token = venue ? undefined : envVar(env, "WHATSAPP_TOKEN");
+  let phoneId = venue ? undefined : envVar(env, "WHATSAPP_PHONE_ID");
   let verifyToken = envVar(env, "WHATSAPP_VERIFY_TOKEN") ?? "pesaswap-verify";
-  const bridgeUrl = envVar(env, "WHATSAPP_BRIDGE_URL");
-  const bridgeToken = envVar(env, "WHATSAPP_BRIDGE_TOKEN");
+  let bridgeUrl = venue ? undefined : envVar(env, "WHATSAPP_BRIDGE_URL");
+  let bridgeToken = venue ? undefined : envVar(env, "WHATSAPP_BRIDGE_TOKEN");
   let transport: WhatsappTransport = "auto";
 
   try {
@@ -33,7 +34,7 @@ export async function getWhatsappConfig(
       // Per-venue config (whatsapp_cloud:<venue>) wins over the global default,
       // so each store can run its own WhatsApp number.
       const keys = venue
-        ? [`whatsapp_cloud:${venue}`, "whatsapp_cloud"]
+        ? [`whatsapp_cloud:${venue}`]
         : ["whatsapp_cloud"];
       let value:
         | {
@@ -62,6 +63,16 @@ export async function getWhatsappConfig(
         ) {
           transport = value.transport;
         }
+      }
+      if (venue && envVar(env, "WHATSAPP_BRIDGE_VENUE") === venue) {
+        bridgeUrl = envVar(env, "WHATSAPP_BRIDGE_URL");
+        bridgeToken = envVar(env, "WHATSAPP_BRIDGE_TOKEN");
+      }
+      if (accountId && phoneId !== accountId) {
+        token = undefined;
+        phoneId = undefined;
+        bridgeUrl = undefined;
+        bridgeToken = undefined;
       }
     }
   } catch {

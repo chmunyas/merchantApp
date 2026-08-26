@@ -1,7 +1,7 @@
-import { getAdapter } from "@/lib/channels";
-import { isSuppressed } from "@/lib/consent";
 import { getSql } from "@/lib/db";
 import { requireAuth, resolveVenue } from "@/api/auth";
+import { tokenHasScope } from "@/lib/api-tokens";
+import { roleAtLeast } from "@/lib/rbac";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,8 +16,8 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-// Dead-letter queue: failed outbound deliveries (events.status = 'failed') with
-// a retry that re-sends via the channel adapter and clears recovered rows.
+// Dead-letter queue: failed durable deliveries. Retry only requeues work; the
+// leased worker performs the provider call and preserves every attempt.
 export async function handleDlqRoute(
   request: Request,
   env: unknown,
@@ -27,56 +27,55 @@ export async function handleDlqRoute(
   if (!path.startsWith("/api/dlq")) return null;
 
   if (path === "/api/dlq" && request.method === "GET") {
-    if (!(await requireAuth(request, env))) {
+    const payload = await requireAuth(request, env);
+    if (!payload) {
       return json({ error: "unauthorized" }, 401);
+    }
+    if (!roleAtLeast(payload, "manager") || !tokenHasScope(payload, "messaging:read")) {
+      return json({ error: "forbidden" }, 403);
     }
     const sql = getSql(env);
     if (!sql) return json({ error: "database not configured" }, 503);
     const venue = await resolveVenue(request, env, url);
     const failed = await sql`
-      SELECT id, channel, conversation_id, payload, created_at
-      FROM events
-      WHERE venue_id = ${venue} AND status = 'failed'
+      SELECT id, channel, handle, source_type, last_error, attempts, created_at
+      FROM outbound_deliveries
+      WHERE venue_id = ${venue} AND status IN ('failed','unknown')
       ORDER BY created_at DESC LIMIT 50`;
     return json({ failed, count: failed.length });
   }
 
   if (path === "/api/dlq/retry" && request.method === "POST") {
-    if (!(await requireAuth(request, env))) {
+    const payload = await requireAuth(request, env);
+    if (!payload) {
       return json({ error: "unauthorized" }, 401);
+    }
+    if (!roleAtLeast(payload, "manager") || !tokenHasScope(payload, "messaging:write")) {
+      return json({ error: "forbidden" }, 403);
     }
     const sql = getSql(env);
     if (!sql) return json({ error: "database not configured" }, 503);
     const venue = await resolveVenue(request, env, url);
-    const failed = await sql`
-      SELECT id, channel, payload FROM events
-      WHERE venue_id = ${venue} AND status = 'failed'
-      ORDER BY created_at DESC LIMIT 100`;
-    let retried = 0;
-    let recovered = 0;
-    let suppressed = 0;
-    for (const event of failed) {
-      const handle = event.payload?.handle as string | undefined;
-      const text = event.payload?.text as string | undefined;
-      if (!handle || !text) continue;
-      // Compliance: don't retry a send to a handle that has since opted out.
-      if (await isSuppressed(sql, venue, String(event.channel), handle)) {
-        suppressed += 1;
-        await sql`UPDATE events SET status = 'suppressed' WHERE id = ${event.id}`;
-        continue;
-      }
-      retried += 1;
-      try {
-        const out = await getAdapter(event.channel).send(handle, text, env, venue);
-        await sql`
-          UPDATE events SET status = ${out.delivery === "sent" ? "sent" : "retried"}
-          WHERE id = ${event.id}`;
-        recovered += 1;
-      } catch {
-        /* stays in the DLQ */
-      }
-    }
-    return json({ retried, recovered });
+    const body = (await request.json().catch(() => ({}))) as { ids?: string[] };
+    const ids = Array.isArray(body.ids) ? body.ids.map(String).slice(0, 100) : [];
+    const rows = ids.length
+      ? await sql`
+          UPDATE outbound_deliveries
+          SET status = 'queued', next_attempt_at = now(), retryable = true,
+              claim_token = NULL, lease_expires_at = NULL
+          WHERE venue_id = ${venue} AND id = ANY(${ids})
+            AND status = 'failed'
+          RETURNING id`
+      : await sql`
+          UPDATE outbound_deliveries
+          SET status = 'queued', next_attempt_at = now(), retryable = true,
+              claim_token = NULL, lease_expires_at = NULL
+          WHERE id IN (
+            SELECT id FROM outbound_deliveries
+            WHERE venue_id = ${venue} AND status = 'failed'
+            ORDER BY created_at DESC LIMIT 100
+          ) RETURNING id`;
+    return json({ requeued: rows.length }, 202);
   }
 
   return null;

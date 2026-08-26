@@ -37,6 +37,9 @@ type SettlementSummary = {
   txCount: number;
   reconciled: number;
   unreconciled: number;
+  refunds: number;
+  pendingAdjustments: number;
+  reconciliationBasis: "internal-estimate";
 };
 
 type SettlementBatch = {
@@ -111,7 +114,7 @@ function SettlementPage() {
         return;
       }
       const data = (await res.json()) as { batch: SettlementBatch };
-      toast.success(`Settlement created: ${kes(data.batch.net)} net.`);
+      toast.success(`Estimated batch created: ${kes(data.batch.net)} net.`);
       await load(from, to);
     } finally {
       setRunning(false);
@@ -128,9 +131,9 @@ function SettlementPage() {
     <div className="mx-auto max-w-5xl space-y-6 p-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Settlement & reconciliation</h1>
+          <h1 className="text-2xl font-bold">Settlement estimates</h1>
           <p className="text-sm text-muted-foreground">
-            Match succeeded payments into bank settlement batches and flag trust gaps.
+            Internal batching estimates only; these are not provider payout or bank reconciliation evidence.
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
@@ -146,7 +149,7 @@ function SettlementPage() {
             {loading ? "…" : "Refresh"}
           </Button>
           <Button onClick={() => void runSettlement()} disabled={running}>
-            {running ? "Settling…" : "Run settlement"}
+            {running ? "Batching…" : "Create estimate batch"}
           </Button>
         </div>
       </div>
@@ -154,6 +157,7 @@ function SettlementPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[
           ["Gross", kes(summary?.gross ?? 0)],
+          ["Refunds", kes(summary?.refunds ?? 0)],
           ["Fees", kes(summary?.fees ?? 0)],
           ["Net", kes(summary?.net ?? 0)],
           ["Transactions", String(summary?.txCount ?? 0)],
@@ -171,9 +175,9 @@ function SettlementPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Reconciliation status</CardTitle>
+          <CardTitle>Internal batching status</CardTitle>
           <CardDescription>
-            {summary?.from ?? from} to {summary?.to ?? to}
+            {summary?.from ?? from} to {summary?.to ?? to} · not bank reconciled
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -184,9 +188,12 @@ function SettlementPage() {
             />
           </div>
           <div className="flex flex-wrap gap-2 text-sm">
-            <Badge variant="secondary">Reconciled {kes(summary?.reconciled ?? 0)}</Badge>
+            <Badge variant="secondary">Batched estimate {kes(summary?.reconciled ?? 0)}</Badge>
             <Badge variant={summary?.unreconciled ? "destructive" : "outline"}>
-              Unreconciled {kes(summary?.unreconciled ?? 0)}
+              Unbatched estimate {kes(summary?.unreconciled ?? 0)}
+            </Badge>
+            <Badge variant={summary?.pendingAdjustments ? "destructive" : "outline"}>
+              Pending refund adjustments {kes(summary?.pendingAdjustments ?? 0)}
             </Badge>
           </div>
         </CardContent>
@@ -194,8 +201,8 @@ function SettlementPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Past settlement batches</CardTitle>
-          <CardDescription>Newest first, scoped to this venue.</CardDescription>
+          <CardTitle>Past internal estimate batches</CardTitle>
+          <CardDescription>Newest first; provider payout matching remains pending.</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
@@ -230,7 +237,7 @@ function SettlementPage() {
               {batches.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={7} className="py-6 text-center text-muted-foreground">
-                    No settlement batches yet.
+                    No estimate batches yet.
                   </TableCell>
                 </TableRow>
               ) : null}

@@ -15,50 +15,64 @@ The staff layer of the merchant app. The differentiator vs a classic POS is that
 staff can also operate **hands-free through the AI agent** (WhatsApp/web) — "send
 table 5 the bill", "how many covers today?", "who tipped tonight?".
 
-## Roles (`src/lib/auth.ts`)
-`admin` (platform) · `merchant` (owner) · `staff` · `customer` · `reseller_admin`.
-- Staff role is assigned via the demo **PIN login** (`src/routes/staff-login.tsx`
-  → `getDemoStaffByPin`) **and** via the **WhatsApp allowlist** (`wa_allowlist`,
-  `src/lib/inbound.ts`) — an allowlisted number is treated as `staff`/`admin`.
-- **Multi-venue staff:** a staff member's per-venue `staff` rows are linked by
-  **phone**, so one PIN login can list (`GET /api/staff/my-venues`) and switch
-  (`POST /api/auth/staff-switch-venue`, re-mints the staff JWT — verified same
-  phone + active there) between every store they work at. Surfaced as a store
-  switcher on `/staff-console`. Client: `staffMyVenues` / `staffSwitchVenue`.
-- `getDefaultRouteForRole('staff') → /merchant` (today a marketing page, not an
-  ops console — see Gaps).
+## Roles (`src/lib/tenancy.ts`, `src/lib/auth.ts`)
+
+The venue ladder is `staff < supervisor < manager < merchant`. `admin` is a
+separate platform authority, `reseller_admin` is a separate organisation
+authority, and `customer` does not inherit venue permissions.
+
+- Staff login is server-authoritative: exact venue + normalized account + 6–8
+  digit PIN, using salted scrypt hashes, row lockout, credential versioning, and
+  a JWT carrying `staff_id` + venue. Plaintext/browser PINs are forbidden.
+- **Multi-venue staff:** phone equality is explicitly not an authorization
+  boundary. Staff currently sign in with a venue-scoped credential;
+  `/api/staff/my-venues` does not yet grant cross-store authority. Switching
+  stores needs an explicit, revocable assignment and session transition.
+- `getDefaultRouteForRole('staff' | 'supervisor') → /staff-console`.
 
 ## What a staff member can do TODAY
-| Area | Works | Where |
-|------|-------|-------|
-| Inbox takeover | Read conversations, send manual replies | `dashboard/inbox.tsx`, `/api/whatsapp/reply` |
-| Customers/CRM | View + add contacts, view history | `dashboard/contacts.tsx`, `/api/contacts` |
-| Billing/payments | Create invoice, pay link, mark paid, remind, void | `/api/invoices`, `/api/payments`, `pay.tsx` |
-| Orders/kitchen | View + change ticket status (new→served) | `dashboard/orders.tsx` — **localStorage only** |
-| AI agent (staff scope) | create_invoice, get_todays_bookings, count_enquiries, search_contacts | `src/lib/agent.ts` (role ≠ customer) |
-| Staff directory | Add/list/remove team members | `/api/staff`, settings "User management" |
 
-## What's MISSING / stubbed (the roadmap)
-1. **Auth-backed staff login** — the PIN login uses a demo snapshot, not the DB
-   `staff` table; there's no per-staff credential/session tied to a `staff.id`.
-2. **Server-authoritative orders** — orders live in `localStorage`
-   (`src/lib/realtime.ts` `pesaswap.kitchen.orders`); no `orders` table/API.
-3. **Tips** — only metadata (`tip_amount`, `server_name`) is carried on a payment;
-   **no per-server attribution, no pooling (Tipjar-style), no tip reporting/payout.**
-4. **Links** — `staff.id` is not a FK on `payments`/`orders`; no staff↔login link,
-   so performance/tips can't be attributed.
-5. **Clock-in/out + shifts, void/comp approvals, section/table assignment** — none.
+| Area                   | Works                                                                                                        | Where                                        |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| Inbox takeover         | Read conversations, send manual replies                                                                      | `dashboard/inbox.tsx`, `/api/whatsapp/reply` |
+| Customers/CRM          | View + add contacts, view history                                                                            | `dashboard/contacts.tsx`, `/api/contacts`    |
+| Billing/payments       | Create/send invoices and pay links; privileged settlement/void/refund actions remain manager+                | `/api/invoices`, `/api/pay-links`, `pay.tsx` |
+| Orders/kitchen         | Take orders and run live table/order state from the PWA and KDS without browser fallback for real venues | `/api/orders`, `SyncedTableServiceView`, `dashboard/orders.tsx` |
+| Tips                   | View own tips; attribute captured tips to `staff_id`                                                         | `/api/tips/me`, `payments.staff_id`          |
+| Shifts                 | Open/view/close own shift and receive a Z-report                                                             | `/api/shifts/*`, `db/33-shifts.sql`          |
+| AI agent (staff scope) | create_invoice, get_todays_bookings, count_enquiries, search_contacts                                        | `src/lib/agent.ts` (role ≠ customer)         |
 
-## Target capabilities (what staff + the agent SHOULD do)
+## Remaining gaps (the roadmap)
+
+1. **Cross-store staff accounts** — phone equality is no longer an authorization
+   boundary. Staff sign in separately to each venue until an explicit assignment
+   account/linking model exists.
+2. **Legacy customer pages** — PWA Quick Order, authenticated Tables and KDS use
+  `/api/orders` and server-bound pay links. The old public `/table` and
+  `/table/:id` pages still read the browser data tier; keep production traffic
+  on unified QR until those legacy pages are removed or migrated.
+3. **Tip payout operations** — attribution, pooling, reporting and payout ledgers
+   exist. Live provider submission/reconciliation, complete role/device journeys
+   and operator evidence remain production work.
+4. **Attribution completeness** — `payments.staff_id`, `orders.staff_id` and
+   authenticated staff sessions exist; every order/payment entry point must still
+   prove it derives attribution from the principal or an authorised assignment.
+5. **Approval and floor workflow** — shifts and table sections exist, but bounded
+   supervisor void/discount approvals, durable section ownership, handover and
+   exception reporting still need one server-authoritative journey.
+
+## Production capabilities (complete end to end)
+
 Bring parity with Sunday/Toast/Square on the essentials, then lean into the agent:
+
 - **Auth:** DB-backed staff login (PIN or magic link) → session carrying
   `role:'staff'`, `staff_id`, `venue`. Manager-set permissions per staff.
 - **Take payment / send bill:** from a table or an order → generate the pay link /
   QR, or "send table N the bill" via the agent; capture status + notify.
-- **Orders:** `orders` + `order_items` tables (venue + table + `staff_id`), status
-  lifecycle, kitchen tickets; fire/hold/split/transfer; migrate off localStorage.
-- **Tips:** attribute a tip to the serving `staff_id`; **pooling** rules (equal /
-  by-hours / fixed) + a payout ledger; a **per-server tip dashboard** (today/shift).
+- **Orders:** use the existing `orders` + `order_items` authority for every client;
+  complete fire/hold/split/transfer, conflict, degraded-mode and recovery behavior.
+- **Tips:** use existing attribution, pool and payout ledgers for transparent
+  direct/equal/by-hours/fixed distribution, staff statements and provider recovery.
 - **Notifications:** push to the assigned server on payment/tip/failed payment
   (reuse `src/lib/push.ts` / `notifyStaff`).
 - **Agent (staff scope) additions:** `send_bill(table)`, `take_payment`,
@@ -66,14 +80,17 @@ Bring parity with Sunday/Toast/Square on the essentials, then lean into the agen
   staff auth (not just the WA allowlist).
 - **Reporting:** per-staff sales, tips, covers, review score; manager roll-up.
 
-## Data model to add (follow the `staff` per-row pattern)
-- `orders(id, venue_id, table_id, staff_id, status, total, created_at)` +
-  `order_items(order_id, name, qty, price, notes)`.
-- `payments.staff_id` + `payments.tip_amount` (attribution).
-- `tip_pools(venue_id, rule, period)` + `tip_allocations(pool_id, staff_id, amount, paid_at)`.
-- `staff_sessions` / link `app_users.staff_id` for auth-backed login.
+## Implemented server foundation
+
+- `orders` + `order_items` with venue/table/staff linkage and server-bound pay
+  tokens (`db/18-orders.sql`, later order migrations).
+- `payments.staff_id` + tip financial adjustments for attribution.
+- `tip_pools`, source rows, allocations, payout details and payout orders
+  (`db/17-tips.sql`, `db/70-tip-distribution.sql`, later finance migrations).
+- Venue-scoped, versioned staff credentials and `shifts` (`db/58`, `db/33`).
 
 ## Guardrails
+
 - Tenant isolation: every staff read/write pins to the token's `venue`
   (`venueFromPayload`), never `?venue=` — see the `auth-tenancy` skill.
 - Staff role must come from an **authenticated principal** (staff login), not from
@@ -81,9 +98,28 @@ Bring parity with Sunday/Toast/Square on the essentials, then lean into the agen
 - Keep PCI SAQ-A: staff never handle card data; they send a pay link / QR.
 - Amounts are minor units; currency defaults KES.
 
-## Definition of Done — full parity
-A feature is not done until it has **full parity across all three runtime tiers** —
-validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
-the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
-`db/*.sql` migration applied to dev, prod-local **and** Neon. See
-`.claude/DEPLOYMENT-PARITY.md`.
+<!-- PRODUCTION_GO_LIVE_CONTRACT:START -->
+<!-- PRODUCTION_GO_LIVE_DOMAIN: staff-operations -->
+
+## Production go-live ownership
+
+This skill inherits the [Production Go-Live Capability Contract](../../../docs/PRODUCTION-GO-LIVE-CAPABILITIES.md)
+(`PRODUCTION_GO_LIVE_CONTRACT: v1`). The
+[Global Enterprise Roadmap](../../../docs/GLOBAL-ENTERPRISE-ROADMAP.md) defines delivery order, and the
+[Global Readiness Review](../../../docs/GLOBAL-READINESS-REVIEW.md) records the current verdict.
+
+It owns production acceptance for:
+
+- Individual staff authentication, authoritative venue assignment, role-appropriate orders, kitchen, tables, customers, bills, payments, tips, shifts, notifications, handover, and offline/degraded recovery.
+- No shared credentials or browser-local authority, restricted cost and finance visibility, fast session lock/revocation, managed-device behavior, audit attribution, and supervisor/manager escalation.
+
+For every change in this domain:
+
+- Preserve default-deny tenant, role, scope, capability, sensitivity, and audit policy.
+- Test the applicable owner, manager, supervisor, staff, finance, customer, and partner journey, including denial, concurrency, duplicate, timeout, and recovery paths.
+- Apply financial, API/SDK, device, accessibility, localization, observability, security, data-governance, and disaster-recovery gates wherever the change crosses those boundaries.
+- Report only the evidence produced. Use designed, source complete, environment verified, production ready, and certified exactly as defined by the contract.
+
+A capability is not production-ready until the applicable checklist passes in dev, prod-local, sandbox, and production with retained evidence. Follow the [deployment parity procedure](../../DEPLOYMENT-PARITY.md); never infer live readiness from source tests or a single environment.
+
+<!-- PRODUCTION_GO_LIVE_CONTRACT:END -->

@@ -19,6 +19,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { ModalOverlay } from "@/components/ui/modal-overlay";
 import { authFetch } from "@/lib/auth";
 import {
   ensureMerchantDemoData,
@@ -724,15 +725,16 @@ function DepositRequestModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
-      onClick={onClose}
+    <ModalOverlay
+      onClose={onClose}
+      labelledBy="deposit-modal-heading"
+      className="flex items-end justify-center p-4 sm:items-center"
+      panelClassName="w-full max-w-sm rounded-3xl bg-white p-6 shadow-xl"
+      closeLabel="Close deposit request"
     >
-      <div
-        className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="text-base font-bold">Request deposit</h3>
+        <h3 id="deposit-modal-heading" className="text-base font-bold">
+          Request deposit
+        </h3>
         <p className="mb-4 text-xs text-slate-500">
           {reservation.customerName} · {reservation.date} {reservation.time}
         </p>
@@ -751,6 +753,7 @@ function DepositRequestModal({
         </div>
         {link ? (
           <OmniShare
+            kind="booking"
             open={!!link}
             onClose={onClose}
             title={`Send KES ${amount.toLocaleString()} deposit link`}
@@ -776,8 +779,7 @@ function DepositRequestModal({
             </button>
           </>
         )}
-      </div>
-    </div>
+    </ModalOverlay>
   );
 }
 

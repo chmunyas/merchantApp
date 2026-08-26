@@ -13,7 +13,8 @@ describe("handleManifestRoute", () => {
     expect(res!.headers.get("content-type")).toContain("application/manifest+json");
     const m = (await res!.json()) as Record<string, unknown>;
     expect(m.name).toBe("PesaSwap Merchant");
-    expect(m.start_url).toBe("/");
+    expect(m.start_url).toBe("/pesaswapApp");
+    expect(m).not.toHaveProperty("orientation");
     expect(Array.isArray(m.icons)).toBe(true);
     expect((m.icons as unknown[]).length).toBeGreaterThan(0);
   });

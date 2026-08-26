@@ -13,9 +13,10 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { LoadFailure } from "@/components/LoadFailure";
 import { Textarea } from "@/components/ui/textarea";
 import { authFetch } from "@/lib/auth";
-import { getCurrentVenueId } from "@/lib/merchant-dashboard";
+import { getCurrentVenueId } from "@/lib/tenant-store";
 
 export const Route = createFileRoute("/dashboard/knowledge")({
   component: KnowledgePage,
@@ -41,14 +42,20 @@ function KnowledgePage() {
   const [query, setQuery] = useState("do you have parking?");
   const [hits, setHits] = useState<Hit[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   async function load() {
+    setLoadFailed(false);
     try {
       const res = await authFetch(`/api/kb?venue=${venue}`);
+      // Without this an error page was fed to .json(), which threw and landed in
+      // the catch as if the venue simply had no articles.
+      if (!res.ok) throw new Error(`kb load failed: ${res.status}`);
       const data = (await res.json()) as { articles?: Article[] };
       setArticles(data.articles ?? []);
     } catch {
       setArticles([]);
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -225,6 +232,8 @@ function KnowledgePage() {
                 Loading…
               </CardContent>
             </Card>
+          ) : loadFailed ? (
+            <LoadFailure what="knowledge base" onRetry={() => void load()} />
           ) : (
             articles.map((article) => (
               <Card

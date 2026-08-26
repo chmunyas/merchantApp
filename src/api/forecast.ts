@@ -12,10 +12,10 @@ import { getSql } from "@/lib/db";
 import { roleAtLeast } from "@/lib/rbac";
 import { venueFromPayload } from "@/lib/tenancy";
 import { demandSlots } from "@/lib/venue-stats";
+import { tokenHasScope } from "@/lib/api-tokens";
 
 // The app's market is Kenya (KES): bucket demand by Nairobi-local wall-clock so
 // "busy at 19:00" means 7pm locally, not UTC.
-const TZ = "Africa/Nairobi";
 const WINDOW_DAYS = 56; // 8 weeks of history for the hourly demand pattern
 
 const corsHeaders = {
@@ -47,6 +47,9 @@ export async function handleForecastRoute(
   if (!roleAtLeast(payload, "manager")) {
     return json({ error: "forbidden" }, 403);
   }
+  if (!tokenHasScope(payload, "analytics:read")) {
+    return json({ error: "forbidden" }, 403);
+  }
   const venue = venueFromPayload(payload, url);
   const sql = getSql(env);
   if (!sql) return json({ error: "database not configured" }, 503);
@@ -63,7 +66,10 @@ export async function handleForecastRoute(
   const targetDow = targetDate.getUTCDay();
 
   // 1) Average orders/units per (weekday, hour), Nairobi-local, last 8 weeks.
-  const slots: HourSlot[] = await demandSlots(sql, venue);
+  const [venueRow] = await sql`
+    SELECT timezone FROM venues WHERE id = ${venue} LIMIT 1`;
+  const timezone = String(venueRow?.timezone ?? "Africa/Nairobi");
+  const slots: HourSlot[] = await demandSlots(sql, venue, timezone);
 
   // 2) Per-item units for the target weekday, last 12 weeks — the prep basis.
   const itemRows = await sql`
@@ -95,7 +101,7 @@ export async function handleForecastRoute(
 
   return json({
     generatedAt: new Date().toISOString(),
-    timezone: TZ,
+    timezone,
     windowDays: WINDOW_DAYS,
     demand: {
       busiest: busiestSlots(slots).map((s) => ({

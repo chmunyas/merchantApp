@@ -1,7 +1,14 @@
 import { getAi, getSql, hasDatabase } from "@/lib/db";
 import { aiChat, activeProvider } from "@/lib/ai-providers";
 import { requireAuth, resolveVenue } from "@/api/auth";
-import { planLimit, planLimitMessage, planOf } from "@/lib/tenancy";
+import { tokenHasScope } from "@/lib/api-tokens";
+import { roleAtLeast } from "@/lib/rbac";
+import {
+  planLimit,
+  planLimitMessage,
+  planOf,
+  principalVenue,
+} from "@/lib/tenancy";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -114,14 +121,13 @@ export async function handleBackendRoute(
 ): Promise<Response | null> {
   const url = new URL(request.url);
   const path = url.pathname;
-  const venue = await resolveVenue(request, env, url);
 
   if (path === "/api/health" && request.method === "GET") {
     const sql = getSql(env);
     if (!sql) return json({ ok: false, database: "not-configured" });
     try {
-      const [row] = await sql`SELECT count(*)::int AS venues FROM venues`;
-      return json({ ok: true, database: "postgres", venues: row.venues });
+      await sql`SELECT 1`;
+      return json({ ok: true, database: "postgres" });
     } catch (error) {
       return json({ ok: false, database: "error", error: errorMessage(error) }, 500);
     }
@@ -132,10 +138,15 @@ export async function handleBackendRoute(
     if (!authPayload) {
       return json({ error: "unauthorized" }, 401);
     }
+    const venue = principalVenue(authPayload);
+    if (!venue) return json({ error: "venue claim required" }, 403);
     const sql = getSql(env);
     if (!sql) return json({ error: "database not configured" }, 503);
     try {
       if (request.method === "GET") {
+        if (!tokenHasScope(authPayload, "contacts:read")) {
+          return json({ error: "forbidden" }, 403);
+        }
         const contacts = await sql`
           SELECT id, name, phone, email, tier, points, total_spent, visits,
                  last_visit, tags
@@ -144,6 +155,9 @@ export async function handleBackendRoute(
         return json({ contacts });
       }
       if (request.method === "POST") {
+        if (!tokenHasScope(authPayload, "contacts:write")) {
+          return json({ error: "forbidden" }, 403);
+        }
         const body = (await request.json()) as {
           name?: string;
           phone?: string;
@@ -171,9 +185,15 @@ export async function handleBackendRoute(
   }
 
   if (path === "/api/ai/command" && request.method === "POST") {
-    if (!(await requireAuth(request, env))) {
+    const payload = await requireAuth(request, env);
+    if (!payload) {
       return json({ error: "unauthorized" }, 401);
     }
+    if (!roleAtLeast(payload, "manager") || !tokenHasScope(payload, "agent:invoke")) {
+      return json({ error: "forbidden" }, 403);
+    }
+    const venue = principalVenue(payload);
+    if (!venue) return json({ error: "venue claim required" }, 403);
     const body = (await request.json()) as { text?: string };
     return json(await runAiCommand(String(body.text ?? ""), venue, env));
   }
@@ -185,6 +205,13 @@ export async function handleBackendRoute(
     if (!sql) return json({ error: "database not configured" }, 503);
     try {
       if (request.method === "GET") {
+        const payload = await requireAuth(request, env);
+        if (!payload) return json({ error: "unauthorized" }, 401);
+        if (!tokenHasScope(payload, "bookings:read")) {
+          return json({ error: "forbidden" }, 403);
+        }
+        const venue = principalVenue(payload);
+        if (!venue) return json({ error: "venue claim required" }, 403);
         const enquiries = await sql`
           SELECT id, customer_name, phone, covers, date, time, notes,
                  status, source, created_at
@@ -193,6 +220,7 @@ export async function handleBackendRoute(
         return json({ enquiries });
       }
       if (request.method === "POST") {
+        const venue = await resolveVenue(request, env, url);
         const body = (await request.json()) as {
           customerName?: string;
           phone?: string;
@@ -220,10 +248,20 @@ export async function handleBackendRoute(
   }
 
   if (path === "/api/memory") {
+    const payload = await requireAuth(request, env);
+    if (!payload) return json({ error: "unauthorized" }, 401);
+    if (!roleAtLeast(payload, "manager")) {
+      return json({ error: "forbidden" }, 403);
+    }
+    const venue = principalVenue(payload);
+    if (!venue) return json({ error: "venue claim required" }, 403);
     const sql = getSql(env);
     if (!sql) return json({ error: "database not configured" }, 503);
     try {
       if (request.method === "POST") {
+        if (!tokenHasScope(payload, "knowledge:write")) {
+          return json({ error: "forbidden" }, 403);
+        }
         const body = (await request.json()) as {
           content?: string;
           metadata?: unknown;
@@ -240,6 +278,9 @@ export async function handleBackendRoute(
         return json({ memory, embedded: vector !== null }, 201);
       }
       if (request.method === "GET") {
+        if (!tokenHasScope(payload, "knowledge:read")) {
+          return json({ error: "forbidden" }, 403);
+        }
         const q = url.searchParams.get("q") ?? "";
         const vector = await embed(q, env);
         if (vector) {

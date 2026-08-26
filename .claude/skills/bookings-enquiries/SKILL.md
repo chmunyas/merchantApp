@@ -12,6 +12,7 @@ Customer booking requests flow from the PWA/agent into Postgres and surface in t
 back office.
 
 ## Key files
+
 - `src/api/backend.ts` — public `POST /api/enquiries` + gated `GET /api/enquiries`
   (Postgres `enquiries` table).
 - `src/routes/enquire.tsx` — the public `/enquire` booking form (posts to the API).
@@ -21,6 +22,7 @@ back office.
 - `src/lib/agent.ts` — the agent's `create_enquiry` / `check_availability` tools.
 
 ## Endpoints
+
 - `POST /api/enquiries?venue=` — **public** (customer), rate-limited 10/min. The
   row is **always** written to the resolved venue (token venue, else `?venue=`);
   a `body.venue` is ignored (no cross-tenant write).
@@ -31,6 +33,7 @@ back office.
 - Booking counts: `/api/ai/command` ("covers today", "new enquiries").
 
 ## Conventions
+
 - Customer submits are **public** — keep `POST /api/enquiries` open + rate-limited,
   but **never trust a body-supplied venue** — pin to the resolved venue.
 - An **enquiry** is a pending request (`enquiries`, `status='new'`); a **booking**
@@ -44,12 +47,32 @@ back office.
   `/pay?r=<token>`) in addition to the inline `/book` M-Pesa flow.
 
 ## Guidelines
+
 - Validate `customerName`; default covers/date/time server-side.
 - New enquiry sources should still set a `source` and be venue-scoped.
 
-## Definition of Done — full parity
-A feature is not done until it has **full parity across all three runtime tiers** —
-validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
-the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
-`db/*.sql` migration applied to dev, prod-local **and** Neon. See
-`.claude/DEPLOYMENT-PARITY.md`.
+<!-- PRODUCTION_GO_LIVE_CONTRACT:START -->
+<!-- PRODUCTION_GO_LIVE_DOMAIN: bookings-enquiries -->
+
+## Production go-live ownership
+
+This skill inherits the [Production Go-Live Capability Contract](../../../docs/PRODUCTION-GO-LIVE-CAPABILITIES.md)
+(`PRODUCTION_GO_LIVE_CONTRACT: v1`). The
+[Global Enterprise Roadmap](../../../docs/GLOBAL-ENTERPRISE-ROADMAP.md) defines delivery order, and the
+[Global Readiness Review](../../../docs/GLOBAL-READINESS-REVIEW.md) records the current verdict.
+
+It owns production acceptance for:
+
+- Server-authoritative availability, enquiries, reservations, covers, tables, deposits, confirmation, amendment, cancellation, no-show, assignment, and staff handoff.
+- Concurrency, timezone and trading-day rules, accessible customer communication, payment linkage, consent, audit, and recovery from provider or notification failure.
+
+For every change in this domain:
+
+- Preserve default-deny tenant, role, scope, capability, sensitivity, and audit policy.
+- Test the applicable owner, manager, supervisor, staff, finance, customer, and partner journey, including denial, concurrency, duplicate, timeout, and recovery paths.
+- Apply financial, API/SDK, device, accessibility, localization, observability, security, data-governance, and disaster-recovery gates wherever the change crosses those boundaries.
+- Report only the evidence produced. Use designed, source complete, environment verified, production ready, and certified exactly as defined by the contract.
+
+A capability is not production-ready until the applicable checklist passes in dev, prod-local, sandbox, and production with retained evidence. Follow the [deployment parity procedure](../../DEPLOYMENT-PARITY.md); never infer live readiness from source tests or a single environment.
+
+<!-- PRODUCTION_GO_LIVE_CONTRACT:END -->

@@ -15,8 +15,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { OmniShare } from "@/components/merchant/OmniShare";
+import { TableFloorActionsCard } from "@/components/staff/TableFloorActionsCard";
 import { Button } from "@/components/ui/button";
-import { authFetch } from "@/lib/auth";
+import { authFetch, decodeTokenClaims } from "@/lib/auth";
 import {
   type KitchenOrder,
   type OrderStatus,
@@ -52,11 +53,22 @@ function getTimeSince(isoDate: string): string {
 function KitchenDisplayPage() {
   const localOrders = useKitchenOrders();
   const [apiOrders, setApiOrders] = useState<KitchenOrder[] | null>(null);
+  const [apiError, setApiError] = useState(false);
   const [filter, setFilter] = useState<"active" | "all">("active");
   const [, setTick] = useState(0);
   const seenIds = useRef<Set<string> | null>(null);
-  const orders = apiOrders && apiOrders.length > 0 ? apiOrders : localOrders;
-  const usingApiOrders = Boolean(apiOrders && apiOrders.length > 0);
+  const claims = decodeTokenClaims();
+  const serverAuthority = Boolean(claims?.venue && claims.venue !== "main");
+  const orders = useMemo(
+    () =>
+      serverAuthority
+        ? (apiOrders ?? [])
+        : apiOrders && apiOrders.length > 0
+          ? apiOrders
+          : localOrders,
+    [apiOrders, localOrders, serverAuthority],
+  );
+  const usingApiOrders = serverAuthority || Boolean(apiOrders?.length);
 
   // Refresh time displays every 10s
   useEffect(() => {
@@ -89,7 +101,10 @@ function KitchenDisplayPage() {
     const load = async () => {
       try {
         const res = await authFetch("/api/orders");
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (!cancelled && serverAuthority) setApiError(true);
+          return;
+        }
         const data = (await res.json()) as { orders?: ApiOrder[] };
         const mapped = (data.orders ?? []).map(apiOrderToKitchenOrder);
         if (cancelled) return;
@@ -111,8 +126,9 @@ function KitchenDisplayPage() {
         }
         seenIds.current = new Set(mapped.map((o) => o.id));
         setApiOrders(mapped);
+        setApiError(false);
       } catch {
-        /* keep the last snapshot on a transient error */
+        if (!cancelled && serverAuthority) setApiError(true);
       }
     };
     void load();
@@ -122,7 +138,7 @@ function KitchenDisplayPage() {
       cancelled = true;
       clearInterval(id);
     };
-  }, []);
+  }, [serverAuthority]);
 
   const activeOrders = useMemo(
     () =>
@@ -185,6 +201,10 @@ function KitchenDisplayPage() {
 
   return (
     <div className="space-y-6">
+      {/* B3.1 + B3.5 — the same floor actions a server has on /staff-console,
+          so a manager can refund from the surface they already live on. */}
+      <TableFloorActionsCard />
+
       {/* Header stats */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard
@@ -229,9 +249,16 @@ function KitchenDisplayPage() {
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-          Live — updates across tabs
+          Live — updates across devices
         </div>
       </div>
+
+      {apiError ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+          Live orders could not be refreshed. The last server snapshot is shown;
+          no browser-only orders have been substituted.
+        </div>
+      ) : null}
 
       {/* Orders grid */}
       {displayOrders.length === 0 ? (
@@ -241,9 +268,8 @@ function KitchenDisplayPage() {
             No orders yet
           </h3>
           <p className="mt-1 max-w-sm text-sm text-muted-foreground/70">
-            Orders placed from customer tables will appear here in real-time.
-            Try placing an order from{" "}
-            <code className="rounded bg-muted px-1">/table/1</code>
+            Orders placed from the PWA Order tab or a unified customer QR appear
+            here automatically.
           </p>
         </div>
       ) : (
@@ -484,6 +510,7 @@ function OrderCard({
       ) : null}
       {payLink ? (
         <OmniShare
+          kind="payment_link"
           open={!!payLink}
           onClose={() => setPayLink(null)}
           title={`Send bill · Table ${order.tableNumber}`}

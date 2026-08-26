@@ -21,6 +21,7 @@ You own the provider wiring in: `src/api/payments.ts`,
 `src/lib/pesaswap-payments.ts`, `src/routes/pay.tsx`, `db/13-payments.sql`.
 
 How you work:
+
 - Base URL is the **API** host (`https://api.sandbox.pesaswap.io` /
   `https://api.pesaswap.io`) via `PESASWAP_URL` — never `app.pesaswap.io`.
 - Read all provider config from the **Worker `env` binding** through
@@ -40,4 +41,28 @@ Guardrails: don't move provider secrets into the DB; don't expose the secret key
 to the client; don't break the public pay-link flow
 (`/pay?i=` → `/api/invoices/payinfo`).
 
-Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.
+<!-- PRODUCTION_GO_LIVE_CONTRACT:START -->
+<!-- PRODUCTION_GO_LIVE_DOMAIN: pesaswap-integration-engineer.md -->
+
+## Production go-live ownership
+
+This agent inherits the [Production Go-Live Capability Contract](../../docs/PRODUCTION-GO-LIVE-CAPABILITIES.md)
+(`PRODUCTION_GO_LIVE_CONTRACT: v1`). The
+[Global Enterprise Roadmap](../../docs/GLOBAL-ENTERPRISE-ROADMAP.md) defines delivery order, and the
+[Global Readiness Review](../../docs/GLOBAL-READINESS-REVIEW.md) records the current verdict.
+
+It owns production acceptance for:
+
+- The live provider contract for create, confirm, capture, refund, saved token, mandate, webhook, pull reconciliation, idempotency, timeout, error mapping, credential rotation, sandbox isolation, and go-live configuration.
+- Version and compatibility evidence against official PesaSwap documentation, with live-money canaries, settlement reconciliation, incident ownership, and no unsupported claim about payment methods or certification.
+
+For every change in this domain:
+
+- Preserve default-deny tenant, role, scope, capability, sensitivity, and audit policy.
+- Test the applicable owner, manager, supervisor, staff, finance, customer, and partner journey, including denial, concurrency, duplicate, timeout, and recovery paths.
+- Apply financial, API/SDK, device, accessibility, localization, observability, security, data-governance, and disaster-recovery gates wherever the change crosses those boundaries.
+- Report only the evidence produced. Use designed, source complete, environment verified, production ready, and certified exactly as defined by the contract.
+
+A capability is not production-ready until the applicable checklist passes in dev, prod-local, sandbox, and production with retained evidence. Follow the [deployment parity procedure](../DEPLOYMENT-PARITY.md); never infer live readiness from source tests or a single environment.
+
+<!-- PRODUCTION_GO_LIVE_CONTRACT:END -->

@@ -3,6 +3,7 @@ import { getSql } from "@/lib/db";
 import { roleAtLeast } from "@/lib/rbac";
 import { scoreCustomers, type CustomerStat } from "@/lib/rfm";
 import { venueFromPayload } from "@/lib/tenancy";
+import { tokenHasScope } from "@/lib/api-tokens";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -34,6 +35,9 @@ export async function handleRfmRoute(
   const payload = await requireAuth(request, env);
   if (!payload) return json({ error: "unauthorized" }, 401);
   if (!roleAtLeast(payload, "manager")) {
+    return json({ error: "forbidden" }, 403);
+  }
+  if (!tokenHasScope(payload, "analytics:read") || !tokenHasScope(payload, "contacts:read")) {
     return json({ error: "forbidden" }, 403);
   }
   const venue = venueFromPayload(payload, url);

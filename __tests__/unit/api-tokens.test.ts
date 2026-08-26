@@ -35,17 +35,24 @@ describe("api-tokens", () => {
     expect(isValidScope("orders:read")).toBe(true);
     expect(isValidScope("payments:write")).toBe(true);
     expect(isValidScope("nope")).toBe(false);
-    expect(API_SCOPES).toContain("agent");
+    expect(API_SCOPES).toContain("agent:invoke");
+    expect(API_SCOPES).toContain("accounting:read");
+    expect(API_SCOPES).not.toContain("agent");
   });
 
-  it("tokenHasScope constrains only API-token principals; `agent` implies all", () => {
+  it("tokenHasScope constrains API tokens to exact scopes", () => {
     // A human JWT (no isApiToken) is governed by role, not scopes → always true.
     expect(tokenHasScope({ role: "manager" }, "payments:read")).toBe(true);
     // An API token is limited to its granted scopes.
     expect(tokenHasScope({ isApiToken: true, scopes: ["payments:read"] }, "payments:read")).toBe(true);
     expect(tokenHasScope({ isApiToken: true, scopes: ["orders:read"] }, "payments:read")).toBe(false);
-    // The blanket `agent` scope implies every scope.
-    expect(tokenHasScope({ isApiToken: true, scopes: ["agent"] }, "payments:write")).toBe(true);
-    expect(tokenHasScope(null, "agent")).toBe(true);
+    // Agent invocation never implies a domain permission.
+    expect(
+      tokenHasScope(
+        { isApiToken: true, scopes: ["agent:invoke"] },
+        "payments:write",
+      ),
+    ).toBe(false);
+    expect(tokenHasScope(null, "agent:invoke")).toBe(true);
   });
 });

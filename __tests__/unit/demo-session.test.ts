@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 
-import { decodeTokenClaims, isDemoSession } from "../../src/lib/auth";
+import {
+  decodeTokenClaims,
+  hasAuthoritativeVenueSession,
+  isDemoSession,
+} from "../../src/lib/auth";
 
 // Build an unsigned JWT (header.payload.sig) with the given claims — only the
 // payload is read by the client helpers.
@@ -43,5 +47,33 @@ describe("isDemoSession", () => {
 
   it("is FALSE when there is no token at all", () => {
     expect(isDemoSession(null)).toBe(false);
+  });
+});
+
+describe("hasAuthoritativeVenueSession", () => {
+  it("is FALSE for the anonymous venue-less session", () => {
+    expect(
+      hasAuthoritativeVenueSession(jwt({ sub: "session:merchant", role: "merchant" })),
+    ).toBe(false);
+  });
+
+  it("is FALSE for the shared demo venue and non-operator roles", () => {
+    expect(hasAuthoritativeVenueSession(jwt({ role: "merchant", venue: "main" }))).toBe(
+      false,
+    );
+    expect(hasAuthoritativeVenueSession(jwt({ role: "admin", venue: "v_1" }))).toBe(
+      false,
+    );
+  });
+
+  it("is TRUE for a real venue-scoped operator", () => {
+    expect(
+      hasAuthoritativeVenueSession(jwt({ role: "staff", venue: "v_73282ff8" })),
+    ).toBe(true);
+  });
+
+  it("is FALSE when the token is absent or malformed", () => {
+    expect(hasAuthoritativeVenueSession(null)).toBe(false);
+    expect(hasAuthoritativeVenueSession("not-a-jwt")).toBe(false);
   });
 });

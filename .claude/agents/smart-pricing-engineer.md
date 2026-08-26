@@ -16,6 +16,7 @@ Read `.claude/skills/smart-pricing/SKILL.md` first. You own `src/lib/pricing.ts`
 (`menuProfitStats`, `demandSlots`) with menu engineering + forecasting.
 
 How you work:
+
 - Keep the pricing math **pure** in `pricing.ts` (`suggestPrices`,
   `happyHourWindows`) so it stays unit-testable; DB reads go through `venue-stats`.
 - Prices are whole KES; round suggestions to the nearest 10 and never lower a raise.
@@ -30,7 +31,28 @@ How you work:
 Guardrails: never write prices from this surface; never leak margins/patterns to
 sub-manager roles; keep the math deterministic and out of the UI.
 
-Definition of Done: full parity — typecheck + unit tests, migrations applied to
-dev/prod-local/Neon (none needed for pricing — it reuses existing tables), and
-deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before
-claiming done. See `.claude/DEPLOYMENT-PARITY.md`.
+<!-- PRODUCTION_GO_LIVE_CONTRACT:START -->
+<!-- PRODUCTION_GO_LIVE_DOMAIN: smart-pricing-engineer.md -->
+
+## Production go-live ownership
+
+This agent inherits the [Production Go-Live Capability Contract](../../docs/PRODUCTION-GO-LIVE-CAPABILITIES.md)
+(`PRODUCTION_GO_LIVE_CONTRACT: v1`). The
+[Global Enterprise Roadmap](../../docs/GLOBAL-ENTERPRISE-ROADMAP.md) defines delivery order, and the
+[Global Readiness Review](../../docs/GLOBAL-READINESS-REVIEW.md) records the current verdict.
+
+It owns production acceptance for:
+
+- Explainable price and promotion recommendations with effective windows, timezone, channel, item eligibility, tax, margin floor, demand evidence, estimated impact, confidence, and versioned inputs.
+- Manager approval, conflict detection, preview, publish, POS/channel propagation, rollback, customer price consistency, audit, and safeguards against discriminatory or unlawful pricing.
+
+For every change in this domain:
+
+- Preserve default-deny tenant, role, scope, capability, sensitivity, and audit policy.
+- Test the applicable owner, manager, supervisor, staff, finance, customer, and partner journey, including denial, concurrency, duplicate, timeout, and recovery paths.
+- Apply financial, API/SDK, device, accessibility, localization, observability, security, data-governance, and disaster-recovery gates wherever the change crosses those boundaries.
+- Report only the evidence produced. Use designed, source complete, environment verified, production ready, and certified exactly as defined by the contract.
+
+A capability is not production-ready until the applicable checklist passes in dev, prod-local, sandbox, and production with retained evidence. Follow the [deployment parity procedure](../DEPLOYMENT-PARITY.md); never infer live readiness from source tests or a single environment.
+
+<!-- PRODUCTION_GO_LIVE_CONTRACT:END -->

@@ -1,4 +1,4 @@
-import { requireAuth } from "@/api/auth";
+import { requireHumanAuth } from "@/api/auth";
 import { getSql } from "@/lib/db";
 import { hashPassword } from "@/lib/jwt";
 import {
@@ -48,7 +48,7 @@ export async function handleMultiStoreRoute(
   }
   if (request.method === "OPTIONS") return json({ ok: true });
 
-  const payload = await requireAuth(request, env);
+  const payload = await requireHumanAuth(request, env);
   if (!payload) return json({ error: "unauthorized" }, 401);
   const sql = getSql(env);
   if (!sql) return json({ error: "database not configured" }, 503);
@@ -64,18 +64,22 @@ export async function handleMultiStoreRoute(
     const to = parseDate(url.searchParams.get("to"), now + 86_400_000);
     const rows = await sql`
       SELECT v.id, v.name,
-        COALESCE(sum(CASE WHEN p.status IN ('succeeded','paid','captured')
+        COALESCE(sum(CASE WHEN p.status IN ('succeeded','paid','captured','partially_refunded','refunded')
           AND COALESCE(p.kind,'') <> 'refund' THEN p.amount ELSE 0 END),0)::bigint AS gross,
-        COALESCE(sum(CASE WHEN p.status IN ('succeeded','paid','captured')
-          AND COALESCE(p.kind,'') <> 'refund' THEN COALESCE(p.tip_amount,0) ELSE 0 END),0)::bigint AS tips,
+        COALESCE(sum(CASE WHEN p.status IN ('succeeded','paid','captured','partially_refunded','refunded')
+          AND COALESCE(p.kind,'') <> 'refund' THEN COALESCE(p.tip_amount,0) - COALESCE((
+            SELECT sum(fa.amount) FROM financial_adjustments fa
+            WHERE fa.payment_id = p.id AND fa.component='tip'
+          ),0) ELSE 0 END),0)::bigint AS tips,
         COALESCE(sum(CASE WHEN p.kind = 'refund' AND p.status = 'refunded'
           THEN p.amount ELSE 0 END),0)::bigint AS refunds,
-        count(*) FILTER (WHERE p.status IN ('succeeded','paid','captured')
+        count(*) FILTER (WHERE p.status IN ('succeeded','paid','captured','partially_refunded','refunded')
           AND COALESCE(p.kind,'') <> 'refund') AS txns
       FROM user_venues uv
       JOIN app_users u ON u.id = uv.user_id
       JOIN venues v ON v.id = uv.venue_id
       LEFT JOIN payments p ON p.venue_id = v.id
+        AND p.currency = 'KES'
         AND p.created_at >= ${new Date(from).toISOString()}
         AND p.created_at < ${new Date(to).toISOString()}
       WHERE lower(u.email) = ${email}
@@ -136,7 +140,8 @@ export async function handleMultiStoreRoute(
 
   if (request.method === "GET") {
     const rows = await sql`
-      SELECT u.email, u.name, uv.role, uv.created_at
+            SELECT u.email, u.name, uv.role, uv.membership_version,
+              uv.created_at, uv.updated_at
       FROM user_venues uv JOIN app_users u ON u.id = uv.user_id
       WHERE uv.venue_id = ${venue}
       ORDER BY uv.created_at ASC`;
@@ -144,8 +149,10 @@ export async function handleMultiStoreRoute(
       email: String(r.email),
       name: (r.name as string) ?? null,
       role: String(r.role),
+      membershipVersion: Number(r.membership_version),
       you: String(r.email).toLowerCase() === email,
       createdAt: r.created_at,
+      updatedAt: r.updated_at,
     }));
     return json({ venue, callerRole, members });
   }
@@ -206,11 +213,60 @@ export async function handleMultiStoreRoute(
       userId = String(created.id);
     }
 
-    await sql`
-      INSERT INTO user_venues (user_id, venue_id, role)
-      VALUES (${userId}, ${venue}, ${role})
-      ON CONFLICT (user_id, venue_id) DO UPDATE SET role = ${role}`;
-    return json({ member: { email: targetEmail, name, role, invited } }, 201);
+    const mutation = await sql.begin(async (transaction) => {
+      const [priorMembership] = await transaction`
+        SELECT role, membership_version
+        FROM user_venues
+        WHERE user_id = ${userId} AND venue_id = ${venue}
+        LIMIT 1
+        FOR UPDATE`;
+      if (
+        targetEmail === email &&
+        priorMembership &&
+        String(priorMembership.role) !== role
+      ) {
+        return { error: "You cannot change your own role." } as const;
+      }
+
+      const [membership] = await transaction`
+        INSERT INTO user_venues (user_id, venue_id, role, updated_by)
+        VALUES (${userId}, ${venue}, ${role}, ${email})
+        ON CONFLICT (user_id, venue_id) DO UPDATE
+          SET role = EXCLUDED.role, updated_by = EXCLUDED.updated_by
+        RETURNING role, membership_version`;
+      const changed =
+        !priorMembership ||
+        String(priorMembership.role) !== String(membership.role);
+      if (changed) {
+        const action = priorMembership ? "role_changed" : "member_added";
+        await transaction`
+          INSERT INTO venue_membership_events
+            (venue_id, user_id, subject_email, actor_sub, actor_role, action,
+             prior_role, next_role, prior_version, next_version, correlation_id)
+          VALUES
+            (${venue}, ${userId}, ${targetEmail}, ${email}, ${callerRole}, ${action},
+             ${priorMembership?.role ?? null}, ${membership.role},
+             ${priorMembership?.membership_version ?? null},
+             ${membership.membership_version}, ${crypto.randomUUID()})`;
+      }
+      return { membership } as const;
+    });
+    if ("error" in mutation) {
+      return json({ error: "You cannot change your own role." }, 400);
+    }
+    const { membership } = mutation;
+    return json(
+      {
+        member: {
+          email: targetEmail,
+          name,
+          role: membership.role,
+          membershipVersion: Number(membership.membership_version),
+          invited,
+        },
+      },
+      201,
+    );
   }
 
   if (request.method === "DELETE") {
@@ -221,26 +277,50 @@ export async function handleMultiStoreRoute(
     if (targetEmail === email) {
       return json({ error: "You cannot remove yourself." }, 400);
     }
-    const [target] = await sql`
-      SELECT u.id, uv.role FROM user_venues uv
-      JOIN app_users u ON u.id = uv.user_id
-      WHERE uv.venue_id = ${venue} AND lower(u.email) = ${targetEmail}
-      LIMIT 1`;
-    if (!target) return json({ error: "Not a member of that store." }, 404);
-    if (!canRemoveMember(callerRole, String(target.role))) {
-      return json({ error: "You cannot remove a higher-ranked member." }, 403);
-    }
-    // Never orphan a store: keep at least one owner.
-    if (String(target.role) === "merchant") {
-      const [{ owners }] = await sql`
-        SELECT count(*)::int AS owners FROM user_venues
-        WHERE venue_id = ${venue} AND role = 'merchant'`;
-      if (Number(owners) <= 1) {
-        return json({ error: "A store must keep at least one owner." }, 409);
+    const removal = await sql.begin(async (transaction) => {
+      const [target] = await transaction`
+        SELECT u.id, uv.role, uv.membership_version FROM user_venues uv
+        JOIN app_users u ON u.id = uv.user_id
+        WHERE uv.venue_id = ${venue} AND lower(u.email) = ${targetEmail}
+        LIMIT 1
+        FOR UPDATE OF uv`;
+      if (!target) {
+        return { status: 404, error: "Not a member of that store." } as const;
       }
+      if (!canRemoveMember(callerRole, String(target.role))) {
+        return {
+          status: 403,
+          error: "You cannot remove a higher-ranked member.",
+        } as const;
+      }
+      // Never orphan a store: keep at least one owner.
+      if (String(target.role) === "merchant") {
+        const [{ owners }] = await transaction`
+          SELECT count(*)::int AS owners FROM user_venues
+          WHERE venue_id = ${venue} AND role = 'merchant'`;
+        if (Number(owners) <= 1) {
+          return {
+            status: 409,
+            error: "A store must keep at least one owner.",
+          } as const;
+        }
+      }
+      await transaction`
+        DELETE FROM user_venues
+        WHERE user_id = ${target.id} AND venue_id = ${venue}`;
+      await transaction`
+        INSERT INTO venue_membership_events
+          (venue_id, user_id, subject_email, actor_sub, actor_role, action,
+           prior_role, next_role, prior_version, next_version, correlation_id)
+        VALUES
+          (${venue}, ${target.id}, ${targetEmail}, ${email}, ${callerRole},
+           'member_removed', ${target.role}, NULL,
+           ${target.membership_version}, NULL, ${crypto.randomUUID()})`;
+      return { status: 200 } as const;
+    });
+    if ("error" in removal) {
+      return json({ error: removal.error }, removal.status);
     }
-    await sql`
-      DELETE FROM user_venues WHERE user_id = ${target.id} AND venue_id = ${venue}`;
     return json({ ok: true });
   }
 

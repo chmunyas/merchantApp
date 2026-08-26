@@ -1,5 +1,4 @@
 import {
-  getAdapter,
   parseWhatsappInbound,
   verifyWhatsappWebhook,
 } from "@/lib/channels";
@@ -7,13 +6,18 @@ import { getWhatsappConfig } from "@/lib/channels/whatsapp-config";
 import { getSql } from "@/lib/db";
 import { envVar } from "@/lib/env";
 import { processInbound } from "@/lib/inbound";
+import { persistIngress } from "@/lib/channel-ingress";
 import { verifyHubSignature, verifyToken } from "@/lib/webhook-verify";
 import { roleAtLeast } from "@/lib/rbac";
 import {
   registerChannelAccount,
   resolveVenueForAccount,
 } from "@/lib/venue-routing";
-import { requireAuth, resolveVenue, venueFromPayload } from "@/api/auth";
+import { requireAuth, requireHumanAuth, resolveVenue, venueFromPayload } from "@/api/auth";
+import { simulatorsAllowed } from "@/lib/runtime-security";
+import { tokenHasScope } from "@/lib/api-tokens";
+import { queueOutbound } from "@/lib/outbound-jobs";
+import { applyDeliveryReceipt } from "@/lib/outbound-jobs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -28,6 +32,18 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
+async function stableBridgeEventId(body: {
+  accountId?: string;
+  from?: string;
+  text?: string;
+  id?: string;
+}): Promise<string> {
+  if (body.id) return `wa:${body.id}`;
+  const material = `${body.accountId ?? ""}\0${body.from ?? ""}\0${body.text ?? ""}`;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(material));
+  return `bridge:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
 export async function handleWhatsappRoute(
   request: Request,
   env: unknown,
@@ -38,7 +54,11 @@ export async function handleWhatsappRoute(
 
   // Inbound message forwarded by the Baileys bridge service.
   if (path === "/api/whatsapp/bridge/inbound" && request.method === "POST") {
-    const bridgeSecret = envVar(env, "BRIDGE_SECRET");
+    const bridgeSecret =
+      envVar(env, "BRIDGE_SECRET") || envVar(env, "WHATSAPP_BRIDGE_TOKEN");
+    if (!bridgeSecret && !simulatorsAllowed(env)) {
+      return json({ error: "service unavailable" }, 503);
+    }
     if (
       bridgeSecret &&
       !verifyToken(request.headers.get("x-webhook-secret"), bridgeSecret)
@@ -46,15 +66,23 @@ export async function handleWhatsappRoute(
       return json({ error: "unauthorized" }, 401);
     }
     const body = (await request.json()) as {
-      venue?: string;
+      accountId?: string;
       from?: string;
       name?: string;
       text?: string;
       id?: string;
     };
+    const venue = await resolveVenueForAccount(env, "whatsapp", body.accountId);
+    if (!body.accountId || !venue) {
+      return json({ error: "unknown receiving account" }, 404);
+    }
     if (body.from && body.text) {
-      await processInbound(
-        {
+      await persistIngress(env, {
+        channel: "whatsapp",
+        accountId: body.accountId,
+        venue,
+        providerEventId: await stableBridgeEventId(body),
+        message: {
           channel: "whatsapp",
           handle: body.from,
           platformUserId: body.from,
@@ -62,25 +90,53 @@ export async function handleWhatsappRoute(
           text: String(body.text),
           providerMsgId: body.id ? `wa:${body.id}` : null,
         },
-        body.venue ?? "main",
-        env,
-      );
+      });
     }
-    return json({ ok: true });
+    return json({ ok: true, queued: true }, 202);
   }
 
   // Proxy the bridge control API to the dashboard (status / qr / logout).
-  if (path.startsWith("/api/whatsapp/bridge/")) {
+  const bridgeControl = path.match(
+    /^\/api\/whatsapp\/bridge\/(status|qr|logout)$/,
+  );
+  if (bridgeControl) {
+    const sub = bridgeControl[1];
+    const expectedMethod = sub === "logout" ? "POST" : "GET";
+    if (request.method !== expectedMethod) return null;
+    const bridgePayload = await requireHumanAuth(request, env);
+    if (!bridgePayload) return json({ error: "unauthorized" }, 401);
+    if (!roleAtLeast(bridgePayload, "merchant")) {
+      return json({ error: "forbidden" }, 403);
+    }
     const bridgeUrl = envVar(env, "WHATSAPP_BRIDGE_URL");
     if (!bridgeUrl) return json({ enabled: false });
-    const sub = path.slice("/api/whatsapp/bridge/".length);
     try {
       const res = await fetch(`${bridgeUrl}/${sub}`, {
         method: request.method,
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(envVar(env, "WHATSAPP_BRIDGE_TOKEN")
+            ? { authorization: `Bearer ${envVar(env, "WHATSAPP_BRIDGE_TOKEN")}` }
+            : {}),
+        },
         body: request.method === "POST" ? "{}" : undefined,
       });
-      return json(await res.json(), res.status);
+      const data = (await res.json()) as {
+        number?: string;
+        connected?: boolean;
+        [key: string]: unknown;
+      };
+      if (sub === "status" && data.connected && data.number) {
+        const venue = venueFromPayload(bridgePayload, url);
+        await registerChannelAccount(
+          env,
+          "whatsapp",
+          data.number.replace(/[^\d]/g, ""),
+          venue,
+          "authenticated_bridge_status",
+        );
+      }
+      return json(data, res.status);
     } catch {
       return json({ enabled: true, status: "offline" });
     }
@@ -88,22 +144,24 @@ export async function handleWhatsappRoute(
 
   // WhatsApp Cloud API config (dashboard connection wizard).
   if (path === "/api/whatsapp/config" && request.method === "GET") {
-    // Optional auth: an authed merchant sees THEIR store's config; otherwise the
-    // global default (non-breaking for any unauthenticated caller).
-    const getPayload = await requireAuth(request, env);
-    const getVenue = getPayload ? venueFromPayload(getPayload, url) : undefined;
+    const getPayload = await requireHumanAuth(request, env);
+    if (!getPayload) return json({ error: "unauthorized" }, 401);
+    if (!roleAtLeast(getPayload, "merchant")) {
+      return json({ error: "forbidden" }, 403);
+    }
+    const getVenue = venueFromPayload(getPayload, url);
     const cfg = await getWhatsappConfig(env, getVenue);
     return json({
       hasToken: Boolean(cfg.token),
       phoneId: cfg.phoneId ?? "",
-      verifyToken: cfg.verifyToken,
+      hasVerifyToken: Boolean(cfg.verifyToken),
       webhookUrl: `${url.origin}/api/whatsapp/webhook`,
       bridgeEnabled: Boolean(cfg.bridgeUrl),
       transport: cfg.transport,
     });
   }
   if (path === "/api/whatsapp/config" && request.method === "POST") {
-    const cfgPayload = await requireAuth(request, env);
+    const cfgPayload = await requireHumanAuth(request, env);
     if (!cfgPayload) return json({ error: "unauthorized" }, 401);
     // Channel API keys are an owner-only setting.
     if (!roleAtLeast(cfgPayload, "merchant")) {
@@ -138,19 +196,17 @@ export async function handleWhatsappRoute(
       INSERT INTO app_settings (key, value)
       VALUES (${`whatsapp_cloud:${venue}`}, ${sql.json(value)})
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
-    // Route inbound to this WhatsApp number to the configuring venue, so a
-    // customer messaging this store reaches this store's agent (multi-venue).
-    if (value.phoneId) {
-      await registerChannelAccount(env, "whatsapp", value.phoneId, venue);
-    }
     return json({ ok: true });
   }
 
   // Verify the Cloud API credentials against Meta.
   if (path === "/api/whatsapp/test" && request.method === "POST") {
-    const testPayload = await requireAuth(request, env);
+    const testPayload = await requireHumanAuth(request, env);
     if (!testPayload) {
       return json({ error: "unauthorized" }, 401);
+    }
+    if (!roleAtLeast(testPayload, "merchant")) {
+      return json({ error: "forbidden" }, 403);
     }
     const cfg = await getWhatsappConfig(env, venueFromPayload(testPayload, url));
     if (!cfg.token || !cfg.phoneId) {
@@ -167,6 +223,13 @@ export async function handleWhatsappRoute(
         error?: { message?: string };
       };
       if (res.ok && data.display_phone_number) {
+        await registerChannelAccount(
+          env,
+          "whatsapp",
+          cfg.phoneId,
+          venueFromPayload(testPayload, url),
+          "meta_graph_verification",
+        );
         return json({
           ok: true,
           number: data.display_phone_number,
@@ -188,6 +251,9 @@ export async function handleWhatsappRoute(
   if (path === "/api/whatsapp/webhook" && request.method === "POST") {
     const rawBody = await request.text();
     const appSecret = envVar(env, "WHATSAPP_APP_SECRET");
+    if (!appSecret && !simulatorsAllowed(env)) {
+      return json({ error: "service unavailable" }, 503);
+    }
     if (
       appSecret &&
       !(await verifyHubSignature(
@@ -199,24 +265,61 @@ export async function handleWhatsappRoute(
       return json({ error: "unauthorized" }, 401);
     }
     try {
-      const body = JSON.parse(rawBody);
-      // Route each inbound to the venue that owns the RECEIVING number, so a
-      // customer messaging store A reaches store A (falls back to "main" when the
-      // number isn't registered — preserving single-venue behaviour).
-      const phoneNumberId =
-        body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id ?? null;
-      const venue = await resolveVenueForAccount(env, "whatsapp", phoneNumberId);
-      for (const message of parseWhatsappInbound(body)) {
-        await processInbound(message, venue, env);
+      const body = JSON.parse(rawBody) as {
+        entry?: Array<{
+          changes?: Array<{ value?: Record<string, unknown> }>;
+        }>;
+      };
+      for (const entry of body.entry ?? []) {
+        for (const change of entry.changes ?? []) {
+          const value = change.value ?? {};
+          const metadata = value.metadata as { phone_number_id?: string } | undefined;
+          const accountId = metadata?.phone_number_id ?? null;
+          const venue = await resolveVenueForAccount(env, "whatsapp", accountId);
+          if (!accountId || !venue) return json({ error: "unknown receiving account" }, 404);
+          const statuses = Array.isArray(value.statuses)
+            ? value.statuses as Array<{ id?: string; status?: string; errors?: Array<{ code?: number }> }>
+            : [];
+          for (const status of statuses) {
+            if (!status.id || !["delivered", "read", "failed"].includes(status.status ?? "")) continue;
+            await applyDeliveryReceipt(env, {
+              channel: "whatsapp",
+              accountId,
+              providerMessageId: status.id,
+              status: status.status as "delivered" | "read" | "failed",
+              providerCode: status.errors?.[0]?.code == null
+                ? undefined
+                : String(status.errors[0].code),
+            });
+          }
+          for (const message of parseWhatsappInbound({ entry: [{ changes: [{ value }] }] })) {
+            await persistIngress(env, {
+              channel: "whatsapp",
+              accountId,
+              venue,
+              providerEventId: message.providerMsgId ?? `generated:${crypto.randomUUID()}`,
+              message,
+            });
+          }
+        }
       }
-    } catch {
-      // Always 200 so WhatsApp does not retry a malformed event.
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : "webhook persistence failed" },
+        503,
+      );
     }
-    return json({ received: true });
+    return json({ received: true, queued: true }, 202);
   }
 
   // Local simulator — drives the exact same pipeline without a Meta account.
   if (path === "/api/whatsapp/simulate" && request.method === "POST") {
+    if (!simulatorsAllowed(env)) return json({ error: "not found" }, 404);
+    const simulatorPayload = await requireAuth(request, env);
+    if (!simulatorPayload) return json({ error: "unauthorized" }, 401);
+    if (!roleAtLeast(simulatorPayload, "manager")) {
+      return json({ error: "forbidden" }, 403);
+    }
     const body = (await request.json()) as {
       venue?: string;
       from?: string;
@@ -233,7 +336,7 @@ export async function handleWhatsappRoute(
         text: String(body.text ?? ""),
         providerMsgId: null,
       },
-      body.venue ?? "main",
+      venueFromPayload(simulatorPayload, url),
       env,
     );
     return json(result);
@@ -244,8 +347,12 @@ export async function handleWhatsappRoute(
   const venue = await resolveVenue(request, env, url);
 
   if (path === "/api/whatsapp/conversations" && request.method === "GET") {
-    if (!(await requireAuth(request, env))) {
+    const payload = await requireAuth(request, env);
+    if (!payload) {
       return json({ error: "unauthorized" }, 401);
+    }
+    if (!roleAtLeast(payload, "staff") || !tokenHasScope(payload, "messaging:read")) {
+      return json({ error: "forbidden" }, 403);
     }
     const conversations = await sql`
       SELECT c.id, c.wa_id, c.name, c.role, c.status, c.channel, c.last_message_at,
@@ -258,8 +365,12 @@ export async function handleWhatsappRoute(
   }
 
   if (path === "/api/whatsapp/messages" && request.method === "GET") {
-    if (!(await requireAuth(request, env))) {
+    const payload = await requireAuth(request, env);
+    if (!payload) {
       return json({ error: "unauthorized" }, 401);
+    }
+    if (!roleAtLeast(payload, "staff") || !tokenHasScope(payload, "messaging:read")) {
+      return json({ error: "forbidden" }, 403);
     }
     const conversationId = url.searchParams.get("conversation");
     if (!conversationId) return json({ error: "conversation required" }, 400);
@@ -276,8 +387,12 @@ export async function handleWhatsappRoute(
 
   // Staff takeover — send a manual reply on the conversation's own channel.
   if (path === "/api/whatsapp/reply" && request.method === "POST") {
-    if (!(await requireAuth(request, env))) {
+    const payload = await requireAuth(request, env);
+    if (!payload) {
       return json({ error: "unauthorized" }, 401);
+    }
+    if (!roleAtLeast(payload, "staff") || !tokenHasScope(payload, "messaging:write")) {
+      return json({ error: "forbidden" }, 403);
     }
     const body = (await request.json()) as {
       conversation?: string;
@@ -286,6 +401,8 @@ export async function handleWhatsappRoute(
     if (!body.conversation || !body.text?.trim()) {
       return json({ error: "conversation and text required" }, 400);
     }
+    const idempotencyKey = request.headers.get("idempotency-key")?.trim();
+    if (!idempotencyKey) return json({ error: "Idempotency-Key header required" }, 400);
     const [conversation] = await sql`
       SELECT wa_id, channel FROM conversations
       WHERE id = ${body.conversation} AND venue_id = ${venue}`;
@@ -298,19 +415,21 @@ export async function handleWhatsappRoute(
       UPDATE conversations SET last_message_at = now(), status = 'open'
       WHERE id = ${body.conversation}`;
 
-    let delivery = "pull";
-    try {
-      const out = await getAdapter(conversation.channel).send(
-        conversation.wa_id,
-        body.text,
-        env,
-        venue,
-      );
-      delivery = out.delivery;
-    } catch {
-      delivery = "simulated";
-    }
-    return json({ ok: true, delivery });
+    const handle = String(conversation.wa_id).replace(
+      new RegExp(`^${String(conversation.channel)}:`),
+      "",
+    );
+    await queueOutbound(env, {
+      deliveryKey: `reply:${body.conversation}:${idempotencyKey}`,
+      venue,
+      sourceType: "staff_reply",
+      sourceId: body.conversation,
+      channel: conversation.channel,
+      handle,
+      purpose: "utility",
+      body: body.text,
+    });
+    return json({ ok: true, delivery: "queued" }, 202);
   }
 
   return null;

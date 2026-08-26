@@ -11,12 +11,16 @@ const HOURLY_WINDOW_DAYS = 56;
 
 // Average orders/units per (weekday, hour), Nairobi-local, over the last 8 weeks.
 // Shared by the forecast + pricing (happy-hour) surfaces.
-export async function demandSlots(sql: Sql, venue: string): Promise<HourSlot[]> {
+export async function demandSlots(
+  sql: Sql,
+  venue: string,
+  timeZone = "Africa/Nairobi",
+): Promise<HourSlot[]> {
   const rows = await sql`
-    SELECT extract(dow from (o.created_at AT TIME ZONE 'Africa/Nairobi'))::int AS dow,
-           extract(hour from (o.created_at AT TIME ZONE 'Africa/Nairobi'))::int AS hour,
+    SELECT extract(dow from (o.created_at AT TIME ZONE ${timeZone}))::int AS dow,
+           extract(hour from (o.created_at AT TIME ZONE ${timeZone}))::int AS hour,
            count(distinct o.id)::float8 AS orders,
-           count(distinct (o.created_at AT TIME ZONE 'Africa/Nairobi')::date)::float8 AS days,
+           count(distinct (o.created_at AT TIME ZONE ${timeZone})::date)::float8 AS days,
            coalesce(sum(oi.qty), 0)::float8 AS units
     FROM orders o
     LEFT JOIN order_items oi ON oi.order_id = o.id

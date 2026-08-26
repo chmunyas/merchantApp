@@ -1,22 +1,13 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 
-import type { StaffMember } from "@/components/merchant/features/types";
 import {
-  ensureMerchantDemoData,
-  loadMerchantSnapshot,
   resetTenant,
   setCurrentVenueId,
   setVenues,
-} from "@/lib/merchant-dashboard";
+} from "@/lib/tenant-store";
+import type { AppRole } from "@/lib/tenancy";
 
-export type UserRole =
-  | "admin"
-  | "merchant"
-  | "manager"
-  | "supervisor"
-  | "staff"
-  | "customer"
-  | "reseller_admin";
+export type UserRole = AppRole;
 
 export type AuthUser = {
   id: string;
@@ -84,13 +75,22 @@ function writeUser(key: string, user: AuthUser | null) {
 const JWT_KEY = "pesaswap.auth.jwt";
 
 export function getToken(): string | null {
-  return canUseStorage() ? localStorage.getItem(JWT_KEY) : null;
+  if (!canUseStorage()) return null;
+  const session = window.sessionStorage?.getItem(JWT_KEY) ?? null;
+  if (session) return session;
+  const legacy = localStorage.getItem(JWT_KEY);
+  if (legacy && window.sessionStorage) {
+    window.sessionStorage.setItem(JWT_KEY, legacy);
+    localStorage.removeItem(JWT_KEY);
+  }
+  return legacy;
 }
 
 function setToken(token: string | null): void {
   if (!canUseStorage()) return;
-  if (token) localStorage.setItem(JWT_KEY, token);
-  else localStorage.removeItem(JWT_KEY);
+  if (token) window.sessionStorage?.setItem(JWT_KEY, token);
+  else window.sessionStorage?.removeItem(JWT_KEY);
+  localStorage.removeItem(JWT_KEY);
   // The token is the source of tenant scope, so anything reacting to auth (the
   // demo-venue banner, useDemoAuth) must re-evaluate when it changes — including
   // the silent anonymous-session write that previously fired no event.
@@ -135,6 +135,19 @@ export function isDemoSession(token: string | null = getToken()): boolean {
   if (!claims) return false;
   if (claims.role === "admin") return false;
   return !claims.venue;
+}
+
+export function hasAuthoritativeVenueSession(
+  token: string | null = getToken(),
+): boolean {
+  const claims = decodeTokenClaims(token);
+  return Boolean(
+    claims?.venue &&
+      claims.venue !== "main" &&
+      ["staff", "supervisor", "manager", "merchant"].includes(
+        String(claims.role ?? ""),
+      ),
+  );
 }
 
 // Pin the browser's active tenant to the logged-in merchant's own venue, so the
@@ -347,18 +360,35 @@ export async function signup(input: {
 
 // Staff PIN login: verify a PIN against the staff table and store a real staff
 // JWT (role=staff, venue + staff_id) so authFetch works for staff.
-export async function staffLogin(pin: string): Promise<AuthUser | null> {
+export type StaffLoginResult =
+  | { user: AuthUser }
+  | { error: string; status: number; retryAfter?: number; resetRequired?: boolean };
+
+export async function staffLogin(input: {
+  venue: string;
+  account: string;
+  pin: string;
+}): Promise<StaffLoginResult> {
   try {
     const res = await fetch("/api/auth/staff-login", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ pin }),
+      body: JSON.stringify(input),
     });
-    if (!res.ok) return null;
-    const data = (await res.json()) as {
-      token: string;
-      user: { name?: string; venue?: string; staffId?: string };
+    const data = (await res.json().catch(() => ({}))) as {
+      token?: string;
+      user?: { name?: string; venue?: string; staffId?: string };
+      error?: string;
+      resetRequired?: boolean;
     };
+    if (!res.ok || !data.token || !data.user) {
+      return {
+        error: data.error ?? "Invalid credentials.",
+        status: res.status,
+        retryAfter: Number(res.headers.get("retry-after")) || undefined,
+        resetRequired: data.resetRequired,
+      };
+    }
     setToken(data.token);
     applyTenant(data.user.venue, data.user.name ?? "");
     const user: AuthUser = {
@@ -369,46 +399,9 @@ export async function staffLogin(pin: string): Promise<AuthUser | null> {
       merchantId: data.user.venue,
     };
     writeUser(DEMO_AUTH_KEY, user);
-    return user;
+    return { user };
   } catch {
-    return null;
-  }
-}
-
-// Multi-venue staff: the stores this staff member is assigned to (linked by their
-// phone across per-venue staff rows).
-export type StaffVenue = { id: string; name: string; current: boolean };
-
-export async function staffMyVenues(): Promise<StaffVenue[]> {
-  try {
-    const res = await authFetch("/api/staff/my-venues");
-    if (!res.ok) return [];
-    const data = (await res.json()) as { venues?: StaffVenue[] };
-    return data.venues ?? [];
-  } catch {
-    return [];
-  }
-}
-
-// Switch the staff session to another assigned store (server re-mints the staff
-// JWT for that store's staff row). Caller reloads to re-scope every panel.
-export async function staffSwitchVenue(venue: string): Promise<boolean> {
-  try {
-    const res = await authFetch("/api/auth/staff-switch-venue", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ venue }),
-    });
-    if (!res.ok) return false;
-    const data = (await res.json()) as {
-      token?: string;
-      user?: { venue?: string; name?: string };
-    };
-    if (data.token) setToken(data.token);
-    if (data.user?.venue) applyTenant(data.user.venue, data.user.name ?? "");
-    return true;
-  } catch {
-    return false;
+    return { error: "Network error. Please try again.", status: 0 };
   }
 }
 
@@ -629,6 +622,32 @@ export async function chainRollup(): Promise<{
   }
 }
 
+// Sandbox only: adopt the configured test account. The server refuses this
+// outside sandbox/development, so the fetch simply 404s elsewhere.
+async function adoptSandboxSession(): Promise<boolean> {
+  try {
+    const res = await fetch("/api/auth/sandbox-session", { method: "POST" });
+    if (!res.ok) return false;
+    const data = (await res.json()) as {
+      token?: string;
+      user?: { email: string; name?: string; role?: string; venue?: string | null };
+    };
+    if (!data.token || !data.user?.venue) return false;
+    setToken(data.token);
+    applyTenant(data.user.venue, data.user.name ?? "");
+    writeUser(DEMO_AUTH_KEY, {
+      id: data.user.email,
+      name: data.user.name ?? data.user.email,
+      email: data.user.email,
+      role: (data.user.role as UserRole) ?? "merchant",
+      merchantId: data.user.venue,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Bootstrap a dashboard session token. The SPA still uses demo-role logins that
 // carry no password, so protected endpoints would 401 without this. Skips when a
 // real token already exists (admin email / Google login) and no-ops silently in
@@ -637,6 +656,9 @@ export async function ensureSessionToken(
   role: UserRole = "merchant",
 ): Promise<void> {
   if (getToken()) return;
+  // Preferred in sandbox: a venue-bound account. The anonymous fallback below
+  // carries no venue claim, so every tenant endpoint 403s on it.
+  if (await adoptSandboxSession()) return;
   try {
     const res = await fetch("/api/auth/session", {
       method: "POST",
@@ -770,30 +792,13 @@ export function demoLogin(
       };
       break;
     case "staff": {
-      ensureMerchantDemoData();
-      const snapshot = loadMerchantSnapshot();
-      const staff = options.staffId
-        ? snapshot.staffMembers.find(
-            (m: StaffMember) => m.id === options.staffId,
-          )
-        : snapshot.staffMembers[0];
-      user = staff
-        ? {
-            id: staff.id,
-            name: staff.name,
-            phone: staff.phone,
-            role: "staff",
-            merchantId: "demo-merchant",
-            staffId: staff.id,
-            avatar: staff.avatar,
-          }
-        : {
-            id: "demo-staff",
-            name: "Demo Staff",
-            role: "staff",
-            merchantId: "demo-merchant",
-            staffId: options.staffId,
-          };
+      user = {
+        id: options.staffId ?? "demo-staff",
+        name: "Demo Staff",
+        role: "staff",
+        merchantId: "demo-merchant",
+        staffId: options.staffId ?? "demo-staff",
+      };
       break;
     }
     default:
@@ -809,22 +814,6 @@ export function demoLogout(): void {
   clearStaffSession();
   setToken(null);
   resetTenant();
-}
-
-export function getDemoStaffByPin(pin: string): AuthUser | null {
-  ensureMerchantDemoData();
-  const snapshot = loadMerchantSnapshot();
-  const staff = snapshot.staffMembers.find((m: StaffMember) => m.pin === pin);
-  if (!staff) return null;
-  return {
-    id: staff.id,
-    name: staff.name,
-    phone: staff.phone,
-    role: "staff",
-    merchantId: "demo-merchant",
-    staffId: staff.id,
-    avatar: staff.avatar,
-  };
 }
 
 export function useAuth(): AuthContextValue {

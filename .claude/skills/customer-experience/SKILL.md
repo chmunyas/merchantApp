@@ -22,10 +22,12 @@ The journey (and where each step lives today):
    resolves via `GET /api/qr/:code` (`src/api/qr.ts:188`). QR `kind` distinguishes a
    **table** code (joined to `dining_tables`) from a venue/area code
    (`src/api/qr.ts:66-94, 191-237`).
-2. **Order** — build a cart and submit: `POST /api/qr/:code/order`
-   (`src/api/qr.ts:97`). **Server-authoritative total** — the amount is recomputed
-   server-side from validated items, never trusted from the client.
-3. **Pay** — `/pay` (`src/routes/pay.tsx`). Short, server-bound links:
+2. **Order** — build a cart and submit stable menu item IDs + quantities to
+   `POST /api/qr/:code/order`. The server resolves names/prices/availability and
+   snapshots them; no client price is accepted.
+3. **Pay** — `/pay` (`src/routes/pay.tsx`). Short, server-bound links mint a
+   single-use payment intent binding the exact tenant/amount/source before
+   `/api/payments/create` can move money:
    `/pay?o=<token>` (QR order → `GET /api/qr/pay/:token`, `src/api/qr.ts:152`) and
    `/pay?i=INV-XXX` (invoice → `/api/invoices/payinfo`) and `/pay?r=<token>`
    (pay-link → `/api/pay-links/:token`). Tap&Go, split and booking-deposit flows
@@ -58,6 +60,7 @@ The journey (and where each step lives today):
    `POST /api/portal/:token/redeem` (`src/api/portal.ts`).
 
 ## Key files (customer-facing)
+
 - `src/routes/q.$code.tsx` + `src/api/qr.ts` — scan-to-order (unified QR) + guest
   services (Book a table, Ask us, Request the bill → `/api/enquiries`) + remembered
   phone (localStorage) so returning guests are recognised.
@@ -74,6 +77,7 @@ The journey (and where each step lives today):
 - `dining_tables` + QR `kind` — table vs venue/area identity.
 
 ## Conventions
+
 - **Amounts are always server-authoritative.** The client never sets the price to
   charge; `/pay` resolves it from `?o=`/`?i=`/`?r=` server-side. Never trust a URL
   amount.
@@ -90,6 +94,7 @@ The journey (and where each step lives today):
   sees are whole KES — convert at the boundary.
 
 ## Guidelines (design for seamlessness)
+
 - **One continuous flow, not separate pages.** Prefer scan → order → pay → receipt
   without a manual page/token hop or re-entry of the phone.
 - **Carry context forward:** table, server (`staff_id`), phone and order token should
@@ -100,6 +105,7 @@ The journey (and where each step lives today):
   earned before charging.
 
 ## Current gaps → roadmap (build these to close the seamless loop)
+
 1. **Self-service split-pay (DONE):** guests split a bill on `/pay` (evenly /
    by-item / custom) and each pays their share against one order balance; the
    server clamps every charge to the remaining balance and settles only when the
@@ -130,14 +136,35 @@ The journey (and where each step lives today):
    continuous SPA journey (`src/routes/q.$code.tsx`, `src/routes/pay.tsx`).
 
 ## Related skills
+
 `unified-qr` (scan → order + pay + enrol + receipt), `orders-kitchen`, `payments`,
 `tips`, `crm-loyalty`, `customer-portal`, `omnichannel-agent` (chat-driven ordering
-+ bill + handoff). This skill is the umbrella that keeps those steps a single guest
-journey.
 
-## Definition of Done — full parity
-A feature is not done until it has **full parity across all three runtime tiers** —
-validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
-the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
-`db/*.sql` migration applied to dev, prod-local **and** Neon. See
-`.claude/DEPLOYMENT-PARITY.md`.
+- bill + handoff). This skill is the umbrella that keeps those steps a single guest
+  journey.
+
+<!-- PRODUCTION_GO_LIVE_CONTRACT:START -->
+<!-- PRODUCTION_GO_LIVE_DOMAIN: customer-experience -->
+
+## Production go-live ownership
+
+This skill inherits the [Production Go-Live Capability Contract](../../../docs/PRODUCTION-GO-LIVE-CAPABILITIES.md)
+(`PRODUCTION_GO_LIVE_CONTRACT: v1`). The
+[Global Enterprise Roadmap](../../../docs/GLOBAL-ENTERPRISE-ROADMAP.md) defines delivery order, and the
+[Global Readiness Review](../../../docs/GLOBAL-READINESS-REVIEW.md) records the current verdict.
+
+It owns production acceptance for:
+
+- The complete guest journey from discovery or QR scan through accurate browse, booking or order, split, tip, server-bound payment, status, receipt, loyalty, self-service, and human help.
+- Accessible mobile-first success, denial, duplicate, timeout, offline/degraded, resume, cancellation, privacy, and recovery behavior without exposing internal operator controls.
+
+For every change in this domain:
+
+- Preserve default-deny tenant, role, scope, capability, sensitivity, and audit policy.
+- Test the applicable owner, manager, supervisor, staff, finance, customer, and partner journey, including denial, concurrency, duplicate, timeout, and recovery paths.
+- Apply financial, API/SDK, device, accessibility, localization, observability, security, data-governance, and disaster-recovery gates wherever the change crosses those boundaries.
+- Report only the evidence produced. Use designed, source complete, environment verified, production ready, and certified exactly as defined by the contract.
+
+A capability is not production-ready until the applicable checklist passes in dev, prod-local, sandbox, and production with retained evidence. Follow the [deployment parity procedure](../../DEPLOYMENT-PARITY.md); never infer live readiness from source tests or a single environment.
+
+<!-- PRODUCTION_GO_LIVE_CONTRACT:END -->

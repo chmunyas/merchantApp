@@ -1,4 +1,4 @@
-import { RefreshCw, Wifi, WifiOff, AlertTriangle, X, Clock3 } from "lucide-react";
+import { Wifi, WifiOff, AlertTriangle, X, Clock3 } from "lucide-react";
 
 import { useOfflineQueue } from "@/lib/use-offline-queue";
 import type { QueuedCharge } from "@/lib/offline-queue";
@@ -17,25 +17,16 @@ function money(minor: number): string {
 }
 
 function itemStatus(c: QueuedCharge): { label: string; tone: string } {
-  if (c.attempts > 0 && c.nextRetryAt && c.nextRetryAt > Date.now()) {
-    const secs = Math.max(1, Math.round((c.nextRetryAt - Date.now()) / 1000));
-    return {
-      label: `Retry in ${secs}s${c.lastError ? ` · ${c.lastError}` : ""}`,
-      tone: "text-amber-700 bg-amber-50 border-amber-200",
-    };
-  }
   return {
-    label: "Pending sync",
+    label: "Draft — review online",
     tone: "text-sky-700 bg-sky-50 border-sky-200",
   };
 }
 
-// The sync cockpit: clear, honest status for store-and-forward sales. It shows
-// online/offline, how many sales are queued, and lets the merchant force a sync
-// or retry/discard a stuck one. Renders nothing when online with an empty queue.
+// Offline drafts never move money automatically; an operator reviews and starts
+// a fresh intent online or discards the draft.
 export function SyncCockpit() {
-  const { online, items, stats, syncing, flush, remove, retry } =
-    useOfflineQueue();
+  const { online, items, stats, remove } = useOfflineQueue();
 
   if (online && stats.total === 0) return null;
 
@@ -50,34 +41,23 @@ export function SyncCockpit() {
           )}
           <div>
             <p className="text-sm font-bold leading-tight">
-              {online ? "Sync status" : "Offline mode"}
+              {online ? "Offline drafts" : "Offline mode"}
             </p>
             <p className="text-[11px] text-muted-foreground leading-tight">
               {stats.total === 0
-                ? "All sales synced"
-                : `${stats.total} sale${stats.total > 1 ? "s" : ""} queued`}
-              {stats.failed > 0 ? ` · ${stats.failed} retrying` : ""}
+                ? "No drafts awaiting review"
+                : `${stats.total} draft${stats.total > 1 ? "s" : ""} awaiting review`}
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => void flush()}
-          disabled={!online || syncing || stats.total === 0}
-          className="flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-semibold disabled:opacity-40"
-        >
-          <RefreshCw className={`size-3.5 ${syncing ? "animate-spin" : ""}`} />
-          {syncing ? "Syncing…" : "Sync now"}
-        </button>
       </div>
 
       {!online && (
         <div className="flex items-start gap-2 rounded-xl bg-amber-50 border border-amber-200 p-2.5">
           <AlertTriangle className="size-4 text-amber-600 shrink-0 mt-0.5" />
           <p className="text-[11px] text-amber-800 leading-snug">
-            You&apos;re offline. Sales are saved securely on this device and will
-            sync automatically when you&apos;re back online. A queued sale isn&apos;t
-            settled until it syncs.
+            You&apos;re offline. Drafts stay on this device and never charge a
+            customer automatically. Reconnect and review each payment.
           </p>
         </div>
       )}
@@ -109,15 +89,6 @@ export function SyncCockpit() {
                     >
                       {st.label}
                     </span>
-                    {c.attempts > 0 && online && (
-                      <button
-                        type="button"
-                        onClick={() => retry(c.id)}
-                        className="rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground"
-                      >
-                        Retry
-                      </button>
-                    )}
                     <button
                       type="button"
                       onClick={() => remove(c.id)}
@@ -153,7 +124,7 @@ export function SyncStatusPill({ onClick }: { onClick?: () => void }) {
     >
       {online ? <Wifi className="size-3" /> : <WifiOff className="size-3" />}
       {online
-        ? `${stats.total} to sync`
+        ? `${stats.total} draft${stats.total === 1 ? "" : "s"}`
         : stats.total > 0
           ? `Offline · ${stats.total}`
           : "Offline"}

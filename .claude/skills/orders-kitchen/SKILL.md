@@ -9,16 +9,22 @@ description: >-
 
 # Orders & kitchen
 
-Move orders from demo `localStorage` to a real backend so multiple devices + the
-kitchen stay in sync, and staff can take payment against an order.
+Orders have a server-authoritative backend so multiple devices and the kitchen
+can converge and staff can request payment against an order. Authenticated KDS
+and `/pesaswapApp` use `/api/orders` without substituting browser records;
+`SyncedTableServiceView` shows refund-aware collected/remaining balances,
+advances status through the API and mints `/api/orders/:id/pay-link`. The legacy
+local table planner is demo-only; legacy public `/table` pages remain migration
+debt and are not the unified-QR production journey.
 
 ## Model (server-authoritative)
+
 - `orders(id, venue_id, table_id, staff_id, status, total, currency, created_at,
-  pay_token, pay_expires_at, paid_at, customer_phone, fulfillment_type,
-  scheduled_at)` — `db/18-orders.sql` + `db/28-qr-pay-token.sql` (payment binding)
-  + `db/43-order-fulfillment.sql` (**pre-order**: `fulfillment_type`
-  dine_in|collection|delivery, default dine_in; `scheduled_at` NULL = ASAP).
-  Helpers in `src/lib/fulfillment.ts` (`normalizeFulfillment`, `parseScheduledAt`).
+pay_token, pay_expires_at, paid_at, customer_phone, fulfillment_type,
+scheduled_at)` — `db/18-orders.sql` + `db/28-qr-pay-token.sql` (payment binding)
+  - `db/43-order-fulfillment.sql` (**pre-order**: `fulfillment_type`
+    dine_in|collection|delivery, default dine_in; `scheduled_at` NULL = ASAP).
+    Helpers in `src/lib/fulfillment.ts` (`normalizeFulfillment`, `parseScheduledAt`).
 - `order_items(id, order_id, name, qty, price, notes)`.
 - API `/api/orders`: list (venue+status), create, `PATCH /:id` (status,
   `pickupAt`, `fulfilment`). Transitioning to `ready` sends a one-shot "order
@@ -34,11 +40,15 @@ kitchen stay in sync, and staff can take payment against an order.
   the order via `recordLedger` when cumulative payments cover the total.
 - **Payment:** an order is charged via the pay flow; `recordLedger` stamps
   `orders.paid_at` on success (one-time-use). See `payments` + `unified-qr`.
+- **Balance authority:** migrations 85–87 provide the final
+  `order_paid_minor(venue, order)`. It derives refunds from immutable payment
+  snapshots/reversals; QR, split locks, order links, notifications, walkouts and
+  financial consumers all use it so one balance survives consumer reordering.
 - Realtime: keep the BroadcastChannel for UX; the DB is the source of truth.
 - **Agent (staff scope):** `open_orders`, `mark_order_ready`, `send_bill(table)`.
 - **Customer notifications (fulfillment-aware):** on a REAL status change to
   `accepted` (acknowledged) / `preparing` (processed) / `ready`, `PATCH
-  /api/orders/:id` messages the order's customer on their channel — consent-checked
+/api/orders/:id` messages the order's customer on their channel — consent-checked
   (`isSuppressed`) + logged to the conversation timeline — with eat-in vs
   collection wording and the scheduled time. Copy is pure in
   `src/lib/order-notify.ts` (`orderStatusMessage`); change-detection makes it
@@ -46,13 +56,33 @@ kitchen stay in sync, and staff can take payment against an order.
   `get_order_status` tool answers via `orderStatusReply` (venue + phone scoped).
 
 ## Guardrails
+
 - Venue-pinned + authed for staff writes; link `staff_id` for attribution/tips.
 - Status is a fixed lifecycle: `new→accepted→preparing→ready→served|cancelled`.
 - Amounts minor units, KES default. See `staff-operations`, `tips`, `payments`.
 
-## Definition of Done — full parity
-A feature is not done until it has **full parity across all three runtime tiers** —
-validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
-the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
-`db/*.sql` migration applied to dev, prod-local **and** Neon. See
-`.claude/DEPLOYMENT-PARITY.md`.
+<!-- PRODUCTION_GO_LIVE_CONTRACT:START -->
+<!-- PRODUCTION_GO_LIVE_DOMAIN: orders-kitchen -->
+
+## Production go-live ownership
+
+This skill inherits the [Production Go-Live Capability Contract](../../../docs/PRODUCTION-GO-LIVE-CAPABILITIES.md)
+(`PRODUCTION_GO_LIVE_CONTRACT: v1`). The
+[Global Enterprise Roadmap](../../../docs/GLOBAL-ENTERPRISE-ROADMAP.md) defines delivery order, and the
+[Global Readiness Review](../../../docs/GLOBAL-READINESS-REVIEW.md) records the current verdict.
+
+It owns production acceptance for:
+
+- Server-authoritative table, counter, pickup and delivery orders plus kitchen tickets, with validated create, assign, hold, fire, accept, prepare, ready, serve, transfer, split, fulfil, cancel, void, and recovery transitions.
+- Concurrent-device consistency, item and price snapshots, idempotency, permissions, payment and stock linkage, printer/display degradation, audit, and trading-day close behavior.
+
+For every change in this domain:
+
+- Preserve default-deny tenant, role, scope, capability, sensitivity, and audit policy.
+- Test the applicable owner, manager, supervisor, staff, finance, customer, and partner journey, including denial, concurrency, duplicate, timeout, and recovery paths.
+- Apply financial, API/SDK, device, accessibility, localization, observability, security, data-governance, and disaster-recovery gates wherever the change crosses those boundaries.
+- Report only the evidence produced. Use designed, source complete, environment verified, production ready, and certified exactly as defined by the contract.
+
+A capability is not production-ready until the applicable checklist passes in dev, prod-local, sandbox, and production with retained evidence. Follow the [deployment parity procedure](../../DEPLOYMENT-PARITY.md); never infer live readiness from source tests or a single environment.
+
+<!-- PRODUCTION_GO_LIVE_CONTRACT:END -->

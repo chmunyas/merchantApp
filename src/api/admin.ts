@@ -32,7 +32,7 @@ export async function handleAdminRoute(
   if (payload.role !== "admin") return json({ error: "forbidden" }, 403);
 
   // Lightweight probe the admin portal calls to verify the session server-side.
-  if (url.pathname === "/api/admin/session") {
+  if (url.pathname === "/api/admin/session" && request.method === "GET") {
     return json({ admin: true });
   }
 

@@ -25,8 +25,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { LoadFailure } from "@/components/LoadFailure";
 import { authFetch } from "@/lib/auth";
-import { getCurrentVenueId } from "@/lib/merchant-dashboard";
+import { getCurrentVenueId } from "@/lib/tenant-store";
 import { enablePush } from "@/lib/push-client";
 import { cn } from "@/lib/utils";
 
@@ -93,6 +94,7 @@ function DashboardInboxPage() {
   const venue = useMemo(() => getCurrentVenueId(), []);
   const [health, setHealth] = useState<Health | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [inboxFailed, setInboxFailed] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [reply, setReply] = useState("");
@@ -140,20 +142,25 @@ function DashboardInboxPage() {
   async function loadConversations(selectFirst = false) {
     try {
       const res = await authFetch(`/api/whatsapp/conversations?venue=${venue}`);
+      // An error body parsed as JSON threw and was caught below, which rendered
+      // an outage as "no conversations".
+      if (!res.ok) throw new Error(`conversations failed: ${res.status}`);
       const data = (await res.json()) as { conversations?: Conversation[] };
       const list = data.conversations ?? [];
       setConversations(list);
+      setInboxFailed(false);
       if (selectFirst && !selectedId && list.length > 0) {
         setSelectedId(list[0].id);
       }
     } catch {
       setConversations([]);
+      setInboxFailed(true);
     }
   }
 
   async function loadMessages(conversationId: string) {
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `/api/whatsapp/messages?conversation=${conversationId}`,
       );
       const data = (await res.json()) as { messages?: Message[] };
@@ -195,7 +202,10 @@ function DashboardInboxPage() {
     try {
       const res = await authFetch("/api/whatsapp/reply", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": `reply:${selected.id}:${reply}`,
+        },
         body: JSON.stringify({
           conversation: selected.id,
           to: selected.wa_id,
@@ -389,7 +399,14 @@ function DashboardInboxPage() {
                 ))}
               </div>
             )}
-            {visibleConversations.length === 0 ? (
+            {inboxFailed ? (
+              <div className="px-3 py-4">
+                <LoadFailure
+                  what="conversations"
+                  onRetry={() => void loadConversations(true)}
+                />
+              </div>
+            ) : visibleConversations.length === 0 ? (
               <p className="px-3 py-6 text-center text-sm text-muted-foreground">
                 No conversations yet. Simulate one above.
               </p>

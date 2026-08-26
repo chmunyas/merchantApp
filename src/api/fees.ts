@@ -1,8 +1,13 @@
 import { requireAuth } from "@/api/auth";
 import { getSql } from "@/lib/db";
 import { venueFromPayload } from "@/lib/tenancy";
+import { roleAtLeast } from "@/lib/rbac";
+import { tokenHasScope } from "@/lib/api-tokens";
 import {
   DEFAULT_FEE_SCHEDULE,
+  DEFAULT_GUEST_FEE,
+  GUEST_FEE_BENEFITS,
+  GUEST_FEE_OPT_OUT,
   INSTANT_PAYOUT_PERCENT,
   blendedRate,
   computeFee,
@@ -39,11 +44,19 @@ export async function handleFeesRoute(
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
-  // Public: the published schedule (drives the fee calculator + API consumers).
+  // Public: the published schedule (drives the fee calculator + API consumers)
+  // and the guest-side fee policy the checkout explainer renders (A5.5). The
+  // guest fee is published here so the copy AND the amount are server-owned —
+  // the pay page never invents either.
   if (path === "/api/fees/config" && request.method === "GET") {
     return json({
       schedule: DEFAULT_FEE_SCHEDULE,
       instantPayoutPercent: INSTANT_PAYOUT_PERCENT,
+      guestFee: {
+        ...DEFAULT_GUEST_FEE,
+        benefits: GUEST_FEE_BENEFITS,
+        optOut: GUEST_FEE_OPT_OUT,
+      },
       currency: "KES",
     });
   }
@@ -52,6 +65,9 @@ export async function handleFeesRoute(
   if (path === "/api/fees/summary" && request.method === "GET") {
     const payload = await requireAuth(request, env);
     if (!payload) return json({ error: "unauthorized" }, 401);
+    if (!roleAtLeast(payload, "manager") || !tokenHasScope(payload, "payments:read")) {
+      return json({ error: "forbidden" }, 403);
+    }
     const venue = venueFromPayload(payload, url);
     const sql = getSql(env);
     if (!sql) return json({ error: "database not configured" }, 503);
@@ -60,6 +76,8 @@ export async function handleFeesRoute(
       Math.max(Number(url.searchParams.get("days")) || 30, 1),
       365,
     );
+    const currency = String(url.searchParams.get("currency") ?? "KES").toUpperCase();
+    if (currency !== "KES") return json({ error: "Only KES fee estimates are supported." }, 409);
     const since = new Date(Date.now() - days * 86_400_000).toISOString();
 
     let rows: Array<Record<string, unknown>> = [];
@@ -68,7 +86,8 @@ export async function handleFeesRoute(
         SELECT amount, fee_amount, metadata, created_at
         FROM payments
         WHERE venue_id = ${venue}
-          AND status IN ('succeeded','paid','captured') AND kind != 'refund'
+          AND currency = ${currency}
+          AND status IN ('succeeded','paid','captured','partially_refunded','refunded') AND kind != 'refund'
           AND created_at >= ${since}
         ORDER BY created_at DESC
         LIMIT 5000`) as Array<Record<string, unknown>>;
@@ -129,8 +148,13 @@ export async function handleFeesRoute(
 
     return json({
       days,
-      currency: "KES",
+      currency,
+      basis: "schedule-estimate",
       gross: totals.gross,
+      estimatedFees: totals.fees,
+      estimatedNet: totals.net,
+      actualFees: null,
+      actualNet: null,
       fees: totals.fees,
       net: totals.net,
       effectiveRate: totals.rate,

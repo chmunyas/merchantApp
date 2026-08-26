@@ -2,6 +2,8 @@ import { aiEmbed } from "@/lib/ai-providers";
 import { getSql } from "@/lib/db";
 import { searchKb } from "@/lib/kb";
 import { requireAuth, resolveVenue } from "@/api/auth";
+import { roleAtLeast } from "@/lib/rbac";
+import { tokenHasScope } from "@/lib/api-tokens";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,8 +27,12 @@ export async function handleKbRoute(
   if (!path.startsWith("/api/kb")) return null;
 
   if (path === "/api/kb" && request.method === "GET") {
-    if (!(await requireAuth(request, env))) {
+    const payload = await requireAuth(request, env);
+    if (!payload) {
       return json({ error: "unauthorized" }, 401);
+    }
+    if (!roleAtLeast(payload, "manager") || !tokenHasScope(payload, "knowledge:read")) {
+      return json({ error: "forbidden" }, 403);
     }
     const sql = getSql(env);
     if (!sql) return json({ error: "database not configured" }, 503);
@@ -38,8 +44,12 @@ export async function handleKbRoute(
   }
 
   if (path === "/api/kb" && request.method === "POST") {
-    if (!(await requireAuth(request, env))) {
+    const payload = await requireAuth(request, env);
+    if (!payload) {
       return json({ error: "unauthorized" }, 401);
+    }
+    if (!roleAtLeast(payload, "manager") || !tokenHasScope(payload, "knowledge:write")) {
+      return json({ error: "forbidden" }, 403);
     }
     const sql = getSql(env);
     if (!sql) return json({ error: "database not configured" }, 503);
@@ -64,8 +74,12 @@ export async function handleKbRoute(
   }
 
   if (path === "/api/kb/search" && request.method === "POST") {
-    if (!(await requireAuth(request, env))) {
+    const payload = await requireAuth(request, env);
+    if (!payload) {
       return json({ error: "unauthorized" }, 401);
+    }
+    if (!roleAtLeast(payload, "manager") || !tokenHasScope(payload, "knowledge:read")) {
+      return json({ error: "forbidden" }, 403);
     }
     const venue = await resolveVenue(request, env, url);
     const body = (await request.json()) as { venue?: string; query?: string };
@@ -73,14 +87,19 @@ export async function handleKbRoute(
     return json({ hits });
   }
 
-  if (path.startsWith("/api/kb/") && request.method === "DELETE") {
-    if (!(await requireAuth(request, env))) {
+  const deleteMatch = path.match(/^\/api\/kb\/([^/]+)$/);
+  if (deleteMatch && request.method === "DELETE") {
+    const payload = await requireAuth(request, env);
+    if (!payload) {
       return json({ error: "unauthorized" }, 401);
+    }
+    if (!roleAtLeast(payload, "manager") || !tokenHasScope(payload, "knowledge:write")) {
+      return json({ error: "forbidden" }, 403);
     }
     const sql = getSql(env);
     if (!sql) return json({ error: "database not configured" }, 503);
     const venue = await resolveVenue(request, env, url);
-    const id = path.slice("/api/kb/".length);
+    const id = deleteMatch[1];
     await sql`DELETE FROM kb_articles WHERE id = ${id} AND venue_id = ${venue}`;
     return json({ ok: true });
   }

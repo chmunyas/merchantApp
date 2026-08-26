@@ -19,6 +19,15 @@ services:
       # Shared secret the app presents to the bridge's /send. Must match the
       # bridge's BRIDGE_TOKEN. Set WHATSAPP_BRIDGE_TOKEN in .env (see .env.example).
       - WHATSAPP_BRIDGE_TOKEN=${WHATSAPP_BRIDGE_TOKEN:-}
+      # Explicitly enable development-only simulators/OTP echo. Production and
+      # prod-local use wrangler.toml's fail-closed production profile instead.
+      - APP_ENV=development
+      - ALLOW_SIMULATORS=1
+      - AUTH_OTP_DEBUG=1
+      # Land testers on a real, venue-bound merchant. The anonymous fallback
+      # session carries no venue claim, so every tenant endpoint 403s on it.
+      - SANDBOX_AUTO_LOGIN=1
+      - SANDBOX_AUTO_LOGIN_EMAIL=merchant@demo.com
       # Shared secret guarding the cron sweeps (invoicing/run, sequences/run) so
       # only the bridge (which presents x-cron-secret) can fire them.
       - CRON_SECRET=${CRON_SECRET:-}
@@ -45,9 +54,13 @@ services:
       - APP_BASE_URL=http://merchant-app:8080
       - BRIDGE_PORT=8090
       - BRIDGE_VENUE=main
-      # Shared secret required on /send, /qr, /logout once the bridge is exposed
+      # Shared secret required on every bridge-control route and sent back to the
+      # app as x-webhook-secret for bridge/inbound.
       # publicly (see the cloudflared service). Unset => open (internal-only).
       - BRIDGE_TOKEN=${WHATSAPP_BRIDGE_TOKEN:-}
+      # Authenticates Telegram updates that the polling bridge forwards to the
+      # app. Use the same value on the Worker when polling a deployed app.
+      - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET:-}
       # Presented as x-cron-secret when calling the app's invoicing/run +
       # sequences/run sweeps (must match the app's CRON_SECRET).
       - CRON_SECRET=${CRON_SECRET:-}

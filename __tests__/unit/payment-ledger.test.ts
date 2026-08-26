@@ -9,8 +9,13 @@ const h = vi.hoisted(() => {
   const sql = ((strings: TemplateStringsArray, ...values: unknown[]) => {
     calls.push({ text: strings.join("?"), values });
     return Promise.resolve([] as unknown[]);
-  }) as unknown as { (s: TemplateStringsArray, ...v: unknown[]): Promise<unknown[]>; json: (v: unknown) => unknown };
+  }) as unknown as {
+    (s: TemplateStringsArray, ...v: unknown[]): Promise<unknown[]>;
+    json: (v: unknown) => unknown;
+    begin: <T>(fn: (tx: typeof sql) => Promise<T>) => Promise<T>;
+  };
   sql.json = (v: unknown) => v;
+  sql.begin = async <T>(fn: (tx: typeof sql) => Promise<T>) => fn(sql);
   return { calls, sql };
 });
 
@@ -43,7 +48,9 @@ function webhookReq(body: string, headers: Record<string, string>): Request {
 // The ledger INSERT is the one carrying the payments column list (unique to
 // recordLedger — distinct from payment_events audit rows).
 function ledgerInserts() {
-  return h.calls.filter((c) => /tip_amount, staff_id, initiator/i.test(c.text));
+  return h.calls.filter(
+    (c) => /INSERT INTO payments/i.test(c.text) && /tip_amount, staff_id, initiator/i.test(c.text),
+  );
 }
 function metaOf(rec: { values: unknown[] }): Record<string, unknown> | undefined {
   return rec.values.find(

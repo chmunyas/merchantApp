@@ -19,6 +19,7 @@ import {
   demoLogin,
   getDefaultRouteForRole,
   googleLogin,
+  ensureSessionToken,
   isDemoMode,
   jwtLogin,
   requestOtp,
@@ -176,6 +177,7 @@ function SignInPage() {
       setView("login");
       return;
     }
+    await ensureSessionToken(role);
     demoLogin(role);
     void navigate({ to: getDefaultRouteForRole(role) });
   }
@@ -353,7 +355,6 @@ function SignInPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   className="h-11 rounded-xl"
                   placeholder="you@business.com"
-                  autoFocus
                 />
               </div>
               {error && (
@@ -425,7 +426,6 @@ function SignInPage() {
                 onChange={(e) => setSsoSlug(e.target.value)}
                 className="h-11 rounded-xl"
                 placeholder="your-organization"
-                autoFocus
               />
               {error && (
                 <p className="rounded-lg bg-red-50 border border-red-200 p-2 text-sm text-red-600">
@@ -485,7 +485,6 @@ function SignInPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   className="h-11 rounded-xl"
                   placeholder="you@business.com"
-                  autoFocus
                 />
                 <TurnstileWidget onToken={setCaptcha} />
                 {error && (
@@ -510,14 +509,14 @@ function SignInPage() {
                   className="h-11 rounded-xl text-center text-lg tracking-[0.4em]"
                   placeholder="000000"
                   maxLength={6}
-                  autoFocus
                 />
                 {needTotp && (
                   <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-600">
+                    <label htmlFor="totp-code" className="text-xs font-medium text-slate-600">
                       Authenticator code (2FA)
                     </label>
                     <Input
+                      id="totp-code"
                       inputMode="numeric"
                       value={totp}
                       onChange={(e) => setTotp(e.target.value)}
@@ -608,7 +607,6 @@ function SignInPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   className="h-11 rounded-xl"
                   placeholder="you@business.com"
-                  autoFocus
                 />
               </div>
               <div className="space-y-2">
@@ -655,7 +653,6 @@ function SignInPage() {
                     className="h-11 rounded-xl text-center tracking-[0.3em]"
                     placeholder="000000"
                     maxLength={6}
-                    autoFocus
                   />
                 </div>
               )}
@@ -849,7 +846,7 @@ function SignInPage() {
 
         <div className="mt-4 rounded-xl bg-white/60 p-4 text-center text-xs text-slate-500">
           <UserCheck className="mx-auto mb-1 h-4 w-4" />
-          Staff PIN: <span className="font-mono font-bold">1234</span>
+          Staff sign-in requires your venue ID, account, and manager-issued PIN.
         </div>
       </div>
     </div>

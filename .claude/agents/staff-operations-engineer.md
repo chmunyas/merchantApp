@@ -19,6 +19,7 @@ Start by reading `.claude/skills/staff-operations/SKILL.md`, then the
 `src/lib/{agent,inbound,realtime,pesaswap-payments,push}.ts`, `db/16-staff.sql`.
 
 How you work:
+
 - Follow the server-authoritative **per-row** pattern from `staff` (a venue-scoped
   table + `/api/<entity>` CRUD with `requireAuth` + `venueFromPayload`) when
   migrating orders/tips off `localStorage`/`merchant_state`.
@@ -37,4 +38,28 @@ How you work:
 Guardrails: keep tenant isolation (pin venue to the token); don't regress the
 public pay-link flow; don't reintroduce a module-level DB client on Workers.
 
-Definition of Done: full parity — typecheck + unit tests, migrations applied to dev/prod-local/Neon, and deploy + verify on localhost:8080, localhost:8787 and Cloudflare production before claiming done. See `.claude/DEPLOYMENT-PARITY.md`.
+<!-- PRODUCTION_GO_LIVE_CONTRACT:START -->
+<!-- PRODUCTION_GO_LIVE_DOMAIN: staff-operations-engineer.md -->
+
+## Production go-live ownership
+
+This agent inherits the [Production Go-Live Capability Contract](../../docs/PRODUCTION-GO-LIVE-CAPABILITIES.md)
+(`PRODUCTION_GO_LIVE_CONTRACT: v1`). The
+[Global Enterprise Roadmap](../../docs/GLOBAL-ENTERPRISE-ROADMAP.md) defines delivery order, and the
+[Global Readiness Review](../../docs/GLOBAL-READINESS-REVIEW.md) records the current verdict.
+
+It owns production acceptance for:
+
+- Individual staff authentication, authoritative venue assignment, role-appropriate orders, kitchen, tables, customers, bills, payments, tips, shifts, notifications, handover, and offline/degraded recovery.
+- No shared credentials or browser-local authority, restricted cost and finance visibility, fast session lock/revocation, managed-device behavior, audit attribution, and supervisor/manager escalation.
+
+For every change in this domain:
+
+- Preserve default-deny tenant, role, scope, capability, sensitivity, and audit policy.
+- Test the applicable owner, manager, supervisor, staff, finance, customer, and partner journey, including denial, concurrency, duplicate, timeout, and recovery paths.
+- Apply financial, API/SDK, device, accessibility, localization, observability, security, data-governance, and disaster-recovery gates wherever the change crosses those boundaries.
+- Report only the evidence produced. Use designed, source complete, environment verified, production ready, and certified exactly as defined by the contract.
+
+A capability is not production-ready until the applicable checklist passes in dev, prod-local, sandbox, and production with retained evidence. Follow the [deployment parity procedure](../DEPLOYMENT-PARITY.md); never infer live readiness from source tests or a single environment.
+
+<!-- PRODUCTION_GO_LIVE_CONTRACT:END -->

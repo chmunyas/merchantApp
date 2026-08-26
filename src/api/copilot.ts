@@ -1,4 +1,4 @@
-import { requireAuth } from "@/api/auth";
+import { requireHumanAuth } from "@/api/auth";
 import { runAgent } from "@/lib/agent";
 import { canSeeSensitive, runCopilotTools } from "@/lib/copilot-tools";
 import { getSql } from "@/lib/db";
@@ -105,7 +105,7 @@ export async function handleCopilotRoute(
   if (url.pathname !== "/api/copilot" || request.method !== "POST") return null;
 
   try {
-    const payload = await requireAuth(request, env);
+    const payload = await requireHumanAuth(request, env);
     if (!payload) {
       return json({
         reply: "Please sign in to use the merchant copilot.",

@@ -1,6 +1,6 @@
 import { aiChat } from "@/lib/ai-providers";
-import { getAdapter } from "@/lib/channels";
 import { getSql } from "@/lib/db";
+import { queueOutbound } from "@/lib/outbound-jobs";
 import { createInvoice } from "@/lib/invoices";
 import { searchKb } from "@/lib/kb";
 import { findMenuItem, formatMenu, getMenu } from "@/lib/menu";
@@ -13,6 +13,7 @@ export type AgentContext = {
   role: AgentRole;
   from?: string;
   name?: string;
+  operationKey?: string;
 };
 
 export type AgentResult = {
@@ -220,17 +221,21 @@ export async function runAgent(
         ? parseInt(amountMatch[1].replace(/,/g, ""), 10)
         : 0;
       if (amount > 0) {
-        const invoice = await createInvoice(env, {
-          venue,
-          amount,
+        const link = await createPayLink(env, venue, {
+          amount: amount * 100,
           phone: ctx.from ?? null,
-          customerName: ctx.name ?? null,
+          name: ctx.name ?? null,
+          description: "Customer payment request",
+          kind: "request",
+          idempotencyKey: ctx.operationKey
+            ? `ingress:${ctx.operationKey}:customer-pay-link`
+            : undefined,
         });
-        if (!("error" in invoice)) {
+        if (!("error" in link)) {
           return {
-            reply: `Here's your secure payment link for ${invoice.currency} ${invoice.amount.toLocaleString()}.\n\nTap to pay 👇\n${invoice.payLink}`,
+            reply: `Here's your secure payment link for ${link.currency} ${amount.toLocaleString()}.\n\nTap to pay 👇\n${link.url}`,
             tool: "send_payment_link",
-            data: invoice,
+            data: link,
           };
         }
       }
@@ -257,15 +262,33 @@ export async function runAgent(
             tool: "check_availability",
           };
         }
-        const [row] = await sql`
+        const [row] = ctx.operationKey
+          ? await sql`
+              INSERT INTO enquiries
+                (venue_id, customer_name, phone, covers, date, time, notes, status, source)
+              SELECT ${venue}, ${ctx.name ?? "WhatsApp guest"}, ${ctx.from ?? null},
+                     ${intent.covers}, ${intent.date}, ${intent.time}, ${text}, 'new',
+                     ${`ingress:${ctx.operationKey}`}
+              WHERE NOT EXISTS (
+                SELECT 1 FROM enquiries
+                WHERE venue_id = ${venue} AND source = ${`ingress:${ctx.operationKey}`}
+              )
+              RETURNING id`
+          : await sql`
           INSERT INTO enquiries (venue_id, customer_name, phone, covers, date, time, notes, status, source)
           VALUES (${venue}, ${ctx.name ?? "WhatsApp guest"}, ${ctx.from ?? null},
                   ${intent.covers}, ${intent.date}, ${intent.time}, ${text}, 'new', 'whatsapp')
           RETURNING id`;
+        const enquiry = row ?? (ctx.operationKey
+          ? (await sql`
+              SELECT id FROM enquiries
+              WHERE venue_id = ${venue} AND source = ${`ingress:${ctx.operationKey}`}
+              LIMIT 1`)[0]
+          : null);
         return {
-          reply: `Done! I've requested a table for ${intent.covers} on ${intent.date} at ${intent.time}. You'll get a confirmation shortly (ref ${String(row.id).slice(0, 8)}).`,
+          reply: `Done! I've requested a table for ${intent.covers} on ${intent.date} at ${intent.time}. You'll get a confirmation shortly (ref ${String(enquiry.id).slice(0, 8)}).`,
           tool: "create_enquiry",
-          data: { id: row.id },
+          data: { id: enquiry.id },
         };
       }
       return {
@@ -302,6 +325,9 @@ export async function runAgent(
             kind: "request",
             phone,
             createdBy: "agent",
+            idempotencyKey: ctx.operationKey
+              ? `ingress:${ctx.operationKey}:staff-pay-link`
+              : undefined,
           });
           if ("error" in link) {
             return {
@@ -315,10 +341,19 @@ export async function runAgent(
           let sent = false;
           if (phone) {
             try {
-              const out = await getAdapter("whatsapp").send(phone, msg, env, venue);
-              sent = out.delivery === "sent";
+              const queued = await queueOutbound(env, {
+                deliveryKey: `agent-pay-link:${link.token}:${phone}`,
+                venue,
+                sourceType: "agent_payment_link",
+                sourceId: link.token,
+                channel: "whatsapp",
+                handle: phone,
+                purpose: "transactional",
+                body: msg,
+              });
+              sent = queued.queued;
             } catch {
-              /* best-effort send */
+              /* return the link in chat when queueing fails */
             }
           }
           return {
@@ -362,6 +397,9 @@ export async function runAgent(
             phone,
             description: descMatch ? descMatch[1].trim() : null,
             channel: phone ? "whatsapp" : undefined,
+            idempotencyKey: ctx.operationKey
+              ? `ingress:${ctx.operationKey}:invoice`
+              : undefined,
           });
           if ("error" in invoice) {
             return {

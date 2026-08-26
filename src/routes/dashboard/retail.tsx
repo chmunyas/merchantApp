@@ -89,6 +89,7 @@ import {
   type RetailSnapshot,
   type RetailStoreProfile,
 } from "@/lib/merchant-dashboard";
+import { pushRetailSale } from "@/lib/retail-sync";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/dashboard/retail")({
@@ -833,6 +834,18 @@ function RetailDashboardPage() {
     setProducts(nextProducts);
     setSales((current) => [sale, ...current]);
     setAdjustments((current) => [...newAdjustments, ...current]);
+
+    // Mirror the sale into the server ledger so takings and stock survive this
+    // browser and are visible on every other till. Local state is not blocked on
+    // it: a shop must keep selling when the network is down.
+    void pushRetailSale(sale, nextProducts).then((result) => {
+      if (!result.ok && result.reason === "offline") {
+        setStatusMessage(
+          "Sale recorded on this device — it will need re-syncing while offline.",
+        );
+      }
+    });
+
     if (method !== "credit") {
       setStatusMessage(
         method === "mpesa"

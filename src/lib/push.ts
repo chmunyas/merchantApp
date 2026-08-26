@@ -152,3 +152,47 @@ export async function latestNotification(
     SELECT value FROM app_settings WHERE key = ${`push_latest:${venue}`}`;
   return row?.value ?? { title: "PesaSwap", body: "You have a new notification" };
 }
+
+// Wake ONLY the devices belonging to the named staff members in this venue.
+// The payload stays empty (RFC-8291 is avoided entirely): the service worker
+// tickles /api/push/latest with its own device token and gets the text for that
+// device's staff member. Reuses the same subscription table + VAPID keypair as
+// the venue-wide notifyStaff above — there is one delivery path, not two.
+export async function tickleStaffDevices(
+  env: unknown,
+  venue: string,
+  staffIds: readonly string[],
+): Promise<number> {
+  if (staffIds.length === 0) return 0;
+  try {
+    const sql = getSql(env);
+    if (!sql) return 0;
+    const subs = await sql`
+      SELECT endpoint FROM push_subscriptions
+      WHERE venue_id = ${venue}
+        AND audience = 'staff'
+        AND device_token_hash IS NOT NULL
+        AND staff_id = ANY(${staffIds as string[]}::uuid[])`;
+    if (subs.length === 0) return 0;
+
+    const vapid = await getVapidKeys(sql, env);
+    if (!vapid) return 0;
+    let delivered = 0;
+    for (const sub of subs) {
+      try {
+        const status = await sendTickle(String(sub.endpoint), vapid);
+        if (status === 404 || status === 410) {
+          await sql`DELETE FROM push_subscriptions WHERE endpoint = ${sub.endpoint}`;
+        } else {
+          delivered += 1;
+        }
+      } catch {
+        /* skip this device */
+      }
+    }
+    return delivered;
+  } catch {
+    return 0;
+  }
+}
+

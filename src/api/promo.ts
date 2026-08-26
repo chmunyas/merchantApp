@@ -3,6 +3,7 @@ import { getSql } from "@/lib/db";
 import { applyPromo, normalizeCode, type PromoCode } from "@/lib/promo";
 import { roleAtLeast } from "@/lib/rbac";
 import { venueFromPayload } from "@/lib/tenancy";
+import { tokenHasScope } from "@/lib/api-tokens";
 
 type Sql = NonNullable<ReturnType<typeof getSql>>;
 
@@ -87,6 +88,9 @@ export async function handlePromoRoute(
   const payload = await requireAuth(request, env);
   if (!payload) return json({ error: "unauthorized" }, 401);
   if (!roleAtLeast(payload, "manager")) {
+    return json({ error: "forbidden" }, 403);
+  }
+  if (!tokenHasScope(payload, request.method === "GET" ? "campaigns:read" : "campaigns:write")) {
     return json({ error: "forbidden" }, 403);
   }
   const venue = venueFromPayload(payload, url);

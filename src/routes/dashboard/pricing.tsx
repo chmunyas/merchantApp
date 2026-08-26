@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -11,7 +10,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { authFetch } from "@/lib/auth";
+import { authFetch, hasAuthoritativeVenueSession } from "@/lib/auth";
 
 export const Route = createFileRoute("/dashboard/pricing")({
   component: DashboardPricingPage,
@@ -68,6 +67,10 @@ function DashboardPricingPage() {
 
   useEffect(() => {
     void (async () => {
+      if (!hasAuthoritativeVenueSession()) {
+        setLoading(false);
+        return;
+      }
       try {
         const res = await authFetch("/api/pricing");
         if (res.ok) {

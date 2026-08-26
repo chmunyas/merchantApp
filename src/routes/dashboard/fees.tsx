@@ -21,6 +21,9 @@ import {
 import { authFetch } from "@/lib/auth";
 import {
   DEFAULT_FEE_SCHEDULE,
+  DEFAULT_GUEST_FEE,
+  GUEST_FEE_BENEFITS,
+  GUEST_FEE_OPT_OUT,
   INSTANT_PAYOUT_PERCENT,
   computeFee,
   type PayMethod,
@@ -101,7 +104,7 @@ function FeesPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Fees & takings</h1>
           <p className="text-sm text-muted-foreground">
-            The real blended rate you pay — no hidden surcharges, no bill shock.
+            Schedule-derived estimates until provider payout evidence is imported.
           </p>
         </div>
         <div className="flex gap-1">
@@ -121,7 +124,7 @@ function FeesPage() {
       {/* Headline: blended effective rate + gross/fees/net */}
       <Card>
         <CardHeader className="pb-2">
-          <CardDescription>Blended effective rate (last {days} days)</CardDescription>
+          <CardDescription>Estimated blended rate (last {days} days)</CardDescription>
           <CardTitle className="text-4xl font-mono">
             {loading ? "—" : pct(summary?.effectiveRate ?? 0)}
           </CardTitle>
@@ -129,14 +132,14 @@ function FeesPage() {
         <CardContent>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-2 border-t">
             <Stat label="Gross taken" value={kes(summary?.gross ?? 0)} />
-            <Stat label="Fees paid" value={kes2(summary?.fees ?? 0)} tone="text-amber-600" />
+            <Stat label="Estimated fees" value={kes2(summary?.fees ?? 0)} tone="text-amber-600" />
             <Stat label="Net kept" value={kes(summary?.net ?? 0)} tone="text-emerald-600" />
             <Stat label="Sales" value={String(summary?.count ?? 0)} />
           </div>
           {!loading && (summary?.count ?? 0) === 0 && (
             <p className="text-xs text-muted-foreground mt-4">
-              No settled sales in this window yet. Take a payment to see your real
-              effective rate here.
+              No known sales in this window yet. Take a payment to see the schedule
+              estimate here.
             </p>
           )}
         </CardContent>
@@ -197,7 +200,7 @@ function FeesPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Daily takings</CardTitle>
-            <CardDescription>Gross, fees and what you kept.</CardDescription>
+            <CardDescription>Gross, estimated fees and estimated net.</CardDescription>
           </CardHeader>
           <CardContent>
             <Table>
@@ -283,6 +286,38 @@ function FeesPage() {
                 <span className="font-mono text-emerald-700">{kes2(quote.net)}</span>
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* A5.5 — what the GUEST is told at checkout, so the merchant sees the
+            exact promise being made on their behalf. Copy and amount both come
+            from the shared schedule the pay page renders. */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">What your guests pay</CardTitle>
+            <CardDescription>
+              Shown on the pay page before a guest commits.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex items-baseline justify-between">
+              <span className="text-sm text-muted-foreground">
+                Guest service fee
+              </span>
+              <span className="font-mono font-semibold text-emerald-700">
+                {DEFAULT_GUEST_FEE.enabled
+                  ? `${DEFAULT_GUEST_FEE.percent}%`
+                  : "None"}
+              </span>
+            </div>
+            <ul className="space-y-1">
+              {GUEST_FEE_BENEFITS.map((b) => (
+                <li key={b} className="text-xs text-muted-foreground">
+                  • {b}
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-muted-foreground">{GUEST_FEE_OPT_OUT}</p>
           </CardContent>
         </Card>
       </div>

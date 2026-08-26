@@ -21,7 +21,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { getCurrentVenueId } from "@/lib/merchant-dashboard";
+import { getCurrentVenueId } from "@/lib/tenant-store";
 import { authFetch } from "@/lib/auth";
 
 export const Route = createFileRoute("/dashboard/whatsapp")({
@@ -39,7 +39,7 @@ type BridgeStatus = {
 type CloudConfig = {
   hasToken: boolean;
   phoneId: string;
-  verifyToken: string;
+  hasVerifyToken: boolean;
   webhookUrl: string;
   bridgeEnabled: boolean;
   transport: string;
@@ -69,11 +69,11 @@ function WhatsappPage() {
 
   async function loadBridge() {
     try {
-      const res = await fetch("/api/whatsapp/bridge/status");
+      const res = await authFetch("/api/whatsapp/bridge/status");
       const data = (await res.json()) as BridgeStatus;
       setBridge(data);
       if (data.enabled && data.status === "qr") {
-        const qrRes = await fetch("/api/whatsapp/bridge/qr");
+        const qrRes = await authFetch("/api/whatsapp/bridge/qr");
         const qrData = (await qrRes.json()) as { qr?: string | null };
         setQr(qrData.qr ?? null);
       } else {
@@ -86,11 +86,11 @@ function WhatsappPage() {
 
   async function loadCloud() {
     try {
-      const res = await fetch(`/api/whatsapp/config?venue=${venue}`);
+      const res = await authFetch(`/api/whatsapp/config?venue=${venue}`);
       const data = (await res.json()) as CloudConfig;
       setCloud(data);
       setPhoneId(data.phoneId ?? "");
-      setVerifyToken(data.verifyToken ?? "");
+      setVerifyToken("");
       setTransport(data.transport ?? "auto");
     } catch {
       setCloud(null);
@@ -170,7 +170,7 @@ function WhatsappPage() {
 
   async function logoutBridge() {
     try {
-      await fetch("/api/whatsapp/bridge/logout", { method: "POST" });
+      await authFetch("/api/whatsapp/bridge/logout", { method: "POST" });
       toast.success("Unlinked. A new QR will appear shortly.");
       await loadBridge();
     } catch {
@@ -326,7 +326,7 @@ function WhatsappPage() {
               <Input
                 value={verifyToken}
                 onChange={(event) => setVerifyToken(event.target.value)}
-                placeholder="pesaswap-verify"
+                placeholder={cloud?.hasVerifyToken ? "•••••• (saved)" : "pesaswap-verify"}
               />
             </label>
             {cloud?.webhookUrl && (

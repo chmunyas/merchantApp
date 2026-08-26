@@ -15,7 +15,9 @@ type Tenant = { token: string; venue: string; email: string };
 type Row = Record<string, unknown>;
 
 function authHeaders(token?: string): Record<string, string> {
-  const headers: Record<string, string> = { "content-type": "application/json" };
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+  };
   if (token) headers.authorization = `Bearer ${token}`;
   return headers;
 }
@@ -27,7 +29,11 @@ async function signup(businessName: string): Promise<Tenant> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ businessName, email, password: PASSWORD }),
   });
-  const data = (await res.json()) as { token?: string; user?: Row; error?: string };
+  const data = (await res.json()) as {
+    token?: string;
+    user?: Row;
+    error?: string;
+  };
   if (!res.ok || !data.token || !data.user) {
     throw new Error(`signup failed (${res.status}): ${JSON.stringify(data)}`);
   }
@@ -35,17 +41,40 @@ async function signup(businessName: string): Promise<Tenant> {
 }
 
 async function createPayment(
-  venue: string,
+  tenant: Tenant,
   amount: number,
   extraMeta: Row = {},
 ): Promise<{ status: number; body: Row }> {
-  const res = await fetch(`${BASE}/api/payments/create`, {
+  const sourceId = `e2e-${rnd()}`;
+  const intentResponse = await fetch(`${BASE}/api/payments/intent`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: authHeaders(tenant.token),
     body: JSON.stringify({
       amount,
       currency: "KES",
-      metadata: { venue, ...extraMeta },
+      sourceId,
+      metadata: extraMeta,
+    }),
+  });
+  const intent = (await intentResponse.json()) as {
+    paymentIntentToken?: string;
+    error?: Row;
+  };
+  if (!intentResponse.ok || !intent.paymentIntentToken) {
+    throw new Error(
+      `payment intent failed (${intentResponse.status}): ${JSON.stringify(intent)}`,
+    );
+  }
+
+  const res = await fetch(`${BASE}/api/payments/create`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "Idempotency-Key": `e2e-payment-${sourceId}`,
+    },
+    body: JSON.stringify({
+      payment_intent_token: intent.paymentIntentToken,
+      metadata: extraMeta,
     }),
   });
   return { status: res.status, body: (await res.json()) as Row };
@@ -75,10 +104,9 @@ beforeAll(async () => {
 describe("payments E2E — every outcome recorded clearly", () => {
   it("records a DECLINED payment in the ledger with its decline reason", async () => {
     const amount = 12345;
-    const reason = `E2E decline ${rnd()}`;
-    const { status, body } = await createPayment(T.venue, amount, {
+    const reason = "Simulated decline (test mode)";
+    const { status, body } = await createPayment(T, amount, {
       simulate: "failed",
-      error_message: reason,
       customer_phone: "+254700999888",
     });
     // The create resolves (200) but reports the payment as failed — not a 5xx.
@@ -97,8 +125,8 @@ describe("payments E2E — every outcome recorded clearly", () => {
 
   it("records a SUCCESSFUL payment and keeps it distinct from failures", async () => {
     const amount = 20000;
-    const { status, body } = await createPayment(T.venue, amount, {
-      customer_phone: "+254700111222",
+    const { status, body } = await createPayment(T, amount, {
+      customer_phone: "0700111222",
     });
     expect(status).toBe(201);
     expect(body.status).toBe("succeeded");
@@ -108,6 +136,7 @@ describe("payments E2E — every outcome recorded clearly", () => {
     expect(row).toBeTruthy();
     expect(row?.status).toBe("succeeded");
     expect(row?.amount).toBe(amount);
+    expect(row?.customerPhone).toBe("+254700111222");
 
     // The full ledger holds BOTH outcomes, each labelled by status.
     const all = await listPayments(T);
@@ -153,7 +182,9 @@ describe("campaigns + DLQ E2E", () => {
   });
 
   it("exposes a tenant-scoped dead-letter queue and a safe retry", async () => {
-    const list = await fetch(`${BASE}/api/dlq`, { headers: authHeaders(T.token) });
+    const list = await fetch(`${BASE}/api/dlq`, {
+      headers: authHeaders(T.token),
+    });
     expect(list.status).toBe(200);
     const body = (await list.json()) as { failed?: Row[]; count?: number };
     expect(Array.isArray(body.failed)).toBe(true);

@@ -1,4 +1,4 @@
-import { requireAuth } from "@/api/auth";
+import { requireHumanAuth } from "@/api/auth";
 import {
   API_SCOPES,
   capTokenRole,
@@ -7,7 +7,7 @@ import {
 } from "@/lib/api-tokens";
 import { getSql } from "@/lib/db";
 import { roleAtLeast } from "@/lib/rbac";
-import { venueFromPayload } from "@/lib/tenancy";
+import { principalVenue, venueRoleAtLeast } from "@/lib/tenancy";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -46,19 +46,15 @@ export async function handleTokensRoute(
   if (!path.startsWith("/api/tokens")) return null;
   if (request.method === "OPTIONS") return json({ ok: true });
 
-  const payload = await requireAuth(request, env);
+  const payload = await requireHumanAuth(request, env);
   if (!payload) return json({ error: "unauthorized" }, 401);
-  // Managing credentials must be done from a human session — an API token can
-  // never mint or revoke tokens (no self-escalation / token farming).
-  if ((payload as { isApiToken?: boolean }).isApiToken) {
-    return json({ error: "API tokens cannot manage tokens" }, 403);
-  }
   if (!roleAtLeast(payload, "manager")) {
     return json({ error: "forbidden" }, 403);
   }
   const sql = getSql(env);
   if (!sql) return json({ error: "database not configured" }, 503);
-  const venue = venueFromPayload(payload, url);
+  const venue = principalVenue(payload);
+  if (!venue) return json({ error: "venue claim required" }, 403);
 
   if (path === "/api/tokens" && request.method === "GET") {
     const rows = await sql`
@@ -83,6 +79,9 @@ export async function handleTokensRoute(
       return json({ error: "Select at least one scope." }, 400);
     }
     const role = capTokenRole(body.role);
+    if (!venueRoleAtLeast(payload.role, role)) {
+      return json({ error: "Token role cannot exceed your venue role." }, 403);
+    }
     const days = Number(body.expiresInDays);
     const expiresAt =
       Number.isFinite(days) && days > 0
@@ -90,12 +89,24 @@ export async function handleTokensRoute(
         : null;
     const { token, prefix, hash } = await generateApiToken();
     const id = `tok_${crypto.randomUUID().replace(/-/g, "")}`;
+    const [creator] = await sql`
+      SELECT u.id
+      FROM app_users u
+      JOIN user_venues uv ON uv.user_id = u.id
+      WHERE lower(u.email) = lower(${payload.sub})
+        AND uv.venue_id = ${venue}
+      LIMIT 1`;
+    if (!creator) {
+      return json({ error: "Current venue membership is required." }, 403);
+    }
     await sql`
       INSERT INTO api_tokens
-        (id, venue_id, org_id, name, token_prefix, token_hash, scopes, role, created_by, expires_at)
+        (id, venue_id, org_id, name, token_prefix, token_hash, scopes, role,
+         created_by, created_by_user_id, expires_at)
       VALUES (${id}, ${venue}, ${(payload as { org?: string }).org ?? null}, ${name},
               ${prefix}, ${hash}, ${scopes}, ${role},
-              ${String(payload.sub ?? "")}, ${expiresAt})`;
+              ${String(payload.sub ?? "")},
+              ${creator.id}, ${expiresAt})`;
     // The plaintext token is returned ONCE — it is never stored or shown again.
     return json({ token, id, prefix, scopes, role }, 201);
   }

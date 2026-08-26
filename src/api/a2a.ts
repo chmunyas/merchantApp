@@ -115,14 +115,14 @@ export async function handleA2aRoute(
           peerSecret,
         )
       : false;
-    // A personal/agent API token (Bearer pat_…) carrying the `agent` scope grants
+    // A personal/agent API token (Bearer pat_…) carrying `agent:invoke` grants
     // staff-scoped access, bound to the token's own venue. This is the primary way
     // an agent acts on a user's behalf — scoped + revocable, separate from a login.
     const principal = await requireAuth(request, env);
     const tokenAgent = Boolean(
       principal &&
         (principal as { isApiToken?: boolean }).isApiToken &&
-        tokenHasScope(principal, "agent"),
+        tokenHasScope(principal, "agent:invoke"),
     );
     const tokenVenue = tokenAgent
       ? ((principal as { venue?: string }).venue ?? undefined)

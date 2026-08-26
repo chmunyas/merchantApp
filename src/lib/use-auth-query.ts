@@ -1,7 +1,7 @@
 import { useQuery, type UseQueryOptions } from "@tanstack/react-query";
 
-import { authFetch } from "@/lib/auth";
-import { getCurrentVenueId } from "@/lib/merchant-dashboard";
+import { authFetch, hasAuthoritativeVenueSession } from "@/lib/auth";
+import { getCurrentVenueId } from "@/lib/tenant-store";
 
 // Cached authed GET for dashboard data. The query key is namespaced by the ACTIVE
 // venue so a store switch never shows another store's cached rows, and the shared
@@ -25,5 +25,7 @@ export function useAuthQuery<TRaw, TData = TRaw>(
       return (await res.json()) as TRaw;
     },
     ...options,
+    enabled:
+      options?.enabled !== false && hasAuthoritativeVenueSession(),
   });
 }

@@ -24,21 +24,57 @@ type Branding = {
   reseller: { name: string; poweredBy: string | null; logoUrl: string | null } | null;
 };
 
-type MenuItem = {
+// Mirrors src/lib/live-menu.ts. `priceMinor` is the only price this page
+// spends: the whole QR/pay/ledger chain works in minor units.
+type LiveMenuItem = {
   id: string;
   name: string;
   category: string;
   price: number;
+  priceMinor: number;
   currency: string;
+  description: string | null;
   dietary: string[];
+  allergens: string[];
+  tags: string[];
   available: boolean;
+  imageUrl: string | null;
+  imageAlt: string | null;
+  videoUrl: string | null;
+  videoDescription: string | null;
+};
+
+type LiveMenuSection = { name: string; items: LiveMenuItem[] };
+
+type LiveMenu = {
+  id: string;
+  name: string;
+  description: string | null;
+  headerImageUrl: string | null;
+  headerImageAlt: string | null;
+  categories: LiveMenuSection[];
+};
+
+type ExternalMenu = { name: string; kind: "pdf" | "link"; url: string };
+
+type LiveMenuPayload = {
+  mode: "dynamic" | "external" | "none";
+  external: ExternalMenu | null;
+  languages: string[];
+  defaultLanguage: string;
+  lang: string | null;
+  translated: boolean;
+  menus: LiveMenu[];
+  items: LiveMenuItem[];
+  checkoutUpsell: { title: string; items: LiveMenuItem[] } | null;
 };
 
 type QrPayload = {
-  venue: { id: string; name: string };
+  venue: { id: string; name: string; timezone: string };
   branding: Branding;
   table: { id: string; label: string | null; section: string | null } | null;
-  items: MenuItem[];
+  menu: LiveMenuPayload;
+  items: LiveMenuItem[];
 };
 
 type CartItem = {
@@ -48,15 +84,6 @@ type CartItem = {
   qty: number;
 };
 
-type LoyaltyStatus = {
-  enrolled: boolean;
-  name?: string;
-  points?: number;
-  tier?: string;
-  nextTier?: string | null;
-  pointsToNext?: number;
-};
-
 function formatKes(amount: number): string {
   return `KES ${(amount / 100).toLocaleString(undefined, {
     minimumFractionDigits: amount % 100 === 0 ? 0 : 2,
@@ -64,19 +91,141 @@ function formatKes(amount: number): string {
   })}`;
 }
 
-function groupedItems(items: MenuItem[]): Array<[string, MenuItem[]]> {
-  const groups = new Map<string, MenuItem[]>();
+function groupedItems(items: LiveMenuItem[]): LiveMenuSection[] {
+  const groups = new Map<string, LiveMenuItem[]>();
   for (const item of items) {
     if (!groups.has(item.category)) groups.set(item.category, []);
     groups.get(item.category)!.push(item);
   }
-  return Array.from(groups.entries());
+  return Array.from(groups.entries()).map(([name, list]) => ({
+    name,
+    items: list,
+  }));
+}
+
+/**
+ * The language menu shows endonyms where we know them, so a guest picks their
+ * own language in their own language rather than reading an English label.
+ */
+function languageLabel(tag: string): string {
+  try {
+    const display = new Intl.DisplayNames([tag], { type: "language" });
+    return display.of(tag) ?? tag.toUpperCase();
+  } catch {
+    return tag.toUpperCase();
+  }
+}
+
+/**
+ * One product card. Allergens, dietary flags and tags are rendered as WORDS,
+ * never as a colour or an icon alone, and the image's alt text is the
+ * merchant's own — both are conditions the server's projection guarantees.
+ */
+function ItemCard({
+  item,
+  qty,
+  accent,
+  onChange,
+}: {
+  item: LiveMenuItem;
+  qty: number;
+  accent: string;
+  onChange: (item: LiveMenuItem, delta: number) => void;
+}) {
+  return (
+    <article className="overflow-hidden rounded-3xl bg-white shadow-sm">
+      {item.imageUrl ? (
+        <img
+          src={item.imageUrl}
+          alt={item.imageAlt ?? ""}
+          loading="lazy"
+          className="h-40 w-full object-cover"
+        />
+      ) : null}
+      <div className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-bold text-slate-950">{item.name}</h3>
+            {item.description ? (
+              <p className="mt-1 text-sm text-slate-600">{item.description}</p>
+            ) : null}
+            <p className="mt-1 font-mono text-sm text-slate-500">
+              {formatKes(item.priceMinor)}
+            </p>
+            {item.dietary.length ? (
+              <p className="mt-2 text-[10px] uppercase tracking-wider text-emerald-700">
+                {item.dietary.join(" • ")}
+              </p>
+            ) : null}
+            {item.tags.length ? (
+              <p className="mt-1 text-[10px] uppercase tracking-wider text-slate-500">
+                {item.tags.join(" • ")}
+              </p>
+            ) : null}
+            {item.allergens.length ? (
+              <p className="mt-2 text-xs text-amber-800">
+                <span className="font-semibold">Contains:</span>{" "}
+                {item.allergens.join(", ")}
+              </p>
+            ) : null}
+            {item.available ? null : (
+              <p className="mt-2 text-xs font-semibold text-slate-500">
+                Unavailable right now
+              </p>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onChange(item, -1)}
+              disabled={qty === 0}
+              className="flex h-11 w-11 items-center justify-center rounded-full border disabled:opacity-30"
+              aria-label={`Remove one ${item.name}`}
+            >
+              <Minus className="h-4 w-4" />
+            </button>
+            <span className="w-5 text-center font-mono font-bold" aria-hidden="true">
+              {qty}
+            </span>
+            <button
+              type="button"
+              onClick={() => onChange(item, 1)}
+              disabled={!item.available}
+              className="flex h-11 w-11 items-center justify-center rounded-full text-white disabled:opacity-30"
+              style={{ background: accent }}
+              aria-label={`Add one ${item.name}. ${qty} in your order`}
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+        {item.videoUrl ? (
+          <a
+            href={item.videoUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-3 inline-block text-xs font-semibold text-slate-600 underline"
+          >
+            {item.videoDescription ?? `Watch a video of ${item.name}`}
+          </a>
+        ) : null}
+      </div>
+    </article>
+  );
 }
 
 function UnifiedQrPage() {
   const { code } = Route.useParams();
   const navigate = useNavigate();
   const [payload, setPayload] = useState<QrPayload | null>(null);
+  // The menu lives beside the payload, not inside it: switching language
+  // re-fetches the menu alone. Re-fetching /api/qr/:code would record a second
+  // scan and inflate the scan count that walkout detection reads.
+  const [menu, setMenu] = useState<LiveMenuPayload | null>(null);
+  const [lang, setLang] = useState<string | null>(null);
+  const [menuBusy, setMenuBusy] = useState(false);
+  const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+  const [cartUpsells, setCartUpsells] = useState<LiveMenuItem[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [phone, setPhone] = useState("");
   const [fulfillment, setFulfillment] = useState<"dine_in" | "collection">(
@@ -86,8 +235,6 @@ function UnifiedQrPage() {
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [loyalty, setLoyalty] = useState<LoyaltyStatus | null>(null);
-  const [savedMethod, setSavedMethod] = useState<string | null>(null);
   const [promoInput, setPromoInput] = useState("");
   const [promoResult, setPromoResult] = useState<{
     valid: boolean;
@@ -113,6 +260,8 @@ function UnifiedQrPage() {
       .then((data) => {
         if (!cancelled) {
           setPayload(data);
+          setMenu(data.menu);
+          setLang(data.menu.lang);
           setError(null);
         }
       })
@@ -127,7 +276,19 @@ function UnifiedQrPage() {
     };
   }, [code]);
 
-  const grouped = useMemo(() => groupedItems(payload?.items ?? []), [payload]);
+  // C6.9-C6.11 — the merchant's published, in-window menus. Falls back to the
+  // flat catalogue grouped by category when the venue has not enabled the
+  // dynamic menu, so not opting in never costs a venue its menu.
+  const visibleMenus = menu?.mode === "dynamic" ? menu.menus : [];
+  const activeMenu =
+    visibleMenus.find((entry) => entry.id === activeMenuId) ?? visibleMenus[0] ?? null;
+  const sections = useMemo<LiveMenuSection[]>(() => {
+    if (activeMenu) {
+      return activeMenu.categories.filter((section) => section.items.length > 0);
+    }
+    return groupedItems(menu?.items ?? []);
+  }, [activeMenu, menu]);
+
   const total = useMemo(
     () => cart.reduce((sum, item) => sum + item.price * item.qty, 0),
     [cart],
@@ -136,6 +297,26 @@ function UnifiedQrPage() {
   const payable = Math.max(0, total - discount);
   const estPoints = useMemo(() => loyaltyPointsFor(payable), [payable]);
   const venueId = payload?.venue.id;
+
+  // A6.2/C6.13 — swap language without re-scanning. A failed switch keeps the
+  // menu the guest is already reading rather than blanking it.
+  async function switchLanguage(next: string | null) {
+    if (!venueId || next === lang) return;
+    setMenuBusy(true);
+    try {
+      const query = new URLSearchParams({ venue: venueId, surface: "qr" });
+      if (next) query.set("lang", next);
+      const res = await fetch(`/api/menu/live?${query.toString()}`);
+      if (!res.ok) throw new Error("menu unavailable");
+      const data = (await res.json()) as LiveMenuPayload;
+      setMenu(data);
+      setLang(data.lang);
+    } catch {
+      // Keep the current menu; the guest simply stays in the language they have.
+    } finally {
+      setMenuBusy(false);
+    }
+  }
 
   // Clear a stale promo when the cart changes; the guest re-applies against the new
   // subtotal (and the order handler re-validates server-side regardless).
@@ -148,47 +329,56 @@ function UnifiedQrPage() {
     if (payload && !payload.table) setFulfillment("collection");
   }, [payload]);
 
-  // Look up a returning guest's loyalty inline (debounced) so points + tier show
-  // while they order — the "earn on this order" nudge. Read-only; never blocks.
+  // A6.6 — cart-level related products. The merchant's manual pairings come
+  // first; the server tops the list up and hides anything unorderable or
+  // photo-less, so this only ever renders a card it can actually draw.
   useEffect(() => {
-    const digits = phone.replace(/[^0-9]/g, "");
-    if (!venueId || digits.length < 9) {
-      setLoyalty(null);
-      setSavedMethod(null);
+    if (!venueId || cart.length === 0) {
+      setCartUpsells([]);
       return;
     }
-    let active = true;
+    let cancelled = false;
+    const controller = new AbortController();
     const timer = setTimeout(() => {
-      void (async () => {
-        try {
-          const [lres, mres] = await Promise.all([
-            fetch(
-              `/api/loyalty/status?venue=${encodeURIComponent(venueId)}&phone=${encodeURIComponent(phone)}`,
-            ),
-            fetch(
-              `/api/customers/payment-methods?phone=${encodeURIComponent(phone)}`,
-            ),
-          ]);
-          if (lres.ok && active) {
-            setLoyalty((await lres.json()) as LoyaltyStatus);
-          }
-          if (mres.ok && active) {
-            const m = (await mres.json()) as {
-              known?: boolean;
-              methods?: { label: string }[];
-            };
-            setSavedMethod(m.known ? (m.methods?.[0]?.label ?? null) : null);
-          }
-        } catch {
-          /* the loyalty banner is a bonus — never block ordering */
-        }
-      })();
-    }, 500);
+      void fetch(`/api/menu/recommend?venue=${encodeURIComponent(venueId)}`, {
+        method: "POST",
+        signal: controller.signal,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          cart: cart.map(({ id, name }) => ({ id, name })),
+          max: 3,
+        }),
+      })
+        .then(async (res) => {
+          if (!res.ok) throw new Error("no recommendations");
+          return (await res.json()) as {
+            recommendations: Array<{ item: { id: string } }>;
+          };
+        })
+        .then((data) => {
+          if (cancelled) return;
+          const byId = new Map((menu?.items ?? []).map((item) => [item.id, item]));
+          const inCart = new Set(cart.map((entry) => entry.id));
+          setCartUpsells(
+            data.recommendations
+              .map((entry) => byId.get(entry.item.id))
+              .filter(
+                (item): item is LiveMenuItem =>
+                  Boolean(item) && !inCart.has(item!.id),
+              ),
+          );
+        })
+        .catch(() => {
+          if (!cancelled) setCartUpsells([]);
+        });
+    }, 250);
     return () => {
-      active = false;
+      cancelled = true;
+      controller.abort();
       clearTimeout(timer);
     };
-  }, [phone, venueId]);
+  }, [cart, menu, venueId]);
+
   const quantityById = useMemo(
     () =>
       cart.reduce<Record<string, number>>((acc, item) => {
@@ -198,14 +388,14 @@ function UnifiedQrPage() {
     [cart],
   );
 
-  function updateQty(item: MenuItem, delta: number) {
+  function updateQty(item: LiveMenuItem, delta: number) {
     if (!item.available) return;
     setCart((current) => {
       const existing = current.find((entry) => entry.id === item.id);
       if (!existing && delta > 0) {
         return [
           ...current,
-          { id: item.id, name: item.name, price: item.price, qty: 1 },
+          { id: item.id, name: item.name, price: item.priceMinor, qty: 1 },
         ];
       }
       return current
@@ -245,8 +435,7 @@ function UnifiedQrPage() {
     }
   }
 
-  // Remember the guest's phone across visits so returning guests are recognised
-  // (loyalty + saved details auto-load) without re-typing it.
+  // Remember the phone for order convenience only; it never unlocks identity data.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const saved = window.localStorage.getItem("pesaswap_phone");
@@ -316,7 +505,7 @@ function UnifiedQrPage() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          items: cart.map(({ name, price, qty }) => ({ name, price, qty })),
+          items: cart.map(({ id, qty }) => ({ id, qty })),
           phone: phone.trim() || undefined,
           promoCode: promoResult?.valid ? promoInput.trim() : undefined,
           fulfillmentType: fulfillment,
@@ -413,66 +602,155 @@ function UnifiedQrPage() {
       </section>
 
       <section className="mx-auto max-w-md space-y-5 px-4 pt-5">
-        {grouped.length === 0 ? (
+        <p role="status" aria-live="polite" className="sr-only">
+          {menuBusy ? "Loading the menu…" : ""}
+        </p>
+
+        {menu && menu.languages.length > 0 ? (
+          <div
+            role="group"
+            aria-label="Menu language"
+            className="flex flex-wrap gap-2"
+          >
+            {[menu.defaultLanguage, ...menu.languages].map((tag) => {
+              const isDefault = tag === menu.defaultLanguage;
+              const selected = isDefault ? lang === null : lang === tag;
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  aria-pressed={selected}
+                  disabled={menuBusy}
+                  onClick={() => void switchLanguage(isDefault ? null : tag)}
+                  className={`min-h-11 rounded-full border px-4 text-sm font-semibold disabled:opacity-50 ${
+                    selected ? "border-slate-900 bg-slate-900 text-white" : "bg-white"
+                  }`}
+                >
+                  {languageLabel(tag)}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+
+        {menu?.mode === "external" && menu.external ? (
+          <div className="rounded-3xl bg-white p-6 text-center shadow-sm">
+            <p className="font-semibold text-slate-900">{menu.external.name}</p>
+            <a
+              href={menu.external.url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-3 inline-flex min-h-11 items-center rounded-full px-5 text-sm font-bold text-white"
+              style={{ background: accent }}
+            >
+              {menu.external.kind === "pdf" ? "Open the menu (PDF)" : "Open the menu"}
+            </a>
+            <p className="mt-3 text-xs text-slate-500">
+              Ordering from your phone isn't available at this venue yet — a
+              server will take your order.
+            </p>
+          </div>
+        ) : sections.length === 0 ? (
           <div className="rounded-3xl bg-white p-6 text-center shadow-sm">
             <p className="font-semibold">Menu is not available right now.</p>
           </div>
         ) : (
-          grouped.map(([category, items]) => (
-            <div key={category} className="space-y-3">
-              <h2 className="px-1 text-xs font-black uppercase tracking-[0.2em] text-slate-500">
-                {category}
-              </h2>
-              {items.map((item) => {
-                const qty = quantityById[item.id] ?? 0;
-                return (
-                  <article
-                    key={item.id}
-                    className="rounded-3xl bg-white p-4 shadow-sm"
+          <>
+            {visibleMenus.length > 1 ? (
+              <div
+                role="group"
+                aria-label="Menus"
+                className="flex gap-2 overflow-x-auto pb-1"
+              >
+                {visibleMenus.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    aria-pressed={entry.id === activeMenu?.id}
+                    onClick={() => setActiveMenuId(entry.id)}
+                    className={`min-h-11 shrink-0 rounded-full border px-4 text-sm font-semibold ${
+                      entry.id === activeMenu?.id
+                        ? "border-slate-900 bg-slate-900 text-white"
+                        : "bg-white"
+                    }`}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <h3 className="font-bold text-slate-950">{item.name}</h3>
-                        <p className="mt-1 font-mono text-sm text-slate-500">
-                          {formatKes(item.price)}
-                        </p>
-                        {item.dietary.length ? (
-                          <p className="mt-2 text-[10px] uppercase tracking-wider text-emerald-700">
-                            {item.dietary.join(" • ")}
-                          </p>
-                        ) : null}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => updateQty(item, -1)}
-                          disabled={qty === 0}
-                          className="flex h-9 w-9 items-center justify-center rounded-full border disabled:opacity-30"
-                          aria-label={`Remove ${item.name}`}
-                        >
-                          <Minus className="h-4 w-4" />
-                        </button>
-                        <span className="w-5 text-center font-mono font-bold">
-                          {qty}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => updateQty(item, 1)}
-                          disabled={!item.available}
-                          className="flex h-9 w-9 items-center justify-center rounded-full text-white disabled:opacity-30"
-                          style={{ background: accent }}
-                          aria-label={`Add ${item.name}`}
-                        >
-                          <Plus className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          ))
+                    {entry.name}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {activeMenu?.headerImageUrl ? (
+              <img
+                src={activeMenu.headerImageUrl}
+                alt={activeMenu.headerImageAlt ?? ""}
+                className="h-36 w-full rounded-3xl object-cover shadow-sm"
+              />
+            ) : null}
+            {activeMenu?.description ? (
+              <p className="px-1 text-sm text-slate-600">{activeMenu.description}</p>
+            ) : null}
+
+            {sections.map((section) => (
+              <div key={section.name} className="space-y-3">
+                <h2 className="px-1 text-xs font-black uppercase tracking-[0.2em] text-slate-500">
+                  {section.name}
+                </h2>
+                {section.items.map((item) => (
+                  <ItemCard
+                    key={item.id}
+                    item={item}
+                    qty={quantityById[item.id] ?? 0}
+                    accent={accent}
+                    onChange={updateQty}
+                  />
+                ))}
+              </div>
+            ))}
+          </>
         )}
+
+        {cartUpsells.length > 0 ? (
+          <div className="space-y-3" aria-labelledby="cart-upsell-heading">
+            <h2
+              id="cart-upsell-heading"
+              className="px-1 text-xs font-black uppercase tracking-[0.2em] text-slate-500"
+            >
+              Goes well with your order
+            </h2>
+            {cartUpsells.map((item) => (
+              <ItemCard
+                key={item.id}
+                item={item}
+                qty={quantityById[item.id] ?? 0}
+                accent={accent}
+                onChange={updateQty}
+              />
+            ))}
+          </div>
+        ) : null}
+
+        {cart.length > 0 && menu?.checkoutUpsell ? (
+          <div className="space-y-3" aria-labelledby="checkout-upsell-heading">
+            <h2
+              id="checkout-upsell-heading"
+              className="px-1 text-xs font-black uppercase tracking-[0.2em] text-slate-500"
+            >
+              {menu.checkoutUpsell.title}
+            </h2>
+            {menu.checkoutUpsell.items
+              .filter((item) => !quantityById[item.id])
+              .map((item) => (
+                <ItemCard
+                  key={item.id}
+                  item={item}
+                  qty={quantityById[item.id] ?? 0}
+                  accent={accent}
+                  onChange={updateQty}
+                />
+              ))}
+          </div>
+        ) : null}
       </section>
 
       <section className="mx-auto mb-48 max-w-md px-4">
@@ -538,32 +816,9 @@ function UnifiedQrPage() {
         </div>
       </section>
 
-      <section className="fixed inset-x-0 bottom-0 border-t bg-white/95 p-4 shadow-2xl backdrop-blur">
+      <section className="fixed inset-x-0 bottom-0 max-h-[min(70dvh,36rem)] overflow-y-auto border-t bg-white/95 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-2xl backdrop-blur">
         <div className="mx-auto max-w-md space-y-3">
-          {loyalty?.enrolled ? (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm">
-              <span className="font-semibold text-amber-800">
-                Welcome back{loyalty.name ? `, ${loyalty.name}` : ""}!
-              </span>{" "}
-              <span className="text-amber-700">
-                {loyalty.points?.toLocaleString()} pts · {loyalty.tier}
-              </span>
-              {loyalty.nextTier ? (
-                <span className="text-amber-600">
-                  {" "}
-                  · {loyalty.pointsToNext} to {loyalty.nextTier}
-                </span>
-              ) : null}
-              {estPoints > 0 ? (
-                <span className="text-amber-600"> · +{estPoints} this order</span>
-              ) : null}
-              {savedMethod ? (
-                <span className="mt-1 block text-xs text-amber-600">
-                  💳 {savedMethod} · saved
-                </span>
-              ) : null}
-            </div>
-          ) : estPoints > 0 ? (
+          {estPoints > 0 ? (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
               💛 Add your number to earn{" "}
               <span className="font-semibold">~{estPoints} points</span> &amp; join
@@ -602,6 +857,7 @@ function UnifiedQrPage() {
               <button
                 type="button"
                 onClick={() => setFulfillment("dine_in")}
+                aria-pressed={fulfillment === "dine_in"}
                 className={`rounded-2xl border px-3 py-2 text-sm font-semibold transition ${
                   fulfillment === "dine_in"
                     ? "border-transparent text-white"
@@ -616,6 +872,7 @@ function UnifiedQrPage() {
               <button
                 type="button"
                 onClick={() => setFulfillment("collection")}
+                aria-pressed={fulfillment === "collection"}
                 className={`rounded-2xl border px-3 py-2 text-sm font-semibold transition ${
                   fulfillment === "collection"
                     ? "border-transparent text-white"
@@ -634,6 +891,7 @@ function UnifiedQrPage() {
               <button
                 type="button"
                 onClick={() => setScheduledAt("")}
+                aria-pressed={scheduledAt === ""}
                 className={`rounded-2xl border px-3 py-2 text-xs font-semibold ${
                   scheduledAt === "" ? "bg-slate-900 text-white" : "bg-slate-50 text-slate-600"
                 }`}
@@ -643,7 +901,21 @@ function UnifiedQrPage() {
               <input
                 type="datetime-local"
                 value={scheduledAt}
-                min={new Date(Date.now() + 5 * 60_000).toISOString().slice(0, 16)}
+                min={(() => {
+                  const date = new Date(Date.now() + 5 * 60_000);
+                  const parts = new Intl.DateTimeFormat("en-CA", {
+                    timeZone: payload?.venue.timezone ?? "Africa/Nairobi",
+                    year: "numeric",
+                    month: "2-digit",
+                    day: "2-digit",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hourCycle: "h23",
+                  }).formatToParts(date);
+                  const part = (type: Intl.DateTimeFormatPartTypes) =>
+                    parts.find((entry) => entry.type === type)?.value ?? "00";
+                  return `${part("year")}-${part("month")}-${part("day")}T${part("hour")}:${part("minute")}`;
+                })()}
                 onChange={(event) => setScheduledAt(event.target.value)}
                 className="min-w-0 flex-1 rounded-2xl border bg-slate-50 px-3 py-2 text-xs outline-none"
                 aria-label="Pre-order for a later time"
@@ -660,9 +932,11 @@ function UnifiedQrPage() {
               placeholder="Optional phone for loyalty"
               className="min-w-0 flex-1 bg-transparent text-sm outline-none"
               inputMode="tel"
+              autoComplete="tel"
+              enterKeyHint="done"
             />
           </label>
-          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+          {error ? <p role="alert" className="text-sm text-red-600">{error}</p> : null}
           <button
             type="button"
             onClick={pay}

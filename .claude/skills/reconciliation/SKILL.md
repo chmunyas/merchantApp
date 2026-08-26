@@ -15,15 +15,19 @@ and net payout are. Extends the Notebook from "what did I sell" to "what did I
 get paid".
 
 ## Key files
+
 - `src/api/settlement.ts` — summary, batches, `POST /api/settlement/run`.
-- `src/routes/dashboard/settlement.tsx` — cards, unreconciled flags, run + history.
+- `src/routes/dashboard/settlement.tsx` — internal batch estimates, refund
+  adjustments, unbatched flags, run + history.
 - `src/api/disputes.ts` — disputes / chargebacks + payment webhook-event audit trail.
 - `db/25-settlement.sql` — `settlements` + `payments.settlement_id`.
 - `db/40-payment-events.sql` — `payment_events` (webhook audit + idempotency).
 - `db/41-disputes.sql` — `disputes` (chargebacks).
 
 ## Endpoints
-- `GET /api/settlement/summary?from=&to=` — gross, fees, net, reconciled/unreconciled.
+
+- `GET /api/settlement/summary?from=&to=` — gross, refunds, estimated fees/net,
+  batched/unbatched estimates, and pending refund adjustments.
 - `GET /api/settlement` · `GET /api/settlement/:id` — batches + batch detail.
 - `POST /api/settlement/run` — **manager+**; batch unsettled succeeded payments.
 - `GET /api/disputes[?status=]` · `GET /api/disputes/:id` — **gated**, venue-scoped;
@@ -37,6 +41,7 @@ get paid".
   float + cash sales vs counted = variance). `src/lib/shifts.ts` `zReport` + `db/33`.
 
 ## Conventions
+
 - Amounts minor units, KES; succeeded = `('succeeded','paid','captured')`.
 - **Every trusted webhook is persisted** to `payment_events` (idempotent on the
   provider event id) for an auditable timeline; disputes are upserted to `disputes`
@@ -46,15 +51,41 @@ get paid".
   and reconciliation treat them like any other succeeded payment.
 - `FEE_RATE` (default 1.5%) is an **estimate** — real fees come from the provider
   webhook/statement when live. `net = gross - fees`.
-- `run` stamps `payments.settlement_id`; reconciled = has a settlement_id.
+- `run` creates an **internal estimate batch** and append-once
+  `payments.settlement_id`; it is not bank reconciliation evidence. Post-batch
+  refunds retain immutable reversals and never detach original membership.
+- Provider evidence staging is immutable, KES-only, header/line balanced, and
+  exact-reference matched. A manager-uploaded statement is not production proof
+  until authenticated provider pull/signature and bank evidence are independently
+  verified; live matching remains an operator gate.
 
 ## Guidelines
+
 - Never double-settle: only batch payments with `settlement_id IS NULL`.
 - Keep `run` gated to manager/merchant/admin; reads open to any authed operator.
 
-## Definition of Done — full parity
-A feature is not done until it has **full parity across all three runtime tiers** —
-validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
-the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
-`db/*.sql` migration applied to dev, prod-local **and** Neon. See
-`.claude/DEPLOYMENT-PARITY.md`.
+<!-- PRODUCTION_GO_LIVE_CONTRACT:START -->
+<!-- PRODUCTION_GO_LIVE_DOMAIN: reconciliation -->
+
+## Production go-live ownership
+
+This skill inherits the [Production Go-Live Capability Contract](../../../docs/PRODUCTION-GO-LIVE-CAPABILITIES.md)
+(`PRODUCTION_GO_LIVE_CONTRACT: v1`). The
+[Global Enterprise Roadmap](../../../docs/GLOBAL-ENTERPRISE-ROADMAP.md) defines delivery order, and the
+[Global Readiness Review](../../../docs/GLOBAL-READINESS-REVIEW.md) records the current verdict.
+
+It owns production acceptance for:
+
+- Source-to-payment-to-fee-to-net-to-payout matching, resumable batches, explicit exceptions, line-level traceability, bank/POS/provider imports, approval, close, reopen, and audit-grade export.
+- Idempotent and replay-safe recovery from delayed, duplicate, missing, reversed, partially refunded, unsynced, or mismatched transactions without editing settled history.
+
+For every change in this domain:
+
+- Preserve default-deny tenant, role, scope, capability, sensitivity, and audit policy.
+- Test the applicable owner, manager, supervisor, staff, finance, customer, and partner journey, including denial, concurrency, duplicate, timeout, and recovery paths.
+- Apply financial, API/SDK, device, accessibility, localization, observability, security, data-governance, and disaster-recovery gates wherever the change crosses those boundaries.
+- Report only the evidence produced. Use designed, source complete, environment verified, production ready, and certified exactly as defined by the contract.
+
+A capability is not production-ready until the applicable checklist passes in dev, prod-local, sandbox, and production with retained evidence. Follow the [deployment parity procedure](../../DEPLOYMENT-PARITY.md); never infer live readiness from source tests or a single environment.
+
+<!-- PRODUCTION_GO_LIVE_CONTRACT:END -->

@@ -16,6 +16,7 @@ P&L, balance sheet, trial balance, per-account ledger, AR aging and lost baskets
 Fiscal periods can be closed (locked) once reported.
 
 ## Key files
+
 - `src/lib/accounting.ts` — chart (`CHART`), balanced line-builders, `postEntry`
   (rejects posts into a closed period), event wrappers, reports, period close,
   `auditEntries` (oldest-first source for the audit hash chain).
@@ -23,13 +24,15 @@ Fiscal periods can be closed (locked) once reported.
 - `src/api/accounting.ts` — gated `/api/accounting/*` routes.
 - `db/30-accounting.sql` — `ledger_accounts`, `journal_entries`, `journal_lines`;
   `db/31-accounting-periods.sql` — `ledger_periods` (close/lock). Minor units.
-- `src/api/payments.ts` (`recordLedger`) + `src/api/settlement.ts` — best-effort
-  hooks (payment/refund/settlement/COGS; invoice payments settle A/R).
+- `src/api/payments.ts` + `src/lib/financial-{events,consumers}.ts` — atomic
+  payment/refund events and durable accounting/COGS/invoice consumers.
+  `src/api/settlement.ts` still creates internal estimate batches.
 - `src/lib/invoices.ts` + `src/lib/invoicing.ts` — invoice issue posts A/R;
   `recordPayment` settles it. `src/api/tips.ts` — `POST /api/tips/payout`.
 - `src/routes/dashboard/accounting.tsx` — accounting dashboard UI.
 
 ## Endpoints (all gated)
+
 - `GET /api/accounting/chart` — chart of accounts.
 - `GET /api/accounting/trial-balance?from=&to=` — debits/credits; must balance.
 - `GET /api/accounting/income-statement?from=&to=` — P&L.
@@ -49,17 +52,20 @@ Fiscal periods can be closed (locked) once reported.
 - `POST /api/tips/payout` — **manager+** pay pooled tips (Dr 2000 / Cr 1010).
 
 ## Conventions
+
 - Gated routes use `requireAuth` + `venueFromPayload`; venue comes from the JWT
   claim, never `body`/query.
 - Amounts are minor units; currency defaults KES.
 - `journal_entries` is idempotent on `(venue_id, source_type, source_id)`.
 - Entries are append-only + immutable; corrections are reversing entries.
-- Posting hooks are best-effort and must never block the source payment/refund or
-  settlement transaction.
+- Payment/refund posting is a durable, transactionally replay-safe outbox
+  consumer. The source event commits first; failed accounting effects remain
+  visible and retry without changing the provider outcome.
 - Pay-link payments are normal payments tagged with `pay_link_id`; they flow into
   ledger/settlement/accounting like any other payment and need no special posting.
 
 ## Guidelines
+
 - Keep every posting rule balanced: payment Dr 1000 / Cr 4000 + 2000; refund Dr
   4900 / Cr 1000; settlement Dr 1010 + 6000 / Cr 1000; tip payout Dr 2000 / Cr
   1010; invoice issue Dr 1100 / Cr 4000 + 2100; invoice payment Dr 1000 / Cr 1100;
@@ -77,9 +83,28 @@ Fiscal periods can be closed (locked) once reported.
 - `postEntry` must continue to throw on unbalanced entries; trial balance must
   always balance and balance sheet must satisfy Assets = Liabilities + Equity.
 
-## Definition of Done — full parity
-A feature is not done until it has **full parity across all three runtime tiers** —
-validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
-the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
-`db/*.sql` migration applied to dev, prod-local **and** Neon. See
-`.claude/DEPLOYMENT-PARITY.md`.
+<!-- PRODUCTION_GO_LIVE_CONTRACT:START -->
+<!-- PRODUCTION_GO_LIVE_DOMAIN: accounting -->
+
+## Production go-live ownership
+
+This skill inherits the [Production Go-Live Capability Contract](../../../docs/PRODUCTION-GO-LIVE-CAPABILITIES.md)
+(`PRODUCTION_GO_LIVE_CONTRACT: v1`). The
+[Global Enterprise Roadmap](../../../docs/GLOBAL-ENTERPRISE-ROADMAP.md) defines delivery order, and the
+[Global Readiness Review](../../../docs/GLOBAL-READINESS-REVIEW.md) records the current verdict.
+
+It owns production acceptance for:
+
+- Source-to-journal traceability, balanced double-entry posting, immutable entries, period locks, compensating corrections, financial statements, exports, and auditor evidence.
+- Replay-safe posting for payments, refunds, invoices, settlements, fees, tips, inventory cost, and every new financial event.
+
+For every change in this domain:
+
+- Preserve default-deny tenant, role, scope, capability, sensitivity, and audit policy.
+- Test the applicable owner, manager, supervisor, staff, finance, customer, and partner journey, including denial, concurrency, duplicate, timeout, and recovery paths.
+- Apply financial, API/SDK, device, accessibility, localization, observability, security, data-governance, and disaster-recovery gates wherever the change crosses those boundaries.
+- Report only the evidence produced. Use designed, source complete, environment verified, production ready, and certified exactly as defined by the contract.
+
+A capability is not production-ready until the applicable checklist passes in dev, prod-local, sandbox, and production with retained evidence. Follow the [deployment parity procedure](../../DEPLOYMENT-PARITY.md); never infer live readiness from source tests or a single environment.
+
+<!-- PRODUCTION_GO_LIVE_CONTRACT:END -->

@@ -33,7 +33,7 @@ No one else combines:
 1. **Multi-currency FX engine** (compare providers, best rate routing)
 2. **Restaurant-native operations** (menus, zones, scheduling, kitchen routing)
 3. **AI that learns from every decision** (not static rules)
-4. **Works offline** (PWA with queue-and-sync)
+4. **Read-only offline cache** (mutations and payments require connectivity)
 
 This isn't "payments + restaurant software." It's a new category: **Operational Intelligence for Hospitality.**
 
@@ -343,7 +343,7 @@ Next batch payout includes bonus → M-Pesa → Staff phone
 | G4  | **AI Scoring**               | Revenue prediction, demand forecasting, anomaly detection             |
 | G5  | **Idempotency**              | Every payment has unique key; duplicate requests return cached result |
 | G6  | **Exponential Backoff**      | WebSocket reconnection: 1s → 2s → 4s → 8s (max 10 attempts)           |
-| G7  | **Offline PWA**              | Service worker caches app; payments queue and sync when online        |
+| G7  | **Offline PWA**              | Service worker caches safe public shells; payment drafts require explicit online review |
 
 ### H. Infrastructure & DevOps
 

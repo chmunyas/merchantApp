@@ -13,13 +13,20 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { AuthProvider } from "@/components/auth/AuthProvider";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { ChatWidget } from "@/components/omni/ChatWidget";
-import { InstallBanner } from "@/components/InstallBanner";
-import { SandboxBadge } from "@/components/SandboxBadge";
 import { subscribeDataChanged } from "@/lib/auth";
 import { Menu } from "lucide-react";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { toast } from "sonner";
+
+const ChatWidget = lazy(() =>
+  import("@/components/omni/ChatWidget").then((module) => ({ default: module.ChatWidget })),
+);
+const InstallBanner = lazy(() =>
+  import("@/components/InstallBanner").then((module) => ({ default: module.InstallBanner })),
+);
+const SandboxBadge = lazy(() =>
+  import("@/components/SandboxBadge").then((module) => ({ default: module.SandboxBadge })),
+);
 
 function NotFoundComponent() {
   return (
@@ -107,16 +114,6 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
           href: "/icons/icon-192.png",
         },
         { rel: "apple-touch-icon", href: "/icons/apple-touch-icon-180.png" },
-        { rel: "preconnect", href: "https://fonts.googleapis.com" },
-        {
-          rel: "preconnect",
-          href: "https://fonts.gstatic.com",
-          crossOrigin: "anonymous",
-        },
-        {
-          rel: "stylesheet",
-          href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap",
-        },
       ],
     }),
     shellComponent: RootShell,
@@ -172,6 +169,7 @@ function RootComponent() {
         duration: Infinity,
       });
     };
+    let cleanupRegistration: (() => void) | undefined;
     navigator.serviceWorker
       .register("/sw.js")
       .then((registration) => {
@@ -191,26 +189,40 @@ function RootComponent() {
         // Proactively check for a new deploy so a long-open PWA never serves stale
         // code: whenever the tab regains focus, and hourly.
         const checkForUpdate = () => registration.update().catch(() => {});
-        document.addEventListener("visibilitychange", () => {
+        const onVisibility = () => {
           if (document.visibilityState === "visible") checkForUpdate();
-        });
-        window.setInterval(checkForUpdate, 60 * 60 * 1000);
+        };
+        document.addEventListener("visibilitychange", onVisibility);
+        const interval = window.setInterval(checkForUpdate, 60 * 60 * 1000);
+        cleanupRegistration = () => {
+          document.removeEventListener("visibilitychange", onVisibility);
+          window.clearInterval(interval);
+        };
       })
       .catch(() => {});
     let reloaded = false;
-    navigator.serviceWorker.addEventListener("controllerchange", () => {
+    const onControllerChange = () => {
       if (reloaded) return;
       reloaded = true;
       window.location.reload();
-    });
+    };
+    navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
+    return () => {
+      cleanupRegistration?.();
+      navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
+    };
   }, []);
   // Sidebar: open by default on desktop, hidden on mobile; follow the breakpoint.
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1024px)");
     const apply = () => setSidebarOpen(mq.matches);
     apply();
-    mq.addEventListener("change", apply);
-    return () => mq.removeEventListener("change", apply);
+    if (mq.addEventListener) mq.addEventListener("change", apply);
+    else mq.addListener(apply);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener("change", apply);
+      else mq.removeListener(apply);
+    };
   }, []);
 
   // Brand the installable app per merchant: point the manifest at the logged-in
@@ -238,6 +250,10 @@ function RootComponent() {
   const isStandaloneLayout =
     pathname.startsWith("/dashboard") ||
     pathname.startsWith("/pay") ||
+    pathname.startsWith("/q/") ||
+    pathname.startsWith("/me/") ||
+    pathname.startsWith("/book/") ||
+    pathname.startsWith("/merchant") ||
     pathname.startsWith("/table") ||
     pathname.startsWith("/enquire") ||
     pathname.startsWith("/get-started") ||
@@ -263,9 +279,11 @@ function RootComponent() {
             <div className="min-h-screen bg-background text-foreground">
               <Outlet />
               <Toaster position="top-right" richColors />
-              {isCustomerFacing && <ChatWidget />}
-              <InstallBanner />
-              <SandboxBadge />
+              <Suspense fallback={null}>
+                {isCustomerFacing && <ChatWidget />}
+                {!isCustomerFacing && <InstallBanner />}
+                <SandboxBadge />
+              </Suspense>
             </div>
           </ErrorBoundary>
         </AuthProvider>
@@ -301,9 +319,11 @@ function RootComponent() {
               <Outlet />
             </main>
             <Toaster position="top-right" richColors />
-            {isCustomerFacing && <ChatWidget />}
-            <InstallBanner />
-            <SandboxBadge />
+            <Suspense fallback={null}>
+              {isCustomerFacing && <ChatWidget />}
+              <InstallBanner />
+              <SandboxBadge />
+            </Suspense>
           </div>
         </ErrorBoundary>
       </AuthProvider>

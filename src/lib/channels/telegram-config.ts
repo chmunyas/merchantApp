@@ -11,14 +11,15 @@ export type TelegramConfig = {
 export async function getTelegramConfig(
   env: unknown,
   venue?: string,
+  accountId?: string,
 ): Promise<TelegramConfig> {
-  let botToken = envVar(env, "TELEGRAM_BOT_TOKEN");
+  let botToken = venue ? undefined : envVar(env, "TELEGRAM_BOT_TOKEN");
   const bridgeUrl = envVar(env, "WHATSAPP_BRIDGE_URL");
   try {
     const sql = getSql(env);
     if (sql) {
       // Per-venue bot (telegram:<venue>) wins over the global default.
-      const keys = venue ? [`telegram:${venue}`, "telegram"] : ["telegram"];
+      const keys = venue ? [`telegram:${venue}`] : ["telegram"];
       for (const k of keys) {
         const [row] = await sql`
           SELECT value FROM app_settings WHERE key = ${k} LIMIT 1`;
@@ -26,6 +27,16 @@ export async function getTelegramConfig(
         if (value?.botToken) {
           botToken = value.botToken;
           break;
+        }
+      }
+      if (accountId && botToken) {
+        const response = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
+        const me = (await response.json()) as {
+          ok?: boolean;
+          result?: { id?: number };
+        };
+        if (!me.ok || String(me.result?.id ?? "") !== accountId) {
+          botToken = undefined;
         }
       }
     }

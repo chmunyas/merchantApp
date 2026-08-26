@@ -34,6 +34,15 @@ describe("parseScheduledAt", () => {
     expect(iso).toBe(new Date("2026-07-08T19:30:00Z").toISOString());
   });
 
+  it("interprets an offsetless browser value in the venue timezone", () => {
+    const iso = parseScheduledAt(
+      "2026-07-08T19:30",
+      now,
+      "Africa/Nairobi",
+    );
+    expect(iso).toBe("2026-07-08T16:30:00.000Z");
+  });
+
   it("treats a blank / past / invalid value as ASAP (null)", () => {
     expect(parseScheduledAt("", now)).toBeNull();
     expect(parseScheduledAt(undefined, now)).toBeNull();

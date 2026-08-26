@@ -30,6 +30,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { ModalOverlay } from "@/components/ui/modal-overlay";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
@@ -174,6 +175,7 @@ function AdminMerchantsPage() {
   const [status, setStatus] = useState<string>("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<MerchantAccount | null>(null);
   const [detailTab, setDetailTab] = useState("overview");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [form, setForm] = useState<MerchantFormState>(emptyForm);
@@ -312,11 +314,6 @@ function AdminMerchantsPage() {
   }
 
   function handleDeleteMerchant(merchant: MerchantAccount) {
-    if (
-      !window.confirm(`Delete ${merchant.businessName}? This cannot be undone.`)
-    ) {
-      return;
-    }
     deleteMerchant(merchant.id);
     logActivity(
       "settings_changed",
@@ -327,6 +324,7 @@ function AdminMerchantsPage() {
       setDetailOpen(false);
       setSelectedId(null);
     }
+    setPendingDelete(null);
     refresh();
     toast.success("Merchant deleted");
   }
@@ -706,7 +704,7 @@ function AdminMerchantsPage() {
                 <Button
                   variant="outline"
                   className="rounded-xl border-rose-500/30 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20"
-                  onClick={() => handleDeleteMerchant(selectedMerchant)}
+                  onClick={() => setPendingDelete(selectedMerchant)}
                 >
                   <Trash2 className="h-4 w-4" /> Delete
                 </Button>
@@ -940,6 +938,35 @@ function AdminMerchantsPage() {
           ) : null}
         </DialogContent>
       </Dialog>
+
+      {pendingDelete && (
+        <ModalOverlay
+          onClose={() => setPendingDelete(null)}
+          labelledBy="delete-merchant-heading"
+          closeLabel="Close delete confirmation"
+          className="flex items-center justify-center p-4"
+          panelClassName="w-full max-w-md rounded-2xl bg-card p-6 shadow-xl"
+        >
+          <h2 id="delete-merchant-heading" className="text-base font-bold">
+            Delete {pendingDelete.businessName}?
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            This cannot be undone. Their venue, staff and history are removed from
+            the admin console.
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setPendingDelete(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => handleDeleteMerchant(pendingDelete)}
+            >
+              Delete merchant
+            </Button>
+          </div>
+        </ModalOverlay>
+      )}
     </div>
   );
 }

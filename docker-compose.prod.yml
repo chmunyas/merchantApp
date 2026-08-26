@@ -16,6 +16,11 @@ services:
       - "8787:8787"
     environment:
       - WRANGLER_SEND_METRICS=false
+      - APP_ENV=production
+      - AUTH_REQUIRE_LOGIN=1
+      - AUTH_OTP_DEBUG=0
+      - ALLOW_SIMULATORS=0
+      - PAYMENTS_TEST_MODE=0
       # Hyperdrive local connection -> the prod Postgres service (workerd path).
       - CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgres://pesaswap:pesaswap@postgres:5432/pesaswap
     volumes:

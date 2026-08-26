@@ -1,6 +1,10 @@
 import { getSql } from "@/lib/db";
+import type { QuerySql, Sql } from "@/lib/db";
+import { buildAgingReport } from "@/lib/ar-aging";
+import { sha256Hex } from "@/lib/hash";
+import { DEFAULT_CURRENCY, minorUnitFactor, type SupportedCurrency } from "@/lib/currency";
 
-type Sql = NonNullable<ReturnType<typeof getSql>>;
+type RootSql = NonNullable<ReturnType<typeof getSql>>;
 
 // --- Chart of accounts (mirrors db/30-accounting.sql) ---------------------
 export type AccountType =
@@ -25,6 +29,7 @@ export const CHART: Account[] = [
   { code: "1200", name: "Inventory", type: "asset", normal: "debit" },
   { code: "2000", name: "Tips Payable", type: "liability", normal: "credit" },
   { code: "2100", name: "Tax Payable", type: "liability", normal: "credit" },
+  { code: "2200", name: "Customer Credits", type: "liability", normal: "credit" },
   { code: "3000", name: "Owner Equity", type: "equity", normal: "credit" },
   { code: "4000", name: "Sales Revenue", type: "revenue", normal: "credit" },
   { code: "4900", name: "Refunds & Returns", type: "contra_revenue", normal: "debit" },
@@ -147,7 +152,31 @@ export type PostEntryInput = {
 // re-posting the same source event is a no-op. Throws if debits != credits so an
 // unbalanced entry can never enter the ledger (audit integrity).
 export async function postEntry(
-  sql: Sql,
+  sql: RootSql,
+  input: PostEntryInput,
+): Promise<string | null> {
+  const lines = input.lines
+    .map((line) => ({
+      debit: Math.max(0, round(line.debit ?? 0)),
+      credit: Math.max(0, round(line.credit ?? 0)),
+    }))
+    .filter((line) => line.debit > 0 || line.credit > 0);
+  const totalDebit = lines.reduce((sum, line) => sum + line.debit, 0);
+  const totalCredit = lines.reduce((sum, line) => sum + line.credit, 0);
+  if (lines.length === 0 || totalDebit === 0) return null;
+  if (totalDebit !== totalCredit) {
+    throw new Error(
+      `unbalanced journal entry (${input.sourceType}:${input.sourceId}): debit ${totalDebit} != credit ${totalCredit}`,
+    );
+  }
+  return sql.begin((tx) => postEntryInTransaction(tx, input));
+}
+
+// Transaction-owned posting primitive. The closed-period check, idempotency
+// guard, entry, and all lines commit atomically with the caller's projection.
+// Consumers already inside a transaction must use this instead of nesting begin().
+export async function postEntryInTransaction(
+  sql: QuerySql,
   input: PostEntryInput,
 ): Promise<string | null> {
   const lines = input.lines
@@ -170,6 +199,9 @@ export async function postEntry(
   const currency = input.currency ?? "KES";
   const entryDate = input.date ? new Date(input.date) : new Date();
 
+  await sql`
+    SELECT pg_advisory_xact_lock(hashtextextended(${`ledger-period:${input.venue}`}, 0))`;
+
   // A closed period is locked: nothing may post on or before its period_end.
   if (await isPeriodClosed(sql, input.venue, entryDate)) {
     throw new Error(
@@ -177,30 +209,28 @@ export async function postEntry(
     );
   }
 
-  return sql.begin(async (tx) => {
-    const [entry] = await tx`
+  const [entry] = await sql`
       INSERT INTO journal_entries
         (venue_id, entry_date, memo, source_type, source_id, currency, amount, created_by)
       VALUES (${input.venue}, ${entryDate}, ${input.memo ?? null}, ${input.sourceType},
               ${input.sourceId}, ${currency}, ${totalDebit}, ${input.createdBy ?? null})
       ON CONFLICT (venue_id, source_type, source_id) DO NOTHING
       RETURNING id`;
-    if (!entry) return null; // already posted
-    for (const l of lines) {
-      await tx`
+  if (!entry) return null; // already posted
+  for (const l of lines) {
+    await sql`
         INSERT INTO journal_lines
           (entry_id, venue_id, entry_date, account_code, debit, credit, memo)
         VALUES (${entry.id}, ${input.venue}, ${entryDate}, ${l.account},
                 ${l.debit}, ${l.credit}, ${l.memo})`;
-    }
-    return String(entry.id);
-  });
+  }
+  return String(entry.id);
 }
 
 // --- Event posting wrappers (called best-effort from the source flows) -----
 
 export function postPaymentEntry(
-  sql: Sql,
+  sql: RootSql,
   p: { venue: string; id: string; amount: number; tip?: number; currency?: string; date?: Date | string },
 ): Promise<string | null> {
   return postEntry(sql, {
@@ -215,7 +245,7 @@ export function postPaymentEntry(
 }
 
 export function postRefundEntry(
-  sql: Sql,
+  sql: RootSql,
   p: { venue: string; id: string; amount: number; currency?: string; date?: Date | string },
 ): Promise<string | null> {
   return postEntry(sql, {
@@ -230,7 +260,7 @@ export function postRefundEntry(
 }
 
 export function postSettlementEntry(
-  sql: Sql,
+  sql: RootSql,
   p: { venue: string; id: string; gross: number; fees: number; currency?: string; date?: Date | string },
 ): Promise<string | null> {
   return postEntry(sql, {
@@ -245,7 +275,7 @@ export function postSettlementEntry(
 }
 
 export function postTipPayoutEntry(
-  sql: Sql,
+  sql: RootSql,
   p: { venue: string; id: string; amount: number; currency?: string; date?: Date | string },
 ): Promise<string | null> {
   return postEntry(sql, {
@@ -260,7 +290,7 @@ export function postTipPayoutEntry(
 }
 
 export function postInvoiceIssueEntry(
-  sql: Sql,
+  sql: RootSql,
   p: { venue: string; number: string; subtotal: number; tax?: number; currency?: string; date?: Date | string },
 ): Promise<string | null> {
   return postEntry(sql, {
@@ -275,7 +305,7 @@ export function postInvoiceIssueEntry(
 }
 
 export function postInvoicePaymentEntry(
-  sql: Sql,
+  sql: RootSql,
   p: { venue: string; sourceId: string; amount: number; currency?: string; date?: Date | string },
 ): Promise<string | null> {
   return postEntry(sql, {
@@ -290,10 +320,40 @@ export function postInvoicePaymentEntry(
 }
 
 export function postCogsEntry(
-  sql: Sql,
+  sql: RootSql,
   p: { venue: string; orderId: string; cost: number; currency?: string; date?: Date | string },
 ): Promise<string | null> {
   return postEntry(sql, {
+    venue: p.venue,
+    sourceType: "cogs",
+    sourceId: p.orderId,
+    currency: p.currency,
+    date: p.date,
+    memo: "Cost of goods sold",
+    lines: cogsLines(p.cost),
+  });
+}
+
+export function postPaymentEntryInTransaction(
+  sql: QuerySql,
+  p: { venue: string; id: string; amount: number; tip?: number; currency?: string; date?: Date | string },
+): Promise<string | null> {
+  return postEntryInTransaction(sql, {
+    venue: p.venue,
+    sourceType: "payment",
+    sourceId: p.id,
+    currency: p.currency,
+    date: p.date,
+    memo: "Payment received",
+    lines: paymentLines(p.amount, p.tip ?? 0),
+  });
+}
+
+export function postCogsEntryInTransaction(
+  sql: QuerySql,
+  p: { venue: string; orderId: string; cost: number; currency?: string; date?: Date | string },
+): Promise<string | null> {
+  return postEntryInTransaction(sql, {
     venue: p.venue,
     sourceType: "cogs",
     sourceId: p.orderId,
@@ -308,7 +368,7 @@ export function postCogsEntry(
 
 // A date is locked if it falls on or before the period_end of any CLOSED period.
 export async function isPeriodClosed(
-  sql: Sql,
+  sql: QuerySql,
   venue: string,
   date: Date | string,
 ): Promise<boolean> {
@@ -328,22 +388,100 @@ export async function closePeriod(
   by?: string | null,
   note?: string | null,
 ) {
-  const [row] = await sql`
-    INSERT INTO ledger_periods (venue_id, period_end, status, note, closed_by)
-    VALUES (${venue}, ${periodEnd}, 'closed', ${note ?? null}, ${by ?? null})
-    ON CONFLICT (venue_id, period_end)
-    DO UPDATE SET status = 'closed', closed_at = now(),
-                  closed_by = ${by ?? null}, note = ${note ?? null}
-    RETURNING period_end, status, closed_at, closed_by, note`;
-  return row;
+  return sql.begin(async (tx) => {
+    await tx`
+      SELECT pg_advisory_xact_lock(hashtextextended(${`ledger-period:${venue}`}, 0))`;
+    const [row] = await tx`
+      INSERT INTO ledger_periods (venue_id, period_end, status, note, closed_by)
+      VALUES (${venue}, ${periodEnd}, 'closed', ${note ?? null}, ${by ?? null})
+      ON CONFLICT (venue_id, period_end)
+      DO UPDATE SET status = 'closed', closed_at = now(),
+                    closed_by = ${by ?? null}, note = ${note ?? null}
+      RETURNING period_end, status, closed_at, closed_by, note`;
+    await tx`
+      INSERT INTO ledger_period_events (venue_id, period_end, event_type, actor, note)
+      VALUES (${venue}, ${periodEnd}, 'closed', ${by ?? null}, ${note ?? null})`;
+    await createAuditCheckpointInTransaction(tx, venue, periodEnd, by ?? null);
+    return row;
+  });
 }
 
 export async function reopenPeriod(sql: Sql, venue: string, periodEnd: string) {
-  const [row] = await sql`
-    UPDATE ledger_periods SET status = 'open'
-    WHERE venue_id = ${venue} AND period_end = ${periodEnd}
-    RETURNING period_end, status`;
-  return row ?? null;
+  return sql.begin(async (tx) => {
+    await tx`
+      SELECT pg_advisory_xact_lock(hashtextextended(${`ledger-period:${venue}`}, 0))`;
+    const [row] = await tx`
+      UPDATE ledger_periods SET status = 'open'
+      WHERE venue_id = ${venue} AND period_end = ${periodEnd}
+      RETURNING period_end, status`;
+    if (row) {
+      await tx`
+        INSERT INTO ledger_period_events (venue_id, period_end, event_type, actor)
+        VALUES (${venue}, ${periodEnd}, 'reopened', NULL)`;
+    }
+    return row ?? null;
+  });
+}
+
+export async function createAuditCheckpointInTransaction(
+  sql: QuerySql,
+  venue: string,
+  periodEnd: string,
+  _actor?: string | null,
+  // One hash chain per currency: the ledger is currency-segregated, and
+  // ledger_audit_checkpoints is already keyed on (venue, currency, period_end).
+  currency: SupportedCurrency = DEFAULT_CURRENCY,
+): Promise<Record<string, unknown>> {
+  const [previous] = await sql`
+    SELECT final_hash FROM ledger_audit_checkpoints
+    WHERE venue_id = ${venue} AND currency = ${currency} AND period_end < ${periodEnd}
+    ORDER BY period_end DESC, created_at DESC LIMIT 1`;
+  let chain = String(previous?.final_hash ?? "GENESIS");
+  const entries = await sql`
+    SELECT e.id, e.entry_date, e.created_at, e.created_by, e.memo,
+           e.source_type, e.source_id, e.currency, e.amount,
+           COALESCE(json_agg(json_build_object(
+             'id', l.id, 'account', l.account_code, 'debit', l.debit,
+             'credit', l.credit, 'memo', l.memo
+           ) ORDER BY l.id), '[]') AS lines
+    FROM journal_entries e
+    LEFT JOIN journal_lines l ON l.entry_id = e.id
+    WHERE e.venue_id = ${venue} AND e.currency = ${currency}
+      AND e.entry_date::date <= ${periodEnd}
+    GROUP BY e.id
+    ORDER BY e.entry_date, e.created_at, e.id`;
+  for (const entry of entries) {
+    const content = JSON.stringify({
+      id: String(entry.id),
+      entryDate: new Date(entry.entry_date as string).toISOString(),
+      createdAt: new Date(entry.created_at as string).toISOString(),
+      createdBy: entry.created_by ?? null,
+      memo: entry.memo ?? null,
+      sourceType: entry.source_type,
+      sourceId: entry.source_id,
+      currency: entry.currency,
+      amount: String(entry.amount),
+      lines: entry.lines,
+    });
+    chain = await sha256Hex(chain + await sha256Hex(content));
+  }
+  const [checkpoint] = await sql`
+    INSERT INTO ledger_audit_checkpoints
+      (venue_id, currency, period_end, entry_count, previous_hash, final_hash)
+    VALUES (${venue}, ${currency}, ${periodEnd}, ${entries.length},
+            ${String(previous?.final_hash ?? "GENESIS")}, ${chain})
+    ON CONFLICT (venue_id, currency, period_end, final_hash) DO NOTHING
+    RETURNING id, venue_id, currency, period_end, algorithm, entry_count,
+              previous_hash, final_hash, created_at`;
+  if (checkpoint) return checkpoint;
+  const [existing] = await sql`
+    SELECT id, venue_id, currency, period_end, algorithm, entry_count,
+           previous_hash, final_hash, created_at
+    FROM ledger_audit_checkpoints
+    WHERE venue_id = ${venue} AND currency = ${currency} AND period_end = ${periodEnd}
+      AND final_hash = ${chain}
+    ORDER BY created_at DESC LIMIT 1`;
+  return existing;
 }
 
 export async function listPeriods(sql: Sql, venue: string) {
@@ -364,7 +502,7 @@ export type TrialBalanceRow = {
   balance: number; // signed on the account's normal side
 };
 
-async function accountTotals(sql: Sql, venue: string, from: string, to: string) {
+async function accountTotals(sql: Sql, venue: string, from: string, to: string, currency = "KES") {
   return sql`
     SELECT a.code, a.name, a.type, a.normal_side,
            COALESCE(sum(l.debit), 0)::bigint  AS debit,
@@ -373,6 +511,7 @@ async function accountTotals(sql: Sql, venue: string, from: string, to: string) 
     LEFT JOIN journal_lines l
       ON l.account_code = a.code
      AND l.venue_id = ${venue}
+    AND EXISTS (SELECT 1 FROM journal_entries je WHERE je.id = l.entry_id AND je.currency = ${currency})
      AND l.entry_date::date BETWEEN ${from} AND ${to}
     GROUP BY a.code, a.name, a.type, a.normal_side, a.sort_order
     ORDER BY a.sort_order`;
@@ -383,8 +522,9 @@ export async function trialBalance(
   venue: string,
   from?: string,
   to?: string,
+  currency = "KES",
 ): Promise<{ rows: TrialBalanceRow[]; totalDebit: number; totalCredit: number; balanced: boolean }> {
-  const raw = await accountTotals(sql, venue, from ?? MIN, to ?? MAX);
+  const raw = await accountTotals(sql, venue, from ?? MIN, to ?? MAX, currency);
   const rows: TrialBalanceRow[] = raw.map((r) => {
     const debit = Number(r.debit);
     const credit = Number(r.credit);
@@ -409,8 +549,9 @@ export async function incomeStatement(
   venue: string,
   from?: string,
   to?: string,
+  currency = "KES",
 ) {
-  const { rows } = await trialBalance(sql, venue, from, to);
+  const { rows } = await trialBalance(sql, venue, from, to, currency);
   const revenue = rows
     .filter((r) => r.type === "revenue")
     .reduce((s, r) => s + r.balance, 0);
@@ -434,8 +575,8 @@ export async function incomeStatement(
   };
 }
 
-export async function balanceSheet(sql: Sql, venue: string, asOf?: string) {
-  const { rows } = await trialBalance(sql, venue, MIN, asOf ?? MAX);
+export async function balanceSheet(sql: Sql, venue: string, asOf?: string, currency = "KES") {
+  const { rows } = await trialBalance(sql, venue, MIN, asOf ?? MAX, currency);
   const sum = (type: AccountType) =>
     rows.filter((r) => r.type === type).reduce((s, r) => s + r.balance, 0);
   const assets = sum("asset");
@@ -465,6 +606,7 @@ export async function generalLedger(
   code: string,
   from?: string,
   to?: string,
+  currency = "KES",
 ) {
   const account = ACCOUNT_BY_CODE.get(code);
   const lines = await sql`
@@ -475,6 +617,7 @@ export async function generalLedger(
     WHERE l.venue_id = ${venue}
       AND l.account_code = ${code}
       AND l.entry_date::date BETWEEN ${from ?? MIN} AND ${to ?? MAX}
+      AND e.currency = ${currency}
     ORDER BY l.entry_date, e.created_at`;
   let running = 0;
   const sign = account?.normal === "credit" ? -1 : 1;
@@ -499,6 +642,7 @@ export async function journalList(
   from?: string,
   to?: string,
   limit = 200,
+  currency = "KES",
 ) {
   const entries = await sql`
     SELECT e.id, e.entry_date, e.memo, e.source_type, e.source_id, e.currency, e.amount,
@@ -509,6 +653,7 @@ export async function journalList(
     LEFT JOIN journal_lines l ON l.entry_id = e.id
     WHERE e.venue_id = ${venue}
       AND e.entry_date::date BETWEEN ${from ?? MIN} AND ${to ?? MAX}
+      AND e.currency = ${currency}
     GROUP BY e.id
     ORDER BY e.entry_date DESC, e.created_at DESC
     LIMIT ${limit}`;
@@ -523,16 +668,20 @@ export async function auditEntries(
   from?: string,
   to?: string,
   limit = 5000,
+  currency = "KES",
 ) {
   return sql`
-    SELECT e.id, e.entry_date, e.memo, e.source_type, e.source_id, e.currency, e.amount,
+    SELECT e.id, e.entry_date, e.created_at, e.created_by, e.memo,
+           e.source_type, e.source_id, e.currency, e.amount,
            COALESCE(json_agg(json_build_object(
-             'account', l.account_code, 'debit', l.debit, 'credit', l.credit, 'memo', l.memo
-           ) ORDER BY l.account_code, l.debit DESC), '[]') AS lines
+             'id', l.id, 'account', l.account_code, 'debit', l.debit,
+             'credit', l.credit, 'memo', l.memo
+           ) ORDER BY l.id), '[]') AS lines
     FROM journal_entries e
     LEFT JOIN journal_lines l ON l.entry_id = e.id
     WHERE e.venue_id = ${venue}
       AND e.entry_date::date BETWEEN ${from ?? MIN} AND ${to ?? MAX}
+      AND e.currency = ${currency}
     GROUP BY e.id
     ORDER BY e.entry_date ASC, e.created_at ASC, e.id ASC
     LIMIT ${limit}`;
@@ -540,43 +689,47 @@ export async function auditEntries(
 
 // Accounts-Receivable aging: outstanding invoice balances by age bucket. Invoices
 // are the AR subledger — a customer bill that is issued but not yet paid.
-export async function arAging(sql: Sql, venue: string) {
-  const [row] = await sql`
-    SELECT
-      COALESCE(sum(bal),0)::numeric AS total,
-      COALESCE(sum(bal) FILTER (WHERE age <= 30),0)::numeric  AS d0_30,
-      COALESCE(sum(bal) FILTER (WHERE age > 30 AND age <= 60),0)::numeric AS d31_60,
-      COALESCE(sum(bal) FILTER (WHERE age > 60 AND age <= 90),0)::numeric AS d61_90,
-      COALESCE(sum(bal) FILTER (WHERE age > 90),0)::numeric AS d90_plus,
-      count(*)::int AS open_count
-    FROM (
-      SELECT ((amount - amount_paid) * 100) AS bal,
-             GREATEST(0, (CURRENT_DATE - created_at::date)) AS age
-      FROM invoices
-      WHERE venue_id = ${venue}
-        AND status NOT IN ('paid','void')
-        AND (amount - amount_paid) > 0
-    ) x`;
-  const outstanding = await sql`
-    SELECT number, customer_name, phone, currency,
-           ((amount - amount_paid) * 100) AS balance, due_date, created_at,
-           GREATEST(0, (CURRENT_DATE - created_at::date)) AS age_days
+export async function arAging(
+  sql: Sql,
+  venue: string,
+  currency: SupportedCurrency = DEFAULT_CURRENCY,
+) {
+  // SQL retrieves; src/lib/ar-aging.ts decides. Ageing is an accounting policy
+  // (it runs from the DUE date), not a database detail, so it is unit-tested.
+  // Rows are single-currency (filtered below), so the factor is known here.
+  const factor = minorUnitFactor(currency);
+  const rows = await sql`
+    SELECT number, customer_name, phone,
+           ROUND((amount - amount_paid) * ${factor})::bigint AS balance_minor,
+           due_date, created_at
     FROM invoices
     WHERE venue_id = ${venue}
+      AND currency = ${currency}
       AND status NOT IN ('paid','void')
       AND (amount - amount_paid) > 0
-    ORDER BY created_at
-    LIMIT 100`;
+    ORDER BY COALESCE(due_date, created_at::date)
+    LIMIT 1000`;
+
+  const report = buildAgingReport(
+    rows.map((row) => ({
+      number: String(row.number),
+      customerName: (row.customer_name as string | null) ?? null,
+      phone: (row.phone as string | null) ?? null,
+      balanceMinor: Number(row.balance_minor) || 0,
+      dueDate: row.due_date ? String(row.due_date) : null,
+      issuedAt: new Date(row.created_at as string).toISOString(),
+    })),
+  );
+
   return {
-    total: Number(row?.total ?? 0),
-    buckets: {
-      d0_30: Number(row?.d0_30 ?? 0),
-      d31_60: Number(row?.d31_60 ?? 0),
-      d61_90: Number(row?.d61_90 ?? 0),
-      d90_plus: Number(row?.d90_plus ?? 0),
-    },
-    openCount: Number(row?.open_count ?? 0),
-    invoices: outstanding,
+    asOf: report.asOf,
+    total: report.totalMinor,
+    totalMinor: report.totalMinor,
+    overdueMinor: report.overdueMinor,
+    buckets: report.buckets,
+    openCount: report.openCount,
+    customers: report.customers,
+    invoices: report.invoices.slice(0, 100),
   };
 }
 
@@ -588,6 +741,7 @@ export async function lostBasket(
   from?: string,
   to?: string,
   staleHours = 2,
+  currency = "KES",
 ) {
   const [row] = await sql`
     SELECT
@@ -599,6 +753,7 @@ export async function lostBasket(
       COALESCE(sum(total) FILTER (WHERE paid_at IS NULL AND created_at < now() - (${staleHours} || ' hours')::interval),0)::bigint AS abandoned_value
     FROM orders
     WHERE venue_id = ${venue}
+      AND currency = ${currency}
       AND created_at::date BETWEEN ${from ?? MIN} AND ${to ?? MAX}`;
   const paidCount = Number(row?.paid_count ?? 0);
   const abandonedCount = Number(row?.abandoned_count ?? 0);
@@ -607,6 +762,7 @@ export async function lostBasket(
     SELECT id, table_id, total, currency, status, created_at
     FROM orders
     WHERE venue_id = ${venue}
+      AND currency = ${currency}
       AND paid_at IS NULL
       AND created_at < now() - (${staleHours} || ' hours')::interval
       AND created_at::date BETWEEN ${from ?? MIN} AND ${to ?? MAX}

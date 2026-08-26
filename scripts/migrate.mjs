@@ -51,10 +51,14 @@ try {
     if (done.has(f)) continue;
     const content = readFileSync(join(dbDir, f), "utf8");
     process.stdout.write(`[${label}] applying ${f} ... `);
-    // Server-side multi-statement parse (safer than a client-side ; splitter).
-    await sql.unsafe(content).simple();
-    await sql`INSERT INTO schema_migrations (filename) VALUES (${f})
-              ON CONFLICT DO NOTHING`;
+    // Apply the complete file and its marker in one transaction. A failed
+    // statement rolls back every preceding statement in the migration, so a
+    // partially applied financial schema can never be reported as complete.
+    await sql.begin(async (tx) => {
+      await tx.unsafe(content).simple();
+      await tx`INSERT INTO schema_migrations (filename) VALUES (${f})
+               ON CONFLICT DO NOTHING`;
+    });
     console.log("ok");
     applied += 1;
   }

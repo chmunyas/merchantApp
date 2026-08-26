@@ -7,6 +7,9 @@
  * - Refunds with full metadata sync
  */
 
+import { authFetch } from "@/lib/auth";
+import { DEFAULT_CURRENCY, normalizeCurrency, toMinorUnits } from "@/lib/currency";
+
 // --- Configuration ---
 
 export const PESASWAP_CONFIG = {
@@ -93,6 +96,7 @@ export type CreatePaymentRequest = {
   payment_method?: PaymentMethod;
   description?: string;
   capture?: boolean; // auto-capture or manual
+  payment_intent_token?: string;
 };
 
 export type CreatePaymentResponse = {
@@ -114,8 +118,9 @@ export type RefundRequest = {
     | "duplicate"
     | "other";
   items?: Array<{ id: string; name: string; price: number; qty: number }>;
-  refunded_by: string;
+  refunded_by?: string;
   metadata?: Record<string, string>;
+  idempotency_key?: string;
 };
 
 export type RefundResponse = {
@@ -186,7 +191,7 @@ export function buildPaymentMetadata(params: {
     split_of: split?.totalParties || 1,
     split_index: split?.index || 1,
 
-    customer_phone: customer.phone,
+    customer_phone: formatKenyanPhone(customer.phone),
     customer_name: customer.name,
     customer_loyalty_id: customer.loyaltyId,
     loyalty_points_earned: undefined, // calculated on server after payment
@@ -216,13 +221,23 @@ class PesaSwapClient {
   async createPayment(
     request: CreatePaymentRequest,
   ): Promise<CreatePaymentResponse> {
+    const paymentMetadata = request.metadata as PaymentMetadata;
+    const idempotencyKey =
+      paymentMetadata.idempotency_key ||
+      (request.payment_intent_token
+        ? `payment-intent-${request.payment_intent_token.slice(0, 32)}`
+        : null);
+    if (!idempotencyKey) {
+      throw new PaymentError(
+        "A stable payment idempotency key is required.",
+        "idempotency_required",
+      );
+    }
     const response = await fetch(`${this.backendUrl}/api/payments/create`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Idempotency-Key": String(
-          (request.metadata as PaymentMetadata).idempotency_key || Date.now(),
-        ),
+        "Idempotency-Key": idempotencyKey,
       },
       body: JSON.stringify(request),
     });
@@ -255,44 +270,43 @@ class PesaSwapClient {
   }
 
   async processRefund(request: RefundRequest): Promise<RefundResponse> {
+    const { getToken } = await import("@/lib/auth");
+    const token = getToken();
     const response = await fetch(`${this.backendUrl}/api/refunds`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Idempotency-Key": `refund-${request.payment_id}-${Date.now()}`,
+        "Idempotency-Key":
+          request.idempotency_key ??
+          `refund-${request.payment_id}-${request.amount ?? "remaining"}`,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(request),
     });
 
     if (!response.ok) {
-      const error = await response
+      const error = (await response
         .json()
-        .catch(() => ({ message: "Refund failed" }));
+        .catch(() => ({ message: "Refund failed" }))) as {
+        message?: string;
+        error?: { message?: string };
+      };
       throw new PaymentError(
-        error.message || "Refund processing failed",
+        error.error?.message || error.message || "Refund processing failed",
         "refund_failed",
       );
     }
 
-    return response.json();
+    const result = (await response.json()) as RefundResponse;
+    if (result.status !== "succeeded") {
+      throw new PaymentError(
+        `Refund is ${result.status}; wait for provider confirmation`,
+        "refund_pending",
+      );
+    }
+    return result;
   }
 
-  async getCustomerPaymentMethods(phone: string): Promise<{
-    has_saved: boolean;
-    methods: Array<{
-      id: string;
-      type: PaymentMethod;
-      last4?: string;
-      label: string;
-    }>;
-    default_method?: string;
-  }> {
-    const response = await fetch(
-      `${this.backendUrl}/api/customers/payment-methods?phone=${encodeURIComponent(phone)}`,
-    );
-    if (!response.ok) return { has_saved: false, methods: [] };
-    return response.json();
-  }
 }
 
 // --- HyperLoader Integration ---
@@ -485,6 +499,7 @@ export async function executePayment(params: {
   currency?: string;
   metadata: PaymentMetadata;
   phone: string;
+  paymentIntentToken?: string;
   preferredFlow?: PaymentFlow;
   checkoutContainerId?: string; // for full checkout widget
   onStatusChange?: (status: PaymentStatus) => void;
@@ -496,7 +511,7 @@ export async function executePayment(params: {
 }> {
   const {
     amount,
-    currency = "KES",
+    currency = DEFAULT_CURRENCY,
     metadata,
     phone,
     preferredFlow,
@@ -506,13 +521,44 @@ export async function executePayment(params: {
   const client = new PesaSwapClient();
 
   try {
+    const normalizedCurrency = normalizeCurrency(currency);
+    if (!normalizedCurrency) {
+      throw new PaymentError("Unsupported currency.", "invalid_currency");
+    }
+    const amountMinor = toMinorUnits(amount, normalizedCurrency);
+    let paymentIntentToken = params.paymentIntentToken;
+    if (!paymentIntentToken) {
+      const intentResponse = await authFetch("/api/payments/intent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          amount: amountMinor,
+          currency: normalizedCurrency,
+          metadata,
+        }),
+      });
+      if (!intentResponse.ok) {
+        throw new PaymentError(
+          "A server-authoritative payment source is required.",
+          "intent_required",
+        );
+      }
+      const intentBody = (await intentResponse.json()) as {
+        paymentIntentToken?: string;
+      };
+      paymentIntentToken = intentBody.paymentIntentToken;
+    }
+    if (!paymentIntentToken) {
+      throw new PaymentError("Payment intent unavailable.", "intent_required");
+    }
     // 1. Create payment intent
     onStatusChange?.("requires_payment_method");
     const payment = await client.createPayment({
-      amount: amount * 100, // convert to minor units
-      currency,
+      amount: amountMinor,
+      currency: normalizedCurrency,
       metadata,
       description: describePayment(metadata),
+      payment_intent_token: paymentIntentToken,
     });
 
     // Test mode: the server simulated the payment (no provider), so the intent is
@@ -547,14 +593,13 @@ export async function executePayment(params: {
     onStatusChange?.("requires_confirmation");
 
     // 2. Resolve flow
-    const savedMethods = await client.getCustomerPaymentMethods(phone);
     const flow =
       preferredFlow ||
       resolvePaymentFlow({
-        amount: amount * 100,
-        currency,
+        amount: amountMinor,
+        currency: normalizedCurrency,
         customer_phone: phone,
-        has_saved_method: savedMethods.has_saved,
+        has_saved_method: false,
       });
 
     // 3. Execute based on flow

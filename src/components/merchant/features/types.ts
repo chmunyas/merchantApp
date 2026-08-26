@@ -27,7 +27,7 @@ export type Invoice = {
   customer: string;
   amount: number;
   currency: string;
-  status: "Paid" | "Pending" | "Overdue" | "Partial";
+  status: "Paid" | "Pending" | "Overdue" | "Partial" | "Void";
   date: string;
   note?: string;
   paidAt?: string;
@@ -47,6 +47,9 @@ export type Invoice = {
   // The server (DB) id, when this invoice is a real, persisted record — used to
   // drive server mutations (pay / mark-paid). Absent for demo/seed invoices.
   serverId?: string;
+  // Created without a venue claim: exists only in this browser, and will never
+  // appear in the back office.
+  localOnly?: boolean;
 };
 
 export type FxLock = {
@@ -173,6 +176,15 @@ export type CatalogueItem = {
   translations?: Partial<Record<SupportedMenuLocale, CatalogueItemTranslation>>;
   syncSource?: string;
   syncedAt?: string;
+  revision?: number;
+  // C6.5 / A6.4 — what the GUEST reads. `name` above stays the operational name
+  // the kitchen and the agent use.
+  displayName?: string;
+  allergens?: string[];
+  tags?: string[];
+  imageAlt?: string;
+  videoUrl?: string;
+  videoDescription?: string;
 };
 
 export type ModifierOption = {
@@ -353,7 +365,6 @@ export type StaffMember = {
   name: string;
   phone: string;
   role: StaffRole;
-  pin: string;
   isActive: boolean;
   hiredAt: string;
   avatar?: string;

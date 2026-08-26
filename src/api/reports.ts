@@ -1,6 +1,8 @@
 import { getSql } from "@/lib/db";
 import { requireAuth } from "@/api/auth";
 import { venueFromPayload } from "@/lib/tenancy";
+import { roleAtLeast } from "@/lib/rbac";
+import { tokenHasScope } from "@/lib/api-tokens";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -36,11 +38,16 @@ export async function handleReportsRoute(
 
   const payload = await requireAuth(request, env);
   if (!payload) return json({ error: "unauthorized" }, 401);
+  if (!roleAtLeast(payload, "manager") || !tokenHasScope(payload, "analytics:read")) {
+    return json({ error: "forbidden" }, 403);
+  }
   const venue = venueFromPayload(payload, url);
   const sql = getSql(env);
   if (!sql) return json({ error: "database not configured" }, 503);
 
   if (url.pathname === "/api/reports/summary" && request.method === "GET") {
+    const currency = String(url.searchParams.get("currency") ?? "KES").toUpperCase();
+    if (currency !== "KES") return json({ error: "Only KES reports are supported." }, 409);
     const to = parseDate(url.searchParams.get("to"), isoDate(new Date()));
     const from = parseDate(
       url.searchParams.get("from"),
@@ -48,13 +55,19 @@ export async function handleReportsRoute(
     );
 
     const [totals] = await sql`
-      SELECT count(*)::int AS tx,
-             coalesce(sum(amount), 0)::bigint AS gross,
-             coalesce(sum(tip_amount), 0)::bigint AS tips
-      FROM payments
-      WHERE venue_id = ${venue}
-        AND status IN ('succeeded', 'paid', 'captured')
-        AND created_at::date BETWEEN ${from} AND ${to}`;
+      SELECT count(*) FILTER (WHERE p.kind <> 'refund')::int AS tx,
+             coalesce(sum(p.amount) FILTER (WHERE p.kind <> 'refund'), 0)::bigint AS gross,
+             coalesce(sum(p.amount) FILTER (WHERE p.kind = 'refund' AND p.status='refunded'), 0)::bigint AS refunds,
+             coalesce(sum(CASE WHEN p.kind <> 'refund' THEN
+               p.tip_amount - COALESCE((SELECT sum(fa.amount)
+                 FROM financial_adjustments fa
+                 WHERE fa.payment_id = p.id AND fa.component = 'tip'), 0)
+               ELSE 0 END), 0)::bigint AS tips
+      FROM payments p
+      WHERE p.venue_id = ${venue}
+        AND p.currency = ${currency}
+        AND p.status IN ('succeeded','paid','captured','partially_refunded','refunded')
+        AND p.created_at::date BETWEEN ${from} AND ${to}`;
 
     const byItem = await sql`
       SELECT oi.name,
@@ -63,6 +76,8 @@ export async function handleReportsRoute(
       FROM order_items oi
       JOIN orders o ON o.id = oi.order_id
       WHERE o.venue_id = ${venue}
+        AND o.currency = ${currency}
+        AND o.paid_at IS NOT NULL AND o.status <> 'cancelled'
         AND o.created_at::date BETWEEN ${from} AND ${to}
       GROUP BY oi.name
       ORDER BY amount DESC`;
@@ -73,7 +88,9 @@ export async function handleReportsRoute(
              coalesce(sum(amount), 0)::bigint AS amount
       FROM payments
       WHERE venue_id = ${venue}
-        AND status IN ('succeeded', 'paid', 'captured')
+        AND currency = ${currency}
+        AND kind <> 'refund'
+        AND status IN ('succeeded','paid','captured','partially_refunded','refunded')
         AND created_at::date BETWEEN ${from} AND ${to}
       GROUP BY day
       ORDER BY day`;
@@ -81,10 +98,12 @@ export async function handleReportsRoute(
     return json({
       from,
       to,
-      currency: "KES",
+      currency,
       totals: {
         tx: Number(totals?.tx ?? 0),
         gross: Number(totals?.gross ?? 0),
+        refunds: Number(totals?.refunds ?? 0),
+        net: Number(totals?.gross ?? 0) - Number(totals?.refunds ?? 0),
         tips: Number(totals?.tips ?? 0),
       },
       byItem: byItem.map((r) => ({

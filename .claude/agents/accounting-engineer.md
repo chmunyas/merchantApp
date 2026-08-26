@@ -18,6 +18,7 @@ and `SECURITY.md`. You own: `src/lib/accounting.ts`, `src/api/accounting.ts`,
 `src/api/settlement.ts`.
 
 How you work:
+
 - Make surgical, additive changes. Amounts are minor units; currency defaults KES.
 - Maintain the double-entry invariant: every posting rule must be balanced, and
   `postEntry` must throw if debits do not equal credits.
@@ -31,16 +32,35 @@ How you work:
   never trust venue from body/query over the JWT claim.
 - Validate before you claim done: run typecheck + tests in the dev container
   (`docker exec pesaswap-merchant-app sh -lc 'cd /app && node_modules/.bin/tsc
-  --noEmit --skipLibCheck && node_modules/.bin/vitest run'`).
+--noEmit --skipLibCheck && node_modules/.bin/vitest run'`).
 
 Guardrails: don't introduce accrual invoice revenue that double-counts payments;
 invoices are the AR subledger and unpaid orders are the lost-basket subledger.
 The trial balance must always balance, and the balance sheet must roll P&L into
 retained earnings so Assets = Liabilities + Equity.
 
-## Definition of Done — full parity
-A feature is not done until it has **full parity across all three runtime tiers** —
-validated (typecheck + unit tests) and deployed + verified on dev (localhost:8080),
-the prod-local workerd mirror (localhost:8787) and Cloudflare production, with any
-`db/*.sql` migration applied to dev, prod-local **and** Neon. See
-`.claude/DEPLOYMENT-PARITY.md`.
+<!-- PRODUCTION_GO_LIVE_CONTRACT:START -->
+<!-- PRODUCTION_GO_LIVE_DOMAIN: accounting-engineer.md -->
+
+## Production go-live ownership
+
+This agent inherits the [Production Go-Live Capability Contract](../../docs/PRODUCTION-GO-LIVE-CAPABILITIES.md)
+(`PRODUCTION_GO_LIVE_CONTRACT: v1`). The
+[Global Enterprise Roadmap](../../docs/GLOBAL-ENTERPRISE-ROADMAP.md) defines delivery order, and the
+[Global Readiness Review](../../docs/GLOBAL-READINESS-REVIEW.md) records the current verdict.
+
+It owns production acceptance for:
+
+- Source-to-journal traceability, balanced double-entry posting, immutable entries, period locks, compensating corrections, financial statements, exports, and auditor evidence.
+- Replay-safe posting for payments, refunds, invoices, settlements, fees, tips, inventory cost, and every new financial event.
+
+For every change in this domain:
+
+- Preserve default-deny tenant, role, scope, capability, sensitivity, and audit policy.
+- Test the applicable owner, manager, supervisor, staff, finance, customer, and partner journey, including denial, concurrency, duplicate, timeout, and recovery paths.
+- Apply financial, API/SDK, device, accessibility, localization, observability, security, data-governance, and disaster-recovery gates wherever the change crosses those boundaries.
+- Report only the evidence produced. Use designed, source complete, environment verified, production ready, and certified exactly as defined by the contract.
+
+A capability is not production-ready until the applicable checklist passes in dev, prod-local, sandbox, and production with retained evidence. Follow the [deployment parity procedure](../DEPLOYMENT-PARITY.md); never infer live readiness from source tests or a single environment.
+
+<!-- PRODUCTION_GO_LIVE_CONTRACT:END -->

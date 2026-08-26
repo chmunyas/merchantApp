@@ -41,6 +41,9 @@ export function useKeQrConfig(): KeQrConfig {
     void loadKeQrConfig().then((c) => {
       if (mounted) setCfg(c);
     });
+    return () => {
+      mounted = false;
+    };
   }, []);
   return cfg;
 }

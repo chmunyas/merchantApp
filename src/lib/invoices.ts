@@ -1,7 +1,9 @@
-import { getAdapter } from "@/lib/channels";
 import { getSql } from "@/lib/db";
 import { getBaseUrl, payLink } from "@/lib/links";
-import { postInvoiceIssueEntry } from "@/lib/accounting";
+import { invoiceIssueLines, postEntryInTransaction } from "@/lib/accounting";
+import { validateInvoiceInput } from "@/lib/invoice-validation";
+import { toMinorUnits } from "@/lib/currency";
+import { invoiceNumber as sharedInvoiceNumber } from "@/lib/invoice-number";
 
 type Sql = NonNullable<ReturnType<typeof getSql>>;
 
@@ -22,6 +24,7 @@ export type CreateInvoiceInput = {
   notes?: string | null;
   recurringId?: string | null;
   staffId?: string | null; // attributes the invoice's payment + tip to a staff member
+  idempotencyKey?: string | null;
 };
 
 export type InvoiceResult = {
@@ -34,7 +37,7 @@ export type InvoiceResult = {
 };
 
 function invoiceNumber(): string {
-  return `INV-${Date.now().toString(36).toUpperCase()}`;
+  return sharedInvoiceNumber();
 }
 
 // Log an entry to the per-invoice audit / comms trail.
@@ -82,92 +85,95 @@ export async function createInvoice(
   const sql = getSql(env);
   if (!sql) return { error: "database not configured" };
 
-  const items = input.lineItems ?? [];
-  const subtotal =
-    items.length > 0
-      ? items.reduce((sum, it) => sum + Number(it.qty) * Number(it.price), 0)
-      : input.amount;
-  const taxRate = Number(input.taxRate ?? 0);
-  const taxAmount = Math.round((subtotal * taxRate) / 100);
-  const amount = subtotal + taxAmount;
-  if (!amount || amount <= 0) return { error: "amount required" };
+  if (input.idempotencyKey) {
+    const [existing] = await sql`
+      SELECT id, number, amount, currency, pay_link
+      FROM invoices
+      WHERE venue_id = ${input.venue} AND idempotency_key = ${input.idempotencyKey}
+      LIMIT 1`;
+    if (existing) {
+      return {
+        id: String(existing.id),
+        number: String(existing.number),
+        amount: Number(existing.amount),
+        currency: String(existing.currency),
+        payLink: String(existing.pay_link),
+        delivery: "duplicate",
+      };
+    }
+  }
+
+  const validated = validateInvoiceInput({
+    amount: input.amount,
+    currency: input.currency,
+    lineItems: input.lineItems,
+    taxRate: input.taxRate,
+    dueDate: input.dueDate,
+    expectedTotal: input.lineItems?.length ? input.amount : undefined,
+  });
+  if ("error" in validated) return validated;
+  const { items, subtotal, taxRate, taxAmount, amount, currency, dueDate } = validated;
 
   const number = invoiceNumber();
-  const currency = input.currency ?? "KES";
   const base = await getBaseUrl(env);
   const link = payLink(base, { number });
   const channel = input.channel;
   const handle = input.handle ?? input.phone ?? null;
 
-  let conversationId: string | null = null;
-  let delivery = "none";
-
-  if (channel && handle) {
-    const message = invoiceMessage(number, currency, amount, link, {
-      description: input.description,
-      dueDate: input.dueDate,
-    });
-    try {
-      const out = await getAdapter(channel).send(handle, message, env, input.venue);
-      delivery = out.delivery;
-      const [conversation] = await sql`
-        INSERT INTO conversations (venue_id, wa_id, name, role, channel)
-        VALUES (${input.venue}, ${handle}, ${input.customerName ?? null}, 'customer', ${channel})
-        ON CONFLICT (venue_id, wa_id) DO UPDATE SET last_message_at = now()
-        RETURNING id`;
-      conversationId = conversation.id;
-      await sql`
-        INSERT INTO messages (conversation_id, direction, body, ai, channel)
-        VALUES (${conversationId}, 'outbound', ${message}, false, ${channel})`;
-    } catch {
-      delivery = "failed";
-    }
-  }
-
-  const status = channel && handle ? "sent" : "draft";
-  const [invoice] = await sql`
-    INSERT INTO invoices (venue_id, number, customer_name, phone, amount, currency,
-                          description, status, channel, conversation_id, pay_link,
-                          subtotal, tax_rate, tax_amount, due_date, line_items, notes,
-                          recurring_id, staff_id)
-    VALUES (${input.venue}, ${number}, ${input.customerName ?? null}, ${input.phone ?? null},
-            ${amount}, ${currency}, ${input.description ?? null},
-            ${status}, ${channel ?? null}, ${conversationId}, ${link},
-            ${subtotal}, ${taxRate}, ${taxAmount}, ${input.dueDate ?? null},
-            ${sql.json(JSON.parse(JSON.stringify(items)))}, ${input.notes ?? null},
-            ${input.recurringId ?? null}, ${input.staffId ?? null})
-    RETURNING id`;
-
-  await logInvoiceEvent(
-    sql,
-    input.venue,
-    invoice.id,
-    "created",
-    `Invoice ${number} created`,
-    { amount },
-  );
-  if (channel && handle) {
-    await logInvoiceEvent(sql, input.venue, invoice.id, "sent", `Sent via ${channel}`, {
-      channel,
-      delivery,
-    });
-  }
-
-  // Recognise revenue on account (accrual): the invoice becomes a receivable.
-  // Invoice amounts are whole KES; the ledger is in minor units, so scale ×100.
-  try {
-    await postInvoiceIssueEntry(sql, {
+  const message = channel && handle
+    ? invoiceMessage(number, currency, amount, link, {
+        description: input.description,
+        dueDate,
+      })
+    : null;
+  const [invoice] = await sql.begin(async (tx) => {
+    const [created] = await tx`
+      INSERT INTO invoices (venue_id, number, customer_name, phone, amount, currency,
+                            description, status, channel, conversation_id, pay_link,
+                            subtotal, tax_rate, tax_amount, due_date, line_items, notes,
+                            recurring_id, staff_id, idempotency_key)
+      VALUES (${input.venue}, ${number}, ${input.customerName ?? null}, ${input.phone ?? null},
+              ${amount}, ${currency}, ${input.description ?? null},
+              'issued', ${channel ?? null}, NULL, ${link},
+              ${subtotal}, ${taxRate}, ${taxAmount}, ${dueDate},
+              ${tx.json(JSON.parse(JSON.stringify(items)))}, ${input.notes ?? null},
+              ${input.recurringId ?? null}, ${input.staffId ?? null},
+              ${input.idempotencyKey ?? null})
+      RETURNING id`;
+    await tx`
+      INSERT INTO invoice_events (invoice_id, venue_id, type, detail, amount)
+      VALUES (${created.id}, ${input.venue}, 'created', ${`Invoice ${number} issued`}, ${amount})`;
+    await postEntryInTransaction(tx, {
       venue: input.venue,
-      number,
-      subtotal: subtotal * 100,
-      tax: taxAmount * 100,
+      sourceType: "invoice",
+      sourceId: number,
       currency,
+      memo: `Invoice ${number} issued`,
+      lines: invoiceIssueLines(
+        toMinorUnits(subtotal, currency),
+        toMinorUnits(taxAmount, currency),
+      ),
     });
-  } catch {
-    /* best-effort accounting */
-  }
+    if (message && channel && handle) {
+      await tx`
+        INSERT INTO invoice_communication_outbox
+          (invoice_id, venue_id, purpose, channel, recipient, dedupe_key, payload)
+        VALUES
+          (${created.id}, ${input.venue}, 'initial', ${channel}, ${handle},
+           ${`invoice:${created.id}:initial`},
+           ${tx.json({ message, customerName: input.customerName ?? null })})`;
+    }
+    return [created];
+  });
 
-  return { id: invoice.id, number, amount, currency, payLink: link, delivery };
+  return {
+    id: invoice.id,
+    number,
+    amount,
+    currency,
+    payLink: link,
+    delivery: message ? "queued" : "none",
+  };
 }
 
 export async function listInvoices(sql: Sql, venue: string) {

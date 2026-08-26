@@ -1,8 +1,9 @@
 import { Check, Loader2, MessageCircle, Send, Smartphone, X } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { authFetch } from "@/lib/auth";
+import { ModalOverlay } from "@/components/ui/modal-overlay";
 
 type Channel = "whatsapp" | "telegram" | "sms";
 
@@ -16,6 +17,7 @@ export function OmniShare({
   message,
   link,
   defaultPhone = "",
+  kind,
 }: {
   open: boolean;
   onClose: () => void;
@@ -23,20 +25,14 @@ export function OmniShare({
   message: string;
   link: string;
   defaultPhone?: string;
+  kind: "invoice" | "payment_link" | "booking" | "enquiry";
 }) {
   const [channel, setChannel] = useState<Channel>("whatsapp");
   const [to, setTo] = useState(defaultPhone);
   const [sending, setSending] = useState(false);
+  const idempotencyKey = useRef(crypto.randomUUID());
 
   if (!open) return null;
-
-  const digits = to.replace(/[^\d]/g, "");
-  const deepLink =
-    channel === "whatsapp"
-      ? `https://wa.me/${digits}?text=${encodeURIComponent(`${message}\n\n${link}`)}`
-      : channel === "telegram"
-        ? `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(message)}`
-        : `sms:${to}?body=${encodeURIComponent(`${message} ${link}`)}`;
 
   async function send() {
     if (!to.trim()) {
@@ -47,16 +43,19 @@ export function OmniShare({
     try {
       const res = await authFetch("/api/share", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ channel, to, text: message, link, kind: "share" }),
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": idempotencyKey.current,
+        },
+        body: JSON.stringify({ channel, to, text: message, link, kind }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         delivery?: string;
         error?: string;
       };
       if (!res.ok) throw new Error(data.error ?? "failed");
-      if (data.delivery === "sent") {
-        toast.success(`Sent on ${channel}.`);
+      if (data.delivery === "accepted" || data.delivery === "queued") {
+        toast.success(`Queued on ${channel}.`);
         onClose();
         return;
       }
@@ -64,23 +63,21 @@ export function OmniShare({
         toast.error("This customer has opted out.");
         return;
       }
-      toast.info("Channel not fully configured here — opening your own app.");
-      window.open(deepLink, "_blank");
+      toast.error("Message was not queued. Check channel configuration and consent.");
     } catch {
-      toast.info("Opening your own app to send.");
-      window.open(deepLink, "_blank");
+      toast.error("Message could not be queued.");
     } finally {
       setSending(false);
     }
   }
 
   return (
-    <div className="absolute inset-0 z-[60] flex items-end" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40" />
-      <div
-        className="relative w-full space-y-4 rounded-t-3xl bg-background p-5"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <ModalOverlay
+      onClose={onClose}
+      label={title}
+      className="absolute z-[60] flex items-end"
+      panelClassName="w-full space-y-4 rounded-t-3xl bg-background p-5"
+    >
         <div className="flex items-center justify-between">
           <p className="font-bold">{title}</p>
           <button type="button" onClick={onClose} aria-label="Close">
@@ -140,15 +137,6 @@ export function OmniShare({
           )}
           Send now
         </button>
-        <a
-          href={deepLink}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="block text-center text-xs text-muted-foreground underline-offset-2 hover:underline"
-        >
-          or open in my own {channel === "sms" ? "messages" : channel} app
-        </a>
-      </div>
-    </div>
+    </ModalOverlay>
   );
 }

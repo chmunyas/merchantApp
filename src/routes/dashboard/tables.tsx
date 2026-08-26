@@ -119,6 +119,7 @@ type ApiDiningTable = {
   section?: string | null;
   active?: boolean;
   created_at?: string;
+  revision?: number;
 };
 
 function apiTableToMerchantTable(
@@ -143,6 +144,7 @@ function apiTableToMerchantTable(
     openedAt: table.created_at ?? new Date().toISOString(),
     paidAmount: 0,
     payments: [],
+    revision: table.revision,
   };
 }
 
@@ -152,6 +154,7 @@ function tableApiPayload(table: MerchantTable) {
     seats: tableSeats(table),
     section: table.server?.trim() || null,
     active: isTableBookable(table),
+    revision: table.revision,
   };
 }
 
@@ -275,18 +278,16 @@ function DashboardTablesPage() {
           },
         );
         if (!res.ok) throw new Error("table save failed");
-        if (!existing) {
-          const data = (await res.json()) as { table?: ApiDiningTable };
-          const createdTable = data.table;
-          if (createdTable) {
-            setTables((current) =>
-              current.map((table) =>
-                table.id === tableDraft.id
-                  ? apiTableToMerchantTable(createdTable, current.length)
-                  : table,
-              ),
-            );
-          }
+        const data = (await res.json()) as { table?: ApiDiningTable };
+        const createdTable = data.table;
+        if (createdTable) {
+          setTables((current) =>
+            current.map((table) =>
+              table.id === tableDraft.id
+                ? apiTableToMerchantTable(createdTable, current.length)
+                : table,
+            ),
+          );
         }
       } catch {
         setTables(previous);
@@ -316,9 +317,12 @@ function DashboardTablesPage() {
     if (tableDraft?.id === table.id) setTableDraft(null);
     if (apiTablesEnabled) {
       try {
-        const res = await authFetch(`/api/tables/${table.id}`, {
+        const res = await authFetch(
+          `/api/tables/${table.id}?revision=${encodeURIComponent(String(table.revision ?? ""))}`,
+          {
           method: "DELETE",
-        });
+          },
+        );
         if (!res.ok) throw new Error("table delete failed");
       } catch {
         setTables(previousTables);

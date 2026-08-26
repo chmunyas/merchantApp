@@ -1,5 +1,5 @@
 import { getSql } from "@/lib/db";
-import { requireAuth } from "@/api/auth";
+import { requireHumanAuth } from "@/api/auth";
 import { planLimit, planLimitMessage, planOf } from "@/lib/tenancy";
 
 const corsHeaders = {
@@ -21,6 +21,7 @@ function serialize(rows: Array<Record<string, unknown>>) {
     name: row.name,
     code: row.code,
     active: row.active !== false,
+    timezone: row.timezone ?? "Africa/Nairobi",
   }));
 }
 
@@ -36,7 +37,7 @@ export async function handleVenuesRoute(
   if (url.pathname !== "/api/venues") return null;
   if (request.method === "OPTIONS") return json({ ok: true });
 
-  const payload = await requireAuth(request, env);
+  const payload = await requireHumanAuth(request, env);
   if (!payload) return json({ error: "unauthorized" }, 401);
   const sql = getSql(env);
   if (!sql) return json({ error: "database not configured" }, 503);
@@ -50,16 +51,16 @@ export async function handleVenuesRoute(
     let rows: Array<Record<string, unknown>> = [];
     if (role === "admin") {
       rows = await sql`
-        SELECT id, name, code, active FROM venues
+        SELECT id, name, code, active, timezone FROM venues
         WHERE active = true ORDER BY name LIMIT 500`;
     } else if (orgId) {
       rows = await sql`
-        SELECT id, name, code, active FROM venues
+        SELECT id, name, code, active, timezone FROM venues
         WHERE org_id = ${orgId} AND active = true ORDER BY name LIMIT 500`;
     } else if (email.includes("@")) {
       // Merchant: every store they own/manage (multi-store membership).
       rows = await sql`
-        SELECT v.id, v.name, v.code, v.active
+        SELECT v.id, v.name, v.code, v.active, v.timezone
         FROM user_venues uv
         JOIN app_users u ON u.id = uv.user_id
         JOIN venues v ON v.id = uv.venue_id
@@ -69,21 +70,30 @@ export async function handleVenuesRoute(
     // Fallback (staff/session tokens without a membership): the token's own venue.
     if (rows.length === 0 && venue) {
       rows = await sql`
-        SELECT id, name, code, active FROM venues WHERE id = ${venue} LIMIT 1`;
+        SELECT id, name, code, active, timezone FROM venues WHERE id = ${venue} LIMIT 1`;
     }
     return json({ venues: serialize(rows) });
   }
 
   if (request.method === "POST") {
-    if (!email.includes("@")) {
+    if (role !== "merchant" || !email.includes("@")) {
       return json({ error: "only a merchant account can add a store" }, 403);
     }
     const [user] = await sql`
       SELECT id, org_id FROM app_users WHERE lower(email) = ${email} LIMIT 1`;
     if (!user) return json({ error: "account not found" }, 404);
-    const body = (await request.json().catch(() => ({}))) as { name?: string };
+    const body = (await request.json().catch(() => ({}))) as {
+      name?: string;
+      timezone?: string;
+    };
     const name = String(body.name ?? "").trim();
     if (!name) return json({ error: "store name required" }, 400);
+    const timezone = String(body.timezone ?? "Africa/Nairobi");
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: timezone }).format();
+    } catch {
+      return json({ error: "invalid IANA timezone" }, 400);
+    }
 
     // Plan cap on stores per account.
     const plan = planOf(payload);
@@ -97,13 +107,13 @@ export async function handleVenuesRoute(
     const code =
       name.replace(/[^A-Za-z]/g, "").slice(0, 3).toUpperCase() || "VEN";
     await sql`
-      INSERT INTO venues (id, name, code, active, org_id)
-      VALUES (${venueId}, ${name}, ${code}, true, ${user.org_id ?? null})`;
+      INSERT INTO venues (id, name, code, active, org_id, timezone)
+      VALUES (${venueId}, ${name}, ${code}, true, ${user.org_id ?? null}, ${timezone})`;
     await sql`
       INSERT INTO user_venues (user_id, venue_id, role)
       VALUES (${user.id}, ${venueId}, 'merchant')
       ON CONFLICT DO NOTHING`;
-    return json({ venue: { id: venueId, name, code, active: true } }, 201);
+    return json({ venue: { id: venueId, name, code, active: true, timezone } }, 201);
   }
 
   return null;

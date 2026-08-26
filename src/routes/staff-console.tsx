@@ -1,7 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
-  Building2,
   Coins,
   Inbox,
   Receipt,
@@ -11,11 +10,12 @@ import {
 
 import {
   authFetch,
-  staffMyVenues,
-  staffSwitchVenue,
   useAuth,
-  type StaffVenue,
 } from "@/lib/auth";
+import { MyTablesCard } from "@/components/staff/MyTablesCard";
+import { MyEarningsCard } from "@/components/staff/MyEarningsCard";
+import { TableFloorActionsCard } from "@/components/staff/TableFloorActionsCard";
+import { WalkoutReportCard } from "@/components/staff/WalkoutReportCard";
 
 export const Route = createFileRoute("/staff-console")({
   component: StaffConsole,
@@ -32,19 +32,9 @@ function StaffConsole() {
   const { user } = useAuth();
   const [tips, setTips] = useState<TipRow[] | null>(null);
   const [openOrders, setOpenOrders] = useState<number | null>(null);
-  const [venues, setVenues] = useState<StaffVenue[]>([]);
 
   useEffect(() => {
-    void staffMyVenues().then(setVenues);
-  }, []);
-
-  async function switchTo(id: string) {
-    const ok = await staffSwitchVenue(id);
-    if (ok) window.location.reload();
-  }
-
-  useEffect(() => {
-    authFetch("/api/tips?scope=team&period=today")
+    authFetch("/api/tips?scope=me&period=today")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => setTips((d?.tips as TipRow[]) ?? null))
       .catch(() => {});
@@ -85,6 +75,19 @@ function StaffConsole() {
 
   const totalTips = (tips ?? []).reduce((s, t) => s + Number(t.tips || 0), 0);
 
+  if (!user || user.role !== "staff") {
+    return (
+      <main className="flex min-h-screen items-center justify-center p-6 text-center">
+        <div>
+          <h1 className="text-xl font-semibold">Staff sign-in required</h1>
+          <Link to="/staff-login" className="mt-3 inline-block text-primary underline">
+            Go to staff sign-in
+          </Link>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-4xl space-y-8 p-6">
       <header>
@@ -96,35 +99,6 @@ function StaffConsole() {
           {user?.role ?? "staff"} · take payment, manage orders, help guests
         </p>
       </header>
-
-      {venues.length > 0 ? (
-        <section className="rounded-2xl border border-border bg-card p-4">
-          <div className="flex items-center gap-2 text-sm">
-            <Building2 className="size-4 text-muted-foreground" />
-            <span className="text-muted-foreground">
-              {venues.length > 1 ? "Your stores" : "Working at"}
-            </span>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {venues.map((v) => (
-              <button
-                key={v.id}
-                type="button"
-                onClick={() => (v.current ? undefined : switchTo(v.id))}
-                disabled={v.current}
-                className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
-                  v.current
-                    ? "bg-foreground text-background"
-                    : "border border-border hover:border-foreground/40"
-                }`}
-              >
-                {v.name}
-                {v.current ? " · now" : ""}
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
 
       <section className="grid gap-4 sm:grid-cols-2">
         {tiles.map((t) => (
@@ -143,6 +117,16 @@ function StaffConsole() {
           </Link>
         ))}
       </section>
+
+      <MyTablesCard />
+
+      {/* B3.1 + B3.5 — search a table, resend its bill/receipt, refund. */}
+      <TableFloorActionsCard />
+
+      {/* C9.2 + C9.3 — report a walkout without closing the check. */}
+      <WalkoutReportCard />
+
+      <MyEarningsCard />
 
       <section className="rounded-2xl border border-border bg-card p-6">
         <div className="flex items-center gap-2">

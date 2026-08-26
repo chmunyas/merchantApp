@@ -48,6 +48,7 @@ import {
   type MerchantTableItem,
 } from "@/lib/merchant-dashboard";
 import { generateOrderId, submitNewOrder } from "@/lib/realtime";
+import { tipTierNotice, tipTiersFor } from "@/lib/tip-tiers";
 
 export const Route = createFileRoute("/table/$tableId")({
   component: TableCustomerPage,
@@ -62,7 +63,10 @@ type CustomerScreen =
   | "success";
 
 type SplitMode = "full" | "equal" | "by-item" | "custom";
-type TipValue = 0 | 5 | 10 | 15 | 20 | "custom";
+// "none", "custom", or the index of the suggested tier being offered. The tiers
+// themselves are derived from the bill's auto-gratuity (A3.2), so they are not a
+// fixed list any more.
+type TipValue = "none" | "custom" | number;
 type FulfilmentMode = "dine-in" | "collection";
 
 type SelectedModifier = {
@@ -153,7 +157,6 @@ const REVIEW_KEY_SUFFIX = ".reviews";
 const ARRIVAL_KEY_SUFFIX = ".arrival";
 
 const REVIEW_TAGS = ["Food", "Service", "Speed", "Atmosphere", "Value"];
-const TIP_OPTIONS: TipValue[] = [0, 5, 10, 15, 20, "custom"];
 const OPEN_HOUR = 8;
 const CLOSE_HOUR = 22;
 
@@ -174,7 +177,8 @@ function TableCustomerPage() {
   const [splitCount, setSplitCount] = useState<number>(2);
   const [customAmount, setCustomAmount] = useState<string>("");
   const [selectedBillKeys, setSelectedBillKeys] = useState<string[]>([]);
-  const [tipSelection, setTipSelection] = useState<TipValue>(10);
+  // Index 1 = the middle suggestion, so a tip stays pre-selected as before.
+  const [tipSelection, setTipSelection] = useState<TipValue>(1);
   const [customTip, setCustomTip] = useState<string>("");
   const [phone, setPhone] = useState<string>("");
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<
@@ -468,12 +472,23 @@ function TableCustomerPage() {
     splitMode,
   ]);
 
+  // A3.2 — suggestions adapt to any service charge / auto-gratuity already on
+  // the bill. This surface has no POS-imported service-charge line yet (that
+  // arrives with C5), so it is zero and the standard 20/23/25% options apply.
+  const billServiceCharge = 0;
+  const tipPlan = useMemo(
+    () => tipTiersFor(payerSubtotal, billServiceCharge),
+    [billServiceCharge, payerSubtotal],
+  );
+  const tipNotice = useMemo(() => tipTierNotice(tipPlan), [tipPlan]);
+
   const tipAmount = useMemo(() => {
     if (tipSelection === "custom") {
       return Math.max(Number.parseFloat(customTip) || 0, 0);
     }
-    return roundCurrency((payerSubtotal * tipSelection) / 100);
-  }, [customTip, payerSubtotal, tipSelection]);
+    if (tipSelection === "none") return 0;
+    return roundCurrency(tipPlan.tiers[tipSelection]?.amount ?? 0);
+  }, [customTip, tipPlan, tipSelection]);
 
   const totalCharge = useMemo(
     () => roundCurrency(payerSubtotal + tipAmount),
@@ -1069,21 +1084,48 @@ function TableCustomerPage() {
                           }`
                         : "Add a thank-you tip for the team."}
                     </p>
+                    {tipNotice ? (
+                      <p className="mt-1 text-xs text-amber-100/80">
+                        {tipNotice}
+                      </p>
+                    ) : null}
                     <div className="mt-3 grid grid-cols-3 gap-2">
-                      {TIP_OPTIONS.map((option) => (
+                      <button
+                        className={`h-11 rounded-2xl text-sm font-semibold transition ${
+                          tipSelection === "none"
+                            ? "bg-amber-300 text-slate-950"
+                            : "border border-amber-200/25 bg-white/5 text-amber-50"
+                        }`}
+                        onClick={() => setTipSelection("none")}
+                        type="button"
+                      >
+                        None
+                      </button>
+                      {tipPlan.tiers.map((tier, index) => (
                         <button
                           className={`h-11 rounded-2xl text-sm font-semibold transition ${
-                            tipSelection === option
+                            tipSelection === index
                               ? "bg-amber-300 text-slate-950"
                               : "border border-amber-200/25 bg-white/5 text-amber-50"
                           }`}
-                          key={String(option)}
-                          onClick={() => setTipSelection(option)}
+                          key={tier.pct}
+                          onClick={() => setTipSelection(index)}
                           type="button"
                         >
-                          {option === "custom" ? "Custom" : `${option}%`}
+                          {tier.pct}%
                         </button>
                       ))}
+                      <button
+                        className={`h-11 rounded-2xl text-sm font-semibold transition ${
+                          tipSelection === "custom"
+                            ? "bg-amber-300 text-slate-950"
+                            : "border border-amber-200/25 bg-white/5 text-amber-50"
+                        }`}
+                        onClick={() => setTipSelection("custom")}
+                        type="button"
+                      >
+                        Custom
+                      </button>
                     </div>
 
                     {tipSelection === "custom" ? (

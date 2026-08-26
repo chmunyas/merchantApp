@@ -7,6 +7,7 @@ import {
 import {
   Armchair,
   BarChart3,
+  Banknote,
   CalendarClock,
   Tags,
   BookOpen,
@@ -49,15 +50,23 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { UserProfileMenu } from "@/components/auth/UserProfileMenu";
 import { DemoVenueBanner } from "@/components/DemoVenueBanner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { useAuth, ensureSessionToken, getToken, switchVenue as apiSwitchVenue, addStore, type UserRole } from "@/lib/auth";
+import { ModalOverlay } from "@/components/ui/modal-overlay";
+import { PageErrorBoundary } from "@/components/PageErrorBoundary";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { useAuth, ensureSessionToken, getToken, hasAuthoritativeVenueSession, isDemoSession, switchVenue as apiSwitchVenue, addStore, type UserRole } from "@/lib/auth";
 import { canAccessPath } from "@/lib/rbac";
 import {
   ensureMerchantDemoData,
@@ -65,15 +74,20 @@ import {
   getCurrentVenueId,
   getPendingEnquiryCount,
   getVenues,
-  hydrateMerchantState,
   setCurrentVenueId,
   setVenues as persistVenues,
   type Venue,
 } from "@/lib/merchant-dashboard";
+import { hydrateMerchantState } from "@/lib/browser-storage";
 import { cn } from "@/lib/utils";
 import { useBranding } from "@/lib/branding";
 import { toast } from "sonner";
 import { hydrateServerEntities } from "@/lib/server-sync";
+import { capabilityForPath } from "@/lib/verticals";
+import {
+  dashboardNavigationGroupId,
+  isDashboardPathActive,
+} from "@/lib/dashboard-navigation";
 
 export const Route = createFileRoute("/dashboard")({
   component: DashboardLayout,
@@ -97,6 +111,12 @@ const navGroups = [
       { to: "/dashboard/orders", label: "Orders (KDS)", icon: ChefHat },
       { to: "/dashboard/tables", label: "Tables", icon: LayoutGrid },
       { to: "/dashboard/floorplan", label: "Floorplan", icon: Armchair },
+      { to: "/dashboard/walkouts", label: "Walkouts", icon: ShieldAlert },
+      {
+        to: "/dashboard/guest-requests",
+        label: "Guest requests",
+        icon: Inbox,
+      },
     ],
   },
   {
@@ -143,6 +163,7 @@ const navGroups = [
       { to: "/dashboard/menu", label: "Menu", icon: UtensilsCrossed },
       { to: "/dashboard/qr", label: "QR codes", icon: QrCode },
       { to: "/dashboard/staff", label: "Staff", icon: Users },
+      { to: "/dashboard/payouts", label: "Payouts", icon: Banknote },
       { to: "/dashboard/team", label: "Team", icon: UsersRound },
       { to: "/dashboard/whatsapp", label: "WhatsApp", icon: Smartphone },
       { to: "/dashboard/telegram", label: "Telegram", icon: Send },
@@ -161,52 +182,88 @@ function NavSections({
   pathname,
   role,
   newEnquiries,
+  capabilities,
   onNavigate,
 }: {
   pathname: string;
   role: UserRole;
   newEnquiries: number;
+  capabilities: ReadonlySet<string> | null;
   onNavigate?: () => void;
 }) {
+  const navigationRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    navigationRef.current
+      ?.querySelector<HTMLElement>('[aria-current="page"]')
+      ?.scrollIntoView({ block: "nearest" });
+  }, [pathname]);
+
   return (
-    <nav className="flex-1 space-y-5 px-3 py-4">
+    <nav
+      ref={navigationRef}
+      aria-label="Dashboard sections"
+      className="space-y-5 px-3 py-4 pb-8"
+    >
       {navGroups.map((group) => {
-        // Hide any nav item the current role may not open, and drop groups that
-        // become empty (per-page RBAC — see src/lib/rbac.ts).
-        const items = group.items.filter((item) =>
-          canAccessPath(role, item.to),
-        );
+        // Two independent gates: RBAC decides what this ROLE may open, the venue's
+        // resolved capabilities decide what this BUSINESS has. Capabilities are
+        // advisory here — the server enforces them — so an unloaded profile shows
+        // everything rather than stranding an offline dashboard.
+        const items = group.items.filter((item) => {
+          if (!canAccessPath(role, item.to)) return false;
+          if (!capabilities) return true;
+          const capability = capabilityForPath(item.to);
+          return !capability || capabilities.has(capability.key);
+        });
         if (items.length === 0) return null;
+        const groupId = dashboardNavigationGroupId(group.label);
         return (
-          <div key={group.label} className="space-y-1">
-            <p className="px-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+          <section
+            key={group.label}
+            aria-labelledby={groupId}
+            className="space-y-1"
+          >
+            <h2
+              id={groupId}
+              className="px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400"
+            >
               {group.label}
-            </p>
-            {items.map((item) => {
-              const Icon = item.icon;
-              const active =
-                pathname === item.to || pathname.startsWith(`${item.to}/`);
-              return (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  onClick={onNavigate}
-                  className={cn(
-                    "flex items-center gap-3 rounded-r-xl px-4 py-2.5 text-sm font-medium transition hover:bg-slate-800",
-                    active && "bg-slate-800 border-l-2 border-emerald-500",
-                  )}
-                >
-                  <Icon className="h-4 w-4" />
-                  <span>{item.label}</span>
-                  {item.label === "Enquiries" && newEnquiries > 0 ? (
-                    <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[11px] font-semibold text-white">
-                      {newEnquiries}
-                    </span>
-                  ) : null}
-                </Link>
-              );
-            })}
-          </div>
+            </h2>
+            <ul className="list-none space-y-1 p-0">
+              {items.map((item) => {
+                const Icon = item.icon;
+                const active = isDashboardPathActive(pathname, item.to);
+                return (
+                  <li key={item.to}>
+                    <Link
+                      to={item.to}
+                      activeOptions={{ exact: true }}
+                      onClick={onNavigate}
+                      aria-current={active ? "page" : undefined}
+                      className={cn(
+                        "flex min-h-11 items-center gap-3 rounded-md border-l-4 border-transparent px-3 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-slate-800 hover:text-white",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-300",
+                        active &&
+                          "border-emerald-400 bg-slate-800 text-white",
+                      )}
+                    >
+                      <Icon aria-hidden="true" className="h-4 w-4 shrink-0" />
+                      <span>{item.label}</span>
+                      {item.label === "Enquiries" && newEnquiries > 0 ? (
+                        <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-400 px-1 text-[11px] font-bold text-slate-950">
+                          <span aria-hidden="true">{newEnquiries}</span>
+                          <span className="sr-only">
+                            {newEnquiries} new enquiries
+                          </span>
+                        </span>
+                      ) : null}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
         );
       })}
     </nav>
@@ -252,6 +309,33 @@ function DashboardShell() {
   // Bumped on a venue switch to remount the active page (refetch for the new
   // store) WITHOUT a full-document reload — see the keyed Outlet below.
   const [outletKey, setOutletKey] = useState(0);
+  const [capabilities, setCapabilities] = useState<ReadonlySet<string> | null>(
+    null,
+  );
+
+  // Refetched on a venue switch: two stores under one merchant can be different
+  // verticals on different plans.
+  useEffect(() => {
+    const token = getToken();
+    if (!token || !hasAuthoritativeVenueSession(token)) {
+      setCapabilities(null);
+      return;
+    }
+    void (async () => {
+      try {
+        const res = await fetch("/api/venue-profile", {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as { capabilities?: string[] };
+        if (Array.isArray(data.capabilities)) {
+          setCapabilities(new Set(data.capabilities));
+        }
+      } catch {
+        /* offline — leave navigation ungated; the server still enforces */
+      }
+    })();
+  }, [outletKey]);
 
   useEffect(() => {
     setNewEnquiries(getPendingEnquiryCount(ensureMerchantDemoData().enquiries));
@@ -264,7 +348,7 @@ function DashboardShell() {
   // venues (a venue-less demo/session token gets [] and keeps the local demo list).
   useEffect(() => {
     const token = getToken();
-    if (!token) return;
+    if (!token || !hasAuthoritativeVenueSession(token)) return;
     void (async () => {
       try {
         const res = await fetch("/api/venues", {
@@ -292,7 +376,7 @@ function DashboardShell() {
 
   const breadcrumb = useMemo(() => {
     const item = navItems.find(
-      (entry) => pathname === entry.to || pathname.startsWith(`${entry.to}/`),
+      (entry) => isDashboardPathActive(pathname, entry.to),
     );
     return item?.label || "Overview";
   }, [pathname]);
@@ -367,9 +451,18 @@ function DashboardShell() {
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-50 text-slate-950">
+    <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+      <div className="flex min-h-screen bg-slate-50 text-slate-950">
+      {/* WCAG 2.4.1: 40+ sidebar links precede the content on every page. */}
+      <a
+        href="#dashboard-main"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[70] focus:rounded-md focus:bg-slate-900 focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-white focus:outline-none focus:ring-2 focus:ring-emerald-300"
+      >
+        Skip to main content
+      </a>
       <aside
-        className="hidden w-60 shrink-0 flex-col bg-slate-900 text-white lg:flex"
+        aria-label="Dashboard navigation panel"
+        className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col bg-slate-900 text-white lg:flex"
         style={
           branding?.primaryColor
             ? { borderTop: `3px solid ${branding.primaryColor}` }
@@ -395,26 +488,28 @@ function DashboardShell() {
             {user?.name ?? "Merchant"}
           </p>
           {branding?.reseller?.poweredBy ? (
-            <p className="mt-3 text-[10px] uppercase tracking-wider text-slate-500">
+            <p className="mt-3 text-[10px] uppercase tracking-wider text-slate-400">
               {branding.reseller.poweredBy}
             </p>
           ) : null}
         </div>
-        <div className="overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
           <NavSections
             pathname={pathname}
             role={user?.role ?? "staff"}
             newEnquiries={newEnquiries}
+            capabilities={capabilities}
           />
         </div>
       </aside>
 
-      <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
         <SheetContent
           side="left"
-          className="w-72 overflow-y-auto border-slate-800 bg-slate-900 p-0 text-white sm:max-w-none"
+          closeLabel="Close dashboard navigation"
+          closeClassName="text-white opacity-100 hover:bg-slate-800 focus-visible:ring-emerald-300 focus-visible:ring-offset-slate-900"
+          className="w-[min(18rem,calc(100vw-1rem))] overflow-y-auto overscroll-contain border-slate-800 bg-slate-900 p-0 pb-[calc(1rem+env(safe-area-inset-bottom))] text-white sm:max-w-[18rem]"
         >
-          <div className="flex items-center justify-between border-b border-slate-800 px-5 py-5">
+          <div className="border-b border-slate-800 px-5 py-5 pr-16">
             <div>
               {branding?.logoUrl ? (
                 <img
@@ -427,40 +522,37 @@ function DashboardShell() {
                   {branding?.reseller?.name ?? "PesaSwap"}
                 </p>
               )}
-              <p className="mt-1 text-lg font-semibold">
+              <SheetTitle className="mt-1 text-lg font-semibold text-white">
                 {branding?.businessName ?? "Merchant Dashboard"}
-              </p>
+              </SheetTitle>
+              <SheetDescription className="sr-only">
+                Navigate between back-office dashboard sections.
+              </SheetDescription>
             </div>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="text-white hover:bg-slate-800"
-              onClick={() => setMobileOpen(false)}
-            >
-              <X className="h-4 w-4" />
-            </Button>
           </div>
           <NavSections
             pathname={pathname}
             role={user?.role ?? "staff"}
             newEnquiries={newEnquiries}
+            capabilities={capabilities}
             onNavigate={() => setMobileOpen(false)}
           />
         </SheetContent>
-      </Sheet>
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-20 border-b border-border bg-white/95 px-4 backdrop-blur lg:px-8">
           <div className="flex h-18 items-center justify-between gap-4 py-4">
             <div className="flex items-center gap-3">
-              <Button
-                size="icon"
-                variant="outline"
-                className="lg:hidden"
-                onClick={() => setMobileOpen(true)}
-              >
-                <Menu className="h-4 w-4" />
-              </Button>
+              <SheetTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  aria-label="Open dashboard navigation"
+                  className="size-11 shrink-0 focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 lg:hidden"
+                >
+                  <Menu aria-hidden="true" className="h-4 w-4" />
+                </Button>
+              </SheetTrigger>
               <div>
                 <div className="text-xs uppercase tracking-[0.25em] text-muted-foreground">
                   Dashboard / {breadcrumb}
@@ -496,28 +588,36 @@ function DashboardShell() {
 
         <DemoVenueBanner />
 
-        <main className="flex-1 overflow-y-auto p-4 lg:p-8">
+        <main
+          id="dashboard-main"
+          tabIndex={-1}
+          className="flex-1 overflow-y-auto p-4 lg:p-8 focus:outline-none"
+        >
           {user && !canAccessPath(user.role, pathname) ? (
             <AccessDenied role={user.role} />
           ) : (
             <div key={outletKey} className="contents">
-              <Outlet />
+              <PageErrorBoundary resetKey={pathname}>
+                <Outlet />
+              </PageErrorBoundary>
             </div>
           )}
         </main>
       </div>
 
       {venuePickerOpen ? (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/60 p-4 pt-24"
-          onClick={() => setVenuePickerOpen(false)}
+        <ModalOverlay
+          onClose={() => setVenuePickerOpen(false)}
+          labelledBy="venue-picker-heading"
+          className="flex items-start justify-center p-4 pt-24"
+          panelClassName="w-full max-w-lg rounded-3xl bg-white p-5 shadow-2xl"
+          closeLabel="Close venue picker"
         >
-          <div
-            className="w-full max-w-lg rounded-3xl bg-white p-5 shadow-2xl"
-            onClick={(event) => event.stopPropagation()}
-          >
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-slate-950">
+              <h3
+                id="venue-picker-heading"
+                className="text-lg font-semibold text-slate-950"
+              >
                 Select venue
               </h3>
               <Button
@@ -601,10 +701,10 @@ function DashboardShell() {
                 it to set it up.
               </p>
             </div>
-          </div>
-        </div>
+        </ModalOverlay>
       ) : null}
-    </div>
+      </div>
+    </Sheet>
   );
 }
 
@@ -621,27 +721,33 @@ function DashboardLayout() {
 // Pull shared state from Postgres into localStorage before the dashboard renders
 // so the back office and PWA work off the same data. Brief gate on first load.
 function StateHydrator({ children }: { children: React.ReactNode }) {
-  const [ready, setReady] = useState(false);
   useEffect(() => {
-    let active = true;
-    Promise.all([ensureSessionToken(), hydrateMerchantState()])
+    void ensureSessionToken()
+      .then(() => {
+        if (isDemoSession()) return;
+        return Promise.all([hydrateMerchantState()]);
+      })
       // After the localStorage blob is pulled, mirror the server-authoritative
       // menu_items + dining_tables over it so every read-only consumer (overview,
       // floor plan, bookings, customer table view) sees ONE source of truth.
       .then(() => hydrateServerEntities())
-      .finally(() => {
-        if (active) setReady(true);
-      });
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    const blocked = () => toast.error("You're offline. Reconnect before changing shared business data.");
+    const conflict = () => toast.error("This data changed on another device. The server copy was preserved; refresh and review.");
+    const failed = () => {
+      if (!hasAuthoritativeVenueSession()) return;
+      toast.error("The change was not saved. Refresh before trying again.");
+    };
+    window.addEventListener("pesaswap:state-write-blocked", blocked);
+    window.addEventListener("pesaswap:state-conflict", conflict);
+    window.addEventListener("pesaswap:state-write-failed", failed);
     return () => {
-      active = false;
+      window.removeEventListener("pesaswap:state-write-blocked", blocked);
+      window.removeEventListener("pesaswap:state-conflict", conflict);
+      window.removeEventListener("pesaswap:state-write-failed", failed);
     };
   }, []);
-  if (!ready) {
-    return (
-      <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
-        Syncing your workspace…
-      </div>
-    );
-  }
   return <>{children}</>;
 }

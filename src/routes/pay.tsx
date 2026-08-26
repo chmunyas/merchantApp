@@ -18,12 +18,18 @@ import {
   loadHyperLoader,
   type PaymentStatus,
 } from "../lib/pesaswap-payments";
-import { tipSuggestions } from "@/lib/tip";
+import { tipTierNotice, tipTiersFor } from "@/lib/tip-tiers";
+import { noteBestEffortFailure } from "@/lib/best-effort";
 import { loyaltyPointsFor } from "@/lib/loyalty";
 import { useBranding } from "@/lib/branding";
 import { QrScanner } from "@/components/QrScanner";
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
+import {
+  DEFAULT_CURRENCY,
+  normalizeCurrency,
+  toMinorUnits,
+} from "@/lib/currency";
 
 export const Route = createFileRoute("/pay")({
   validateSearch: (
@@ -42,7 +48,7 @@ export const Route = createFileRoute("/pay")({
         name: "description",
         content: "Scan QR, tap to pay. Fastest M-Pesa checkout in Kenya.",
       },
-      { name: "viewport", content: "width=device-width, initial-scale=1, maximum-scale=1" },
+      { name: "viewport", content: "width=device-width, initial-scale=1" },
     ],
   }),
   component: PayPage,
@@ -50,11 +56,33 @@ export const Route = createFileRoute("/pay")({
 
 type PaymentState = "idle" | "scanned" | "confirming" | "processing" | "success" | "error";
 
-type OrderLineItem = { name: string; qty: number; price: number };
+// A2.2 — `amount` is the line's share of the AUTHORITATIVE bill total (its own
+// price plus its proportional slice of tax, service charge and discount), quoted
+// by the server. `state` says whether anyone else has already taken it.
+type OrderLineItem = {
+  id?: string;
+  name: string;
+  qty: number;
+  price: number;
+  amount?: number;
+  state?: "open" | "yours" | "taken" | "paid";
+};
+
+// Server-quoted guest-side fee + the plain-language copy that explains it. The
+// page renders this verbatim and never computes a fee of its own (A5.5).
+type GuestFeeInfo = {
+  enabled: boolean;
+  amount: number;
+  percent: number;
+  fixed: number;
+  benefits: string[];
+  optOut: string;
+};
 
 type PaymentData = {
   till: string;
   amount: number;
+  currency?: string;
   merchant: string;
   logoUrl?: string | null;
   poweredBy?: string | null;
@@ -64,10 +92,14 @@ type PaymentData = {
   invoiceNumber?: string | null;
   paidRef?: string | null;
   payLinkId?: string | null;
+  paymentIntentToken?: string | null;
   phone?: string | null;
   total?: number | null;
   paid?: number | null;
   remaining?: number | null;
+  // Auto-gratuity / service charge already on the bill, set in the POS (A3.2).
+  serviceCharge?: number | null;
+  guestFee?: GuestFeeInfo | null;
   items?: OrderLineItem[];
   staff?: Array<{ id: string; name: string; role: string }>;
 };
@@ -88,15 +120,20 @@ function PayPage() {
   const [payTip, setPayTip] = useState(0);
   const [payStaffId, setPayStaffId] = useState<string | null>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
+  // A2.2 — this phone's own reservation handle. Stable for the life of the tab,
+  // so a retry re-competes for the dishes it already holds instead of colliding
+  // with itself.
+  const claimKeyRef = useRef<string>(newClaimKey());
+  const claimedRef = useRef(false);
   const startTimeRef = useRef<number>(0);
   const pendingInvoiceRef = useRef<string | null>(null);
   // Public per-merchant branding (logo/name/reseller) for the venue being paid, so
   // the customer sees WHO they're paying — not a generic PesaSwap screen.
   const brand = useBranding(paymentData?.venue ?? undefined);
 
-  // Preload HyperLoader on mount for faster checkout
+  // Load the payment SDK while the customer is reviewing the bill.
   useEffect(() => {
-    loadHyperLoader().catch(() => {});
+    void loadHyperLoader().catch(() => {});
   }, []);
 
   const search = Route.useSearch();
@@ -126,7 +163,6 @@ function PayPage() {
     if (search.r) void loadPayLink(search.r);
     // Return from a payment redirect.
     if (search.status === "complete") setState("success");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search.o, search.i, search.r, search.tapgo, search.status]);
 
   // Resolve a short pay link to its amount + merchant. Surfaces a loading state
@@ -144,6 +180,7 @@ function PayPage() {
       setPaymentData({
         till: data.till,
         amount: data.amount,
+        currency: data.currency,
         merchant: data.merchant,
         logoUrl: data.logoUrl ?? null,
         poweredBy: data.poweredBy ?? null,
@@ -151,6 +188,8 @@ function PayPage() {
         venue: data.venue ?? null,
         invoiceNumber: number,
         paidRef: data.paidRef ?? null,
+        guestFee: data.guestFee ?? null,
+        paymentIntentToken: data.paymentIntentToken ?? null,
       });
       if (data.status === "paid") {
         setState("success");
@@ -167,7 +206,12 @@ function PayPage() {
 
   function confirmPayment(
     phone: string,
-    opts?: { amount?: number; tip?: number; staffId?: string | null },
+    opts?: {
+      amount?: number;
+      tip?: number;
+      staffId?: string | null;
+      itemIds?: string[];
+    },
   ) {
     setCustomerPhone(phone);
     if (typeof opts?.amount === "number" && opts.amount > 0) {
@@ -181,7 +225,111 @@ function PayPage() {
       amount: opts?.amount,
       tip: opts?.tip ?? 0,
       staffId: opts?.staffId ?? null,
+      itemIds: opts?.itemIds,
     });
+  }
+
+  // A2.4 — the remaining balance drops on THIS phone the moment another guest
+  // pays, over the per-bill Durable Object topic. Polling is the fallback for a
+  // network that blocks WebSockets, never the primary path.
+  useEffect(() => {
+    const token = search.o;
+    const orderId = paymentData?.orderId;
+    if (!token || !orderId) return;
+
+    let cancelled = false;
+    let socket: WebSocket | null = null;
+    let poll: number | null = null;
+
+    const applyEvent = (raw: unknown) => {
+      const evt = raw as {
+        type?: string;
+        data?: { remaining?: number; paid?: number; taken_item_ids?: string[] };
+      };
+      if (cancelled || evt?.type !== "bill.updated" || !evt.data) return;
+      setPaymentData((prev) => {
+        if (!prev) return prev;
+        const taken = evt.data?.taken_item_ids;
+        return {
+          ...prev,
+          paid: typeof evt.data?.paid === "number" ? evt.data.paid : prev.paid,
+          remaining:
+            typeof evt.data?.remaining === "number"
+              ? evt.data.remaining
+              : prev.remaining,
+          items: taken
+            ? (prev.items ?? []).map((item) =>
+                item.id && taken.includes(item.id) && item.state !== "yours"
+                  ? { ...item, state: "taken" as const }
+                  : item,
+              )
+            : prev.items,
+        };
+      });
+    };
+
+    const startPolling = () => {
+      if (poll != null) return;
+      let since = new Date().toISOString();
+      poll = window.setInterval(() => {
+        void fetch(
+          `/api/qr/pay/${encodeURIComponent(token)}/live?since=${encodeURIComponent(since)}`,
+        )
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d: { events?: unknown[] } | null) => {
+            since = new Date().toISOString();
+            (d?.events ?? []).forEach(applyEvent);
+          })
+          .catch(() => {});
+      }, 5000);
+    };
+
+    try {
+      const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+      socket = new WebSocket(
+        `${scheme}://${window.location.host}/api/qr/pay/${encodeURIComponent(token)}/live`,
+      );
+      socket.onmessage = (ev) => {
+        try {
+          applyEvent(JSON.parse(String(ev.data)));
+        } catch (error) {
+          noteBestEffortFailure("pay.realtime.frame", error);
+        }
+      };
+      socket.onerror = startPolling;
+      socket.onclose = () => {
+        if (!cancelled) startPolling();
+      };
+    } catch (error) {
+      noteBestEffortFailure("pay.realtime.connect", error);
+      startPolling();
+    }
+
+    return () => {
+      cancelled = true;
+      if (poll != null) window.clearInterval(poll);
+      try {
+        socket?.close();
+      } catch {
+        /* already closed */
+      }
+    };
+  }, [search.o, paymentData?.orderId]);
+
+  // Hand claimed dishes back the moment this phone stops trying to pay for them.
+  async function releaseClaim() {
+    if (!claimedRef.current || !search.o) return;
+    claimedRef.current = false;
+    try {
+      await fetch(`/api/qr/pay/${encodeURIComponent(search.o)}/release`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ claimKey: claimKeyRef.current }),
+      });
+    } catch (error) {
+      // The reservation expires on its own, so the guest is never stuck.
+      noteBestEffortFailure("pay.claim.release", error);
+    }
   }
 
   // Resolve a server-bound QR order token to its authoritative amount + merchant.
@@ -200,6 +348,7 @@ function PayPage() {
       setPaymentData({
         till: data.till,
         amount: data.amount,
+        currency: data.currency,
         merchant: data.merchant,
         logoUrl: data.logoUrl ?? null,
         poweredBy: data.poweredBy ?? null,
@@ -208,8 +357,11 @@ function PayPage() {
         total: data.total ?? null,
         paid: data.paid ?? null,
         remaining: data.remaining ?? null,
+        serviceCharge: data.serviceCharge ?? null,
+        guestFee: data.guestFee ?? null,
         items: data.items ?? [],
         staff: data.staff ?? [],
+        paymentIntentToken: data.paymentIntentToken ?? null,
       });
       if (data.phone) setCustomerPhone(data.phone);
       setState("scanned");
@@ -245,6 +397,8 @@ function PayPage() {
         poweredBy: data.poweredBy ?? null,
         venue: data.venue ?? null,
         payLinkId: data.payLinkId ?? null,
+        guestFee: data.guestFee ?? null,
+        paymentIntentToken: data.paymentIntentToken ?? null,
       });
       if (data.phone) setCustomerPhone(data.phone);
       setState("scanned");
@@ -258,12 +412,76 @@ function PayPage() {
 
   async function processRealPayment(
     phone: string,
-    opts?: { amount?: number; tip?: number; staffId?: string | null },
+    opts?: {
+      amount?: number;
+      tip?: number;
+      staffId?: string | null;
+      itemIds?: string[];
+    },
   ) {
     if (!paymentData) return;
     setState("processing");
     setErrorMsg("");
     const tip = opts?.tip ?? payTip;
+
+    // A2.2 — reserve the dishes BEFORE charging. The server is the only thing
+    // that decides what this guest may pay for: if another phone already took a
+    // line (or already paid it), the claim comes back refused and no money moves.
+    let chargeAmount = opts?.amount ?? payAmount ?? paymentData.amount;
+    let intentToken = paymentData.paymentIntentToken ?? undefined;
+    if (opts?.itemIds?.length && search.o) {
+      try {
+        const res = await fetch(
+          `/api/qr/pay/${encodeURIComponent(search.o)}/claim`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              claimKey: claimKeyRef.current,
+              itemIds: opts.itemIds,
+            }),
+          },
+        );
+        const claim = (await res.json().catch(() => ({}))) as {
+          claimed?: string[];
+          conflicts?: string[];
+          amount?: number;
+          clamped?: boolean;
+          remaining?: number;
+          paymentIntentToken?: string;
+          error?: string;
+        };
+        if (!res.ok || !claim.paymentIntentToken || !claim.amount) {
+          claimedRef.current = false;
+          markTakenItems(claim.conflicts ?? []);
+          setErrorMsg(
+            claim.conflicts?.length
+              ? "Someone else just took one of those dishes. Pick again — we haven't charged you."
+              : (claim.error ?? "We couldn't reserve those items. Please try again."),
+          );
+          setState("error");
+          return;
+        }
+        claimedRef.current = true;
+        chargeAmount = claim.amount;
+        intentToken = claim.paymentIntentToken;
+        setPayAmount(claim.amount);
+        if (typeof claim.remaining === "number") {
+          setPaymentData((prev) =>
+            prev ? { ...prev, remaining: claim.remaining ?? prev.remaining } : prev,
+          );
+        }
+        if (claim.clamped) {
+          toast.info("Someone already covered part of your dishes", {
+            description: `You'll pay KES ${claim.amount.toLocaleString()}.`,
+          });
+        }
+      } catch {
+        setErrorMsg("We couldn't reserve those items. Please try again.");
+        setState("error");
+        return;
+      }
+    }
 
     const metadata = buildPaymentMetadata({
       merchant: { name: paymentData.merchant, till: paymentData.till },
@@ -278,7 +496,8 @@ function PayPage() {
     }
     // A gratuity rides on top of the bill; tip_amount is stored in minor units.
     if (tip > 0) {
-      (metadata as Record<string, unknown>).tip_amount = Math.round(tip * 100);
+      const currency = normalizeCurrency(paymentData.currency) ?? DEFAULT_CURRENCY;
+      (metadata as Record<string, unknown>).tip_amount = toMinorUnits(tip, currency);
     }
     if (paymentData.venue) {
       (metadata as Record<string, unknown>).venue = paymentData.venue;
@@ -300,24 +519,47 @@ function PayPage() {
     (metadata as Record<string, unknown>).till = paymentData.till;
 
     const result = await executePayment({
-      amount: (opts?.amount ?? payAmount ?? paymentData.amount) + tip,
-      currency: "KES",
+      amount: chargeAmount + tip,
+      currency: normalizeCurrency(paymentData.currency) ?? DEFAULT_CURRENCY,
       metadata,
       phone,
+      paymentIntentToken: intentToken,
       onStatusChange: (status: PaymentStatus) => {
         if (status === "processing") setState("processing");
       },
     });
 
     if (result.success) {
+      claimedRef.current = false;
       await finalizeSuccess(result.payment_id || null);
     } else {
+      // The charge is dead: give the dishes back to the table immediately rather
+      // than leaving them locked until the reservation expires.
+      void releaseClaim();
       // Keep the payment id so the guest can re-check a late M-Pesa confirmation
       // (an STK approved after our poll window) WITHOUT paying again.
       setPaymentId(result.payment_id || null);
       setErrorMsg(result.error || "Payment failed. Please try again.");
       setState("error");
     }
+  }
+
+  // Reflect a refused claim in the bill immediately, so the guest can see which
+  // dish went and re-pick without waiting for the next live event.
+  function markTakenItems(ids: string[]) {
+    if (ids.length === 0) return;
+    setPaymentData((prev) =>
+      prev
+        ? {
+            ...prev,
+            items: (prev.items ?? []).map((item) =>
+              item.id && ids.includes(item.id)
+                ? { ...item, state: "taken" as const }
+                : item,
+            ),
+          }
+        : prev,
+    );
   }
 
   // Post-success side effects + receipt. Shared by the direct success path and the
@@ -336,8 +578,9 @@ function PayPage() {
             typeof d.remaining === "number" ? d.remaining : null,
           );
         }
-      } catch {
-        /* balance refresh is a bonus — never block the receipt */
+      } catch (error) {
+        // A balance refresh is a bonus — never block the receipt.
+        noteBestEffortFailure("pay.receipt.balance", error);
       }
     }
     // Invoice payments: the server settles the invoice and stores the M-Pesa
@@ -356,8 +599,9 @@ function PayPage() {
             );
           }
         }
-      } catch {
-        /* the receipt REF is a bonus — never block the receipt */
+      } catch (error) {
+        // The receipt REF is a bonus — never block the receipt.
+        noteBestEffortFailure("pay.receipt.ref", error);
       }
     }
     setState("success");
@@ -392,6 +636,7 @@ function PayPage() {
   }
 
   function reset() {
+    void releaseClaim();
     setState("idle");
     setPaymentData(null);
     setCustomerPhone("");
@@ -425,6 +670,9 @@ function PayPage() {
   // Split bills: hand the phone to the next person. Reloads the order so they see the
   // remaining balance and push their own share on their own number.
   function payNextShare() {
+    // A fresh payer on the same handset gets a fresh reservation handle.
+    void releaseClaim();
+    claimKeyRef.current = newClaimKey();
     setNextRemaining(null);
     setErrorMsg("");
     setPayAmount(null);
@@ -461,7 +709,10 @@ function PayPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+    <main
+      className="min-h-screen bg-background flex items-center justify-center p-4"
+      aria-busy={state === "processing" || linkLoading}
+    >
       <div className="w-full max-w-sm">
         {/* Header */}
         <div className="text-center mb-6">
@@ -506,7 +757,7 @@ function PayPage() {
         {state === "scanned" && paymentData && (
           <ScannedState data={paymentData} onConfirm={confirmPayment} onCancel={reset} />
         )}
-        {state === "processing" && <ProcessingState />}
+        {state === "processing" && <div role="status" aria-live="polite"><ProcessingState /></div>}
         {state === "error" && (
           <ErrorState
             message={errorMsg}
@@ -537,8 +788,14 @@ function PayPage() {
           onClose={() => setScannerOpen(false)}
         />
       ) : null}
-    </div>
+    </main>
   );
+}
+
+// A2.2 — an opaque per-guest reservation handle. It identifies this phone's
+// claim on the bill; it is not a credential for anything else.
+function newClaimKey(): string {
+  return `c${crypto.randomUUID().replace(/-/g, "")}`.slice(0, 33);
 }
 
 function localMpesaDigits(value?: string | null): string {
@@ -737,7 +994,12 @@ function ScannedState({
   data: PaymentData;
   onConfirm: (
     phone: string,
-    opts?: { amount?: number; tip?: number; staffId?: string | null },
+    opts?: {
+      amount?: number;
+      tip?: number;
+      staffId?: string | null;
+      itemIds?: string[];
+    },
   ) => void;
   onCancel: () => void;
 }) {
@@ -746,17 +1008,37 @@ function ScannedState({
     typeof data.remaining === "number" ? data.remaining : data.amount;
   const canSplit = Boolean(data.orderId) && typeof data.remaining === "number";
   const items = data.items ?? [];
+  // A2.2 — only lines the server says are still open can be picked. A line
+  // someone else reserved or already paid is rendered, disabled and labelled,
+  // never hidden: the guest needs to understand why they cannot select it.
+  const claimableItems = items.filter((it) => Boolean(it.id));
   const partiallyPaid = typeof data.paid === "number" && data.paid > 0;
   const [mode, setMode] = useState<"full" | "equal" | "item" | "custom">(
     "full",
   );
   const [people, setPeople] = useState(2);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [custom, setCustom] = useState("");
   const staff = data.staff ?? [];
-  const [tipPct, setTipPct] = useState(0); // 0 = none, -1 = custom, else percent
+  // "none" | "custom" | the additional-tip percentage of the chosen tier.
+  const [tipChoice, setTipChoice] = useState<"none" | "custom" | number>("none");
   const [customTip, setCustomTip] = useState("");
   const [tipStaff, setTipStaff] = useState("");
+
+  // Drop a selection the moment another guest takes that dish out from under it.
+  useEffect(() => {
+    setSelected((current) => {
+      if (current.size === 0) return current;
+      const stillOpen = new Set(
+        claimableItems
+          .filter((it) => it.state !== "taken" && it.state !== "paid")
+          .map((it) => it.id as string),
+      );
+      const next = new Set([...current].filter((id) => stillOpen.has(id)));
+      return next.size === current.size ? current : next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items]);
 
   const clamp = (n: number) =>
     Math.max(0, Math.min(remaining, Math.round(n || 0)));
@@ -764,25 +1046,46 @@ function ScannedState({
   if (mode === "equal") share = clamp(remaining / Math.max(1, people));
   else if (mode === "item")
     share = clamp(
-      items.reduce(
-        (s, it, i) => (selected.has(i) ? s + it.qty * it.price : s),
+      claimableItems.reduce(
+        (s, it) =>
+          selected.has(it.id as string)
+            ? // The server-quoted apportioned share carries this line's slice of
+              // tax/service/discount; the raw price is only a fallback.
+              s + (typeof it.amount === "number" ? it.amount : it.qty * it.price)
+            : s,
         0,
       ),
     );
   else if (mode === "custom") share = clamp(Number(custom) || 0);
 
-  const tip =
-    tipPct === -1
-      ? Math.max(0, Math.round(Number(customTip) || 0))
-      : Math.round((share * tipPct) / 100);
-  const total = share + tip;
-  const tipOpts = tipSuggestions(share);
+  // A3.2 — the tip options adapt to the auto-gratuity the POS already put on the
+  // bill. The guest's share carries a proportional slice of that service charge,
+  // so a split payer is tiered against what THEY are covering, not the whole
+  // check. No service charge (or an unknown one) falls back to 20/23/25%.
+  const billTotal = Number(data.total) || remaining;
+  const serviceCharge = Math.max(0, Number(data.serviceCharge) || 0);
+  const shareOfServiceCharge =
+    billTotal > 0 ? (serviceCharge * share) / billTotal : 0;
+  const tipPlan = tipTiersFor(share, shareOfServiceCharge);
+  const tipNotice = tipTierNotice(tipPlan);
+  const selectedTier =
+    typeof tipChoice === "number"
+      ? tipPlan.tiers.find((t) => t.pct === tipChoice)
+      : undefined;
 
-  const toggleItem = (i: number) =>
+  const tip =
+    tipChoice === "custom"
+      ? Math.max(0, Math.round(Number(customTip) || 0))
+      : (selectedTier?.amount ?? 0);
+  const guestFee = data.guestFee ?? null;
+  const guestFeeAmount = Math.max(0, Number(guestFee?.amount) || 0);
+  const total = share + tip + guestFeeAmount;
+
+  const toggleItem = (id: string) =>
     setSelected((cur) => {
       const next = new Set(cur);
-      if (next.has(i)) next.delete(i);
-      else next.add(i);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
 
@@ -826,7 +1129,13 @@ function ScannedState({
             KES {share.toLocaleString()}
           </p>
           {canSplit && (mode !== "full" || partiallyPaid) ? (
-            <p className="text-[11px] font-mono opacity-60 mt-1">
+            // A2.4 — this line changes under the guest's thumb as other people on
+            // the table pay, so it is a polite live region rather than static text.
+            <p
+              className="text-[11px] font-mono opacity-60 mt-1"
+              aria-live="polite"
+              aria-atomic="true"
+            >
               {partiallyPaid
                 ? `KES ${remaining.toLocaleString()} left of ${Number(data.total).toLocaleString()}`
                 : `of KES ${remaining.toLocaleString()}`}
@@ -846,7 +1155,8 @@ function ScannedState({
                 key={m.key}
                 type="button"
                 onClick={() => setMode(m.key)}
-                className={`rounded-xl px-2 py-2 text-[11px] font-semibold ${
+                aria-pressed={mode === m.key}
+                className={`min-h-[44px] rounded-xl px-2 py-2 text-[11px] font-semibold ${
                   mode === m.key
                     ? "bg-emerald-600 text-white"
                     : "bg-muted text-muted-foreground"
@@ -884,31 +1194,64 @@ function ScannedState({
           ) : null}
 
           {mode === "item" ? (
-            <div className="space-y-2 max-h-48 overflow-y-auto">
-              {items.length === 0 ? (
+            <div className="space-y-2">
+              {claimableItems.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
                   No itemised bill available.
                 </p>
               ) : (
-                items.map((it, i) => (
-                  <button
-                    key={`${it.name}-${i}`}
-                    type="button"
-                    onClick={() => toggleItem(i)}
-                    className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left text-sm ${
-                      selected.has(i)
-                        ? "border-emerald-500 bg-emerald-50"
-                        : "border-border bg-background"
-                    }`}
+                <>
+                  <p
+                    id="split-item-help"
+                    className="text-[11px] leading-snug text-muted-foreground"
                   >
-                    <span>
-                      {it.qty}× {it.name}
-                    </span>
-                    <span className="font-mono">
-                      KES {(it.qty * it.price).toLocaleString()}
-                    </span>
-                  </button>
-                ))
+                    Pick the dishes you had. Each price already includes your
+                    share of any service charge, tax and discount. Nothing is
+                    reserved until you tap pay.
+                  </p>
+                  <ul className="max-h-56 space-y-2 overflow-y-auto">
+                    {claimableItems.map((it) => {
+                      const id = it.id as string;
+                      const takenByOther =
+                        it.state === "taken" || it.state === "paid";
+                      const isSelected = selected.has(id);
+                      const lineAmount =
+                        typeof it.amount === "number"
+                          ? it.amount
+                          : it.qty * it.price;
+                      return (
+                        <li key={id}>
+                          <button
+                            type="button"
+                            onClick={() => toggleItem(id)}
+                            disabled={takenByOther}
+                            aria-pressed={isSelected}
+                            aria-describedby="split-item-help"
+                            className={`flex min-h-[44px] w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-sm disabled:cursor-not-allowed disabled:opacity-60 ${
+                              isSelected
+                                ? "border-emerald-500 bg-emerald-50"
+                                : "border-border bg-background"
+                            }`}
+                          >
+                            <span>
+                              {it.qty}× {it.name}
+                              {takenByOther ? (
+                                <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                  {it.state === "paid"
+                                    ? "Already paid"
+                                    : "Taken by someone else"}
+                                </span>
+                              ) : null}
+                            </span>
+                            <span className="shrink-0 font-mono">
+                              KES {lineAmount.toLocaleString()}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </>
               )}
             </div>
           ) : null}
@@ -935,25 +1278,30 @@ function ScannedState({
           <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
             Add a tip
           </p>
+          {tipNotice ? (
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              {tipNotice}
+            </p>
+          ) : null}
           <div className="grid grid-cols-5 gap-2">
             <button
               type="button"
-              onClick={() => setTipPct(0)}
+              onClick={() => setTipChoice("none")}
               className={`rounded-xl px-1 py-2 text-[11px] font-semibold ${
-                tipPct === 0
+                tipChoice === "none"
                   ? "bg-emerald-600 text-white"
                   : "bg-muted text-muted-foreground"
               }`}
             >
               None
             </button>
-            {tipOpts.map((o) => (
+            {tipPlan.tiers.map((o) => (
               <button
                 key={o.pct}
                 type="button"
-                onClick={() => setTipPct(o.pct)}
+                onClick={() => setTipChoice(o.pct)}
                 className={`rounded-xl px-1 py-2 text-[11px] font-semibold ${
-                  tipPct === o.pct
+                  tipChoice === o.pct
                     ? "bg-emerald-600 text-white"
                     : "bg-muted text-muted-foreground"
                 }`}
@@ -963,9 +1311,9 @@ function ScannedState({
             ))}
             <button
               type="button"
-              onClick={() => setTipPct(-1)}
+              onClick={() => setTipChoice("custom")}
               className={`rounded-xl px-1 py-2 text-[11px] font-semibold ${
-                tipPct === -1
+                tipChoice === "custom"
                   ? "bg-emerald-600 text-white"
                   : "bg-muted text-muted-foreground"
               }`}
@@ -973,7 +1321,7 @@ function ScannedState({
               Custom
             </button>
           </div>
-          {tipPct === -1 ? (
+          {tipChoice === "custom" ? (
             <div className="flex items-center gap-2">
               <span className="text-sm font-mono font-bold">KES</span>
               <input
@@ -1010,8 +1358,49 @@ function ScannedState({
           ) : null}
           {tip > 0 ? (
             <p className="text-xs text-muted-foreground">
-              Tip KES {tip.toLocaleString()} · You pay KES{" "}
-              {total.toLocaleString()}
+              Tip KES {tip.toLocaleString()}
+              {selectedTier && tipPlan.includedAmount > 0
+                ? ` · about ${selectedTier.combinedPct}% in total with the service charge`
+                : ""}{" "}
+              · You pay KES {total.toLocaleString()}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* A5.5 — what paying from your phone costs, stated BEFORE you commit.
+          The amount is quoted by the server; this screen never computes one. */}
+      {guestFee ? (
+        <div className="rounded-2xl border border-border bg-card p-4 space-y-2">
+          <div className="flex items-baseline justify-between gap-3">
+            <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+              Service fee
+            </p>
+            <p className="text-sm font-mono font-bold">
+              {guestFeeAmount > 0
+                ? `KES ${guestFeeAmount.toLocaleString()}`
+                : "None"}
+            </p>
+          </div>
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            {guestFeeAmount > 0
+              ? "An optional fee for paying from your phone:"
+              : "You pay your bill and any tip you choose — nothing extra. Paying from your phone gets you:"}
+          </p>
+          <ul className="space-y-1">
+            {(guestFee.benefits ?? []).map((b) => (
+              <li
+                key={b}
+                className="flex gap-2 text-[11px] leading-snug text-muted-foreground"
+              >
+                <CheckCircle2 className="size-3.5 shrink-0 text-emerald-600" />
+                <span>{b}</span>
+              </li>
+            ))}
+          </ul>
+          {guestFee.optOut ? (
+            <p className="text-[10px] leading-snug text-muted-foreground">
+              {guestFee.optOut}
             </p>
           ) : null}
         </div>
@@ -1055,6 +1444,8 @@ function ScannedState({
             amount: canSplit ? share : undefined,
             tip,
             staffId: tipStaff || null,
+            itemIds:
+              mode === "item" ? Array.from(selected) : undefined,
           })
         }
         className="w-full bg-emerald-600 text-white py-4 rounded-2xl text-base font-bold flex items-center justify-center gap-2 disabled:opacity-40"
@@ -1067,7 +1458,7 @@ function ScannedState({
 
       <button
         onClick={onCancel}
-        className="w-full border border-border py-3 rounded-2xl text-sm text-muted-foreground"
+        className="w-full min-h-[44px] border border-border py-3 rounded-2xl text-sm text-muted-foreground"
       >
         Cancel
       </button>
@@ -1263,42 +1654,67 @@ function SuccessState({
 }) {
   const elapsedSec = Math.round(elapsedMs / 1000);
   const [portalUrl, setPortalUrl] = useState<string | null>(null);
-  const [loyalty, setLoyalty] = useState<{
-    points: number;
-    tier: string;
-  } | null>(null);
+  const [portalChallenge, setPortalChallenge] = useState<string | null>(null);
+  const [portalCode, setPortalCode] = useState("");
+  const [portalDevCode, setPortalDevCode] = useState<string | null>(null);
+  const [portalBusy, setPortalBusy] = useState(false);
+  const [portalError, setPortalError] = useState<string | null>(null);
   const pointsEarned = loyaltyPointsFor(amountPaid * 100);
 
-  useEffect(() => {
+  async function requestPortalCode() {
     const venue = data.venue;
     if (!venue || !phone) return;
-    let active = true;
-    void (async () => {
-      try {
-        const res = await fetch("/api/portal/token", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ venue, phone }),
-        });
-        if (!res.ok) return;
-        const d = (await res.json()) as {
-          url?: string;
-          contact?: { points: number; tier: string; name: string };
-        };
-        if (active && d.url) {
-          setPortalUrl(`${window.location.origin}${d.url}`);
-          if (d.contact) {
-            setLoyalty({ points: d.contact.points, tier: d.contact.tier });
-          }
-        }
-      } catch {
-        /* the rewards portal is a bonus — never block the receipt */
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [data.venue, phone]);
+    setPortalBusy(true);
+    setPortalError(null);
+    try {
+      const res = await fetch("/api/portal/token", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ venue, phone, channel: "sms" }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        challengeId?: string;
+        devCode?: string;
+        error?: string;
+      };
+      if (!res.ok || !body.challengeId) throw new Error(body.error ?? "Could not send code.");
+      setPortalChallenge(body.challengeId);
+      setPortalDevCode(body.devCode ?? null);
+    } catch (error) {
+      setPortalError(error instanceof Error ? error.message : "Could not send code.");
+    } finally {
+      setPortalBusy(false);
+    }
+  }
+
+  async function verifyPortalCode() {
+    if (!portalChallenge || !data.venue || !phone) return;
+    setPortalBusy(true);
+    setPortalError(null);
+    try {
+      const res = await fetch("/api/portal/token/verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          challengeId: portalChallenge,
+          venue: data.venue,
+          phone,
+          channel: "sms",
+          code: portalCode,
+        }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        url?: string;
+        error?: string;
+      };
+      if (!res.ok || !body.url) throw new Error(body.error ?? "Invalid code.");
+      setPortalUrl(`${window.location.origin}${body.url}`);
+    } catch (error) {
+      setPortalError(error instanceof Error ? error.message : "Invalid code.");
+    } finally {
+      setPortalBusy(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -1379,19 +1795,57 @@ function SuccessState({
         </p>
       </div>
 
-      {pointsEarned > 0 || loyalty ? (
+      {pointsEarned > 0 ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-center">
           {pointsEarned > 0 ? (
             <p className="text-sm font-bold text-amber-700">
               +{pointsEarned.toLocaleString()} points earned 🎉
             </p>
           ) : null}
-          {loyalty ? (
-            <p className="text-[11px] text-amber-600 mt-1">
-              {loyalty.points.toLocaleString()} points ·{" "}
-              <span className="font-semibold">{loyalty.tier}</span> tier
-            </p>
-          ) : null}
+        </div>
+      ) : null}
+
+      {!portalUrl && data.venue && phone ? (
+        <div className="rounded-2xl border border-emerald-200 bg-white p-4 text-center space-y-3">
+          <p className="text-sm font-bold">Verify to access rewards &amp; receipts</p>
+          {!portalChallenge ? (
+            <button
+              type="button"
+              onClick={() => void requestPortalCode()}
+              disabled={portalBusy}
+              className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white disabled:opacity-50"
+            >
+              {portalBusy ? "Sending…" : "Send verification code"}
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <input
+                value={portalCode}
+                onChange={(event) =>
+                  setPortalCode(event.target.value.replace(/\D/g, "").slice(0, 6))
+                }
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="6-digit code"
+                className="w-full rounded-xl border border-border px-3 py-3 text-center font-mono"
+              />
+              {portalDevCode ? (
+                <p className="text-[10px] text-muted-foreground">Development code: {portalDevCode}</p>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void verifyPortalCode()}
+                disabled={portalBusy || portalCode.length !== 6}
+                className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white disabled:opacity-50"
+              >
+                {portalBusy ? "Verifying…" : "Verify & open portal"}
+              </button>
+            </div>
+          )}
+          {portalError ? <p className="text-xs text-red-600">{portalError}</p> : null}
+          <p className="text-[10px] text-muted-foreground">
+            The verified link expires in 30 days and replaces older links.
+          </p>
         </div>
       ) : null}
 
@@ -1440,8 +1894,10 @@ function SuccessState({
 }
 
 // Post-payment review capture — SundayApp's "payment = start of the
-// relationship". A high rating is nudged to Google; a low one is captured
-// privately and flagged to the team for service recovery.
+// relationship". A rating at or above the venue's configured threshold is sent
+// straight to the venue's Google review form (prefilled with the place, so
+// posting takes seconds); anything below is captured privately and flagged to
+// the team for service recovery instead of being pushed onto a public profile.
 function ReviewPrompt({
   venue,
   merchant,
@@ -1459,25 +1915,58 @@ function ReviewPrompt({
   const [comment, setComment] = useState("");
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [minRating, setMinRating] = useState(4);
+  const [googleUrl, setGoogleUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!venue) return;
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/reviews/prompt?venue=${encodeURIComponent(venue)}`,
+        );
+        if (!res.ok) return;
+        const data = (await res.json()) as { minRating?: number };
+        if (typeof data.minRating === "number") setMinRating(data.minRating);
+      } catch {
+        /* the default threshold is a safe fallback */
+      }
+    })();
+  }, [venue]);
+
   if (!venue) return null;
 
   async function submit(stars: number, withComment = false) {
     setBusy(true);
     try {
-      await fetch(`/api/reviews?venue=${encodeURIComponent(venue as string)}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          rating: stars,
-          comment: withComment ? comment : undefined,
-          phone: phone || undefined,
-          paymentId: paymentId || undefined,
-          staffId: staffId || undefined,
-          source: "pay",
-        }),
-      });
-    } catch {
-      /* best-effort — never block leaving */
+      const res = await fetch(
+        `/api/reviews?venue=${encodeURIComponent(venue as string)}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            rating: stars,
+            comment: withComment ? comment : undefined,
+            phone: phone || undefined,
+            paymentId: paymentId || undefined,
+            staffId: staffId || undefined,
+            source: "pay",
+          }),
+        },
+      );
+      const data = (await res.json().catch(() => ({}))) as {
+        destination?: string;
+        googleUrl?: string | null;
+      };
+      // The server owns the decision — the client never routes a rating to a
+      // public profile on its own.
+      if (data.destination === "google" && data.googleUrl) {
+        setGoogleUrl(data.googleUrl);
+        window.open(data.googleUrl, "_blank", "noopener,noreferrer");
+      }
+    } catch (error) {
+      // Never block a guest from leaving over a rating.
+      noteBestEffortFailure("pay.review.submit", error);
     } finally {
       setSent(true);
       setBusy(false);
@@ -1488,18 +1977,18 @@ function ReviewPrompt({
     return (
       <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-center space-y-2">
         <p className="text-sm font-bold">Thanks for the feedback! 🙏</p>
-        {rating >= 4 ? (
+        {googleUrl ? (
           <a
-            href={`https://www.google.com/search?q=${encodeURIComponent(`${merchant} reviews`)}`}
+            href={googleUrl}
             target="_blank"
             rel="noreferrer"
             className="inline-block text-xs font-bold text-amber-700 underline"
           >
-            Loved it? Share on Google →
+            Post it on Google →
           </a>
         ) : (
           <p className="text-[11px] text-muted-foreground">
-            We&apos;ve flagged this to the team to make it right.
+            We&apos;ve shared this with the team so we can make it right.
           </p>
         )}
       </div>
@@ -1518,7 +2007,7 @@ function ReviewPrompt({
             disabled={busy}
             onClick={() => {
               setRating(s);
-              if (s >= 4) void submit(s);
+              if (s >= minRating) void submit(s);
             }}
           >
             <Star
@@ -1527,7 +2016,7 @@ function ReviewPrompt({
           </button>
         ))}
       </div>
-      {rating > 0 && rating < 4 ? (
+      {rating > 0 && rating < minRating ? (
         <div className="space-y-2">
           <textarea
             value={comment}

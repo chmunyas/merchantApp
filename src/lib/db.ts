@@ -2,6 +2,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import postgres from "postgres";
 
 export type Sql = ReturnType<typeof postgres>;
+export type TransactionSql = postgres.TransactionSql;
+export type QuerySql = Sql | TransactionSql;
 
 // In Cloudflare production this is a Hyperdrive binding; in Node dev it is a
 // DATABASE_URL. Either way the database itself is always PostgreSQL.

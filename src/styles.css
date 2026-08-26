@@ -140,6 +140,10 @@
     color: var(--color-foreground);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    scroll-padding-bottom: calc(6rem + env(safe-area-inset-bottom, 0px));
   }
 
   .font-mono {
@@ -151,3 +155,91 @@
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+
+/* ---------------------------------------------------------------------------
+   A1.4 — paper-receipt fallback.
+
+   Sunday's Digital Bill promise ends with "if you absolutely require a printed
+   receipt, our team will be happy to provide one upon request". When a member
+   of staff produces one, the browser must print the RECEIPT and nothing else —
+   no dashboard chrome, no navigation, no buttons.
+
+   The sheet is portalled to <body> and carries `.print-receipt-portal`, and the
+   component sets `.print-receipt-active` on <body> while it is open, so the rule
+   below can hide every sibling without guessing at the app's DOM shape.
+--------------------------------------------------------------------------- */
+@media print {
+  body.print-receipt-active > *:not(.print-receipt-portal) {
+    display: none !important;
+  }
+
+  body.print-receipt-active {
+    background: #fff;
+  }
+
+  .print-receipt-portal {
+    position: static;
+  }
+
+  .print-receipt-sheet {
+    position: static !important;
+    inset: auto !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: #fff !important;
+    color: #000 !important;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 11pt;
+    line-height: 1.45;
+  }
+
+  .print-receipt-sheet table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .print-receipt-sheet th,
+  .print-receipt-sheet td {
+    padding: 2pt 0;
+    text-align: left;
+  }
+
+  .print-receipt-sheet .print-amount {
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .print-receipt-sheet hr {
+    border: 0;
+    border-top: 1px dashed #000;
+    margin: 6pt 0;
+  }
+
+  /* Controls exist for the screen only. */
+  .print-hide {
+    display: none !important;
+  }
+
+  @page {
+    margin: 12mm;
+  }
+}

@@ -493,7 +493,7 @@ export function SmartSettlementFlow() {
 export function PWAFlow() {
   const [online, setOnline] = useState(true);
   return (
-    <FlowShell title="PWA & Mobile" subtitle="Works everywhere, even offline.">
+    <FlowShell title="PWA & Mobile" subtitle="Cached information stays available offline.">
       <div className="px-5 pt-3 space-y-4">
         <div className="rounded-2xl bg-gradient-to-br from-foreground to-foreground/80 text-background p-5">
           <div className="flex items-center gap-2">
@@ -525,7 +525,7 @@ export function PWAFlow() {
 
         <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
           <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
-            Offline drafts · synced when online
+            Offline drafts · review online before charging
           </p>
           {[
             { id: "DRAFT-014", who: "Sade's Atelier", amt: "USD 320" },

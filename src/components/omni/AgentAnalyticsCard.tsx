@@ -1,7 +1,8 @@
 import { Bot, MessageSquare, TrendingUp, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { getCurrentVenueId } from "@/lib/merchant-dashboard";
+import { getCurrentVenueId } from "@/lib/tenant-store";
+import { authFetch } from "@/lib/auth";
 
 type AgentStats = {
   byChannel: Array<{ channel: string; conversations: number }>;
@@ -29,7 +30,7 @@ export function AgentAnalyticsCard() {
     let active = true;
     (async () => {
       try {
-        const res = await fetch(`/api/analytics/agent?venue=${venue}`);
+        const res = await authFetch(`/api/analytics/agent?venue=${venue}`);
         if (!res.ok) throw new Error("offline");
         const data = (await res.json()) as AgentStats;
         if (active) setStats(data);

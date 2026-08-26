@@ -1,5 +1,5 @@
-import { getAdapter } from "@/lib/channels";
 import { getSql, type Sql } from "@/lib/db";
+import { hasVerifiedChannelAccount, queueOutbound } from "@/lib/outbound-jobs";
 import { resolveApiToken } from "@/lib/api-tokens";
 import { envVar } from "@/lib/env";
 import { hashPassword, signJwt, verifyJwt, verifyPassword } from "@/lib/jwt";
@@ -11,8 +11,19 @@ import {
 } from "@/lib/otp";
 import { rateLimit, clientIp } from "@/lib/rate-limit";
 import { generateTotpSecret, totpUri, verifyTotp } from "@/lib/totp";
-import { venueFromPayload } from "@/lib/tenancy";
+import { isVenueRole, venueFromPayload } from "@/lib/tenancy";
 import { verifyTurnstile } from "@/lib/turnstile";
+import { otpDebugAllowed, sandboxAutoLoginEmail } from "@/lib/runtime-security";
+import {
+  dummyVerifyStaffPin,
+  isValidStaffPin,
+  verifyStaffPin,
+} from "@/lib/staff-pin";
+import {
+  humanPrincipalFromPayload,
+  type HumanJwtPrincipal,
+} from "@/lib/principals";
+import { principalVenue } from "@/lib/tenancy";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -33,6 +44,103 @@ type AuthConfig = {
   adminPasswordHash: string;
 };
 
+type VenueMembership = {
+  role: string;
+  membershipVersion: number;
+};
+
+async function loadVenueMembership(
+  sql: Sql,
+  email: string,
+  venue: string,
+): Promise<VenueMembership | null> {
+  const [membership] = await sql`
+    SELECT uv.role, uv.membership_version
+    FROM user_venues uv
+    JOIN app_users u ON u.id = uv.user_id
+    WHERE lower(u.email) = ${email.toLowerCase()}
+      AND uv.venue_id = ${venue}
+    LIMIT 1`;
+  if (!membership || !isVenueRole(membership.role)) return null;
+  const membershipVersion = Number(membership.membership_version);
+  if (!Number.isInteger(membershipVersion) || membershipVersion < 1) return null;
+  return { role: String(membership.role), membershipVersion };
+}
+
+// Every authenticated request re-checks the caller's venue membership so a
+// revoked or role-changed account stops working before its JWT expires. That is
+// one DB round-trip per request, which puts the database on the critical path of
+// every call — the dominant cost at high request rates.
+//
+// It can be cached in-isolate, but that trades away immediate revocation:
+// `membership_version` exists precisely to kill a session at once, so caching is
+// OFF unless an operator sets AUTH_MEMBERSHIP_TTL_MS. At 5000 it removes the
+// round-trip at the cost of a revocation taking effect within 5 seconds.
+const MEMBERSHIP_TTL_DEFAULT_MS = 0;
+const MEMBERSHIP_CACHE_MAX = 5_000;
+const membershipCache = new Map<
+  string,
+  { value: VenueMembership; expires: number }
+>();
+
+function membershipTtlMs(env: unknown): number {
+  const raw = envVar(env, "AUTH_MEMBERSHIP_TTL_MS");
+  if (raw === undefined) return MEMBERSHIP_TTL_DEFAULT_MS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : MEMBERSHIP_TTL_DEFAULT_MS;
+}
+
+async function cachedVenueMembership(
+  sql: Sql,
+  env: unknown,
+  email: string,
+  venue: string,
+): Promise<VenueMembership | null> {
+  const ttl = membershipTtlMs(env);
+  if (ttl === 0) return loadVenueMembership(sql, email, venue);
+  const key = `${email.toLowerCase()}\u0000${venue}`;
+  const now = Date.now();
+  const hit = membershipCache.get(key);
+  if (hit && hit.expires > now) return hit.value;
+  const membership = await loadVenueMembership(sql, email, venue);
+  // Only positive results are cached: caching "no membership" would lock a user
+  // out for the TTL immediately after being granted access.
+  if (membership) {
+    if (membershipCache.size >= MEMBERSHIP_CACHE_MAX) {
+      for (const [k, v] of membershipCache) {
+        if (v.expires <= now) membershipCache.delete(k);
+      }
+      if (membershipCache.size >= MEMBERSHIP_CACHE_MAX) {
+        membershipCache.clear();
+      }
+    }
+    membershipCache.set(key, { value: membership, expires: now + ttl });
+  } else {
+    membershipCache.delete(key);
+  }
+  return membership;
+}
+
+async function authoritativeVenueClaims(
+  sql: Sql,
+  claims: Record<string, unknown>,
+): Promise<Record<string, unknown> | null> {
+  const role = claims.role;
+  const venue = typeof claims.venue === "string" ? claims.venue.trim() : "";
+  if (!isVenueRole(role) || !venue) return claims;
+  const email = typeof claims.sub === "string" ? claims.sub.toLowerCase() : "";
+  if (!email.includes("@")) return null;
+  const membership = await loadVenueMembership(sql, email, venue);
+  if (!membership) return null;
+  return {
+    ...claims,
+    role: membership.role,
+    membership_version: membership.membershipVersion,
+  };
+}
+
 function randomSecret(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(32)))
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -47,7 +155,9 @@ function truthyEnv(value: string | undefined): boolean {
 // Auth config: JWT secret + the admin credential. Generated + seeded once into
 // app_settings; overridable in production via JWT_SECRET / ADMIN_EMAIL /
 // ADMIN_PASSWORD env vars.
-async function getAuthConfig(env: unknown): Promise<AuthConfig | null> {
+// Exported so other routes can pepper their own one-time codes with the same
+// server secret (see the payout step-up in src/api/tips.ts).
+export async function getAuthConfig(env: unknown): Promise<AuthConfig | null> {
   const sql = getSql(env);
   if (!sql) return null;
   const [row] = await sql`SELECT value FROM app_settings WHERE key = 'auth'`;
@@ -116,7 +226,47 @@ async function resolveAuth(
   }
   const secret = await getAuthSecret(env);
   if (!secret) return null;
-  return verifyJwt(token, secret);
+  const payload = await verifyJwt(token, secret);
+  if (!payload) return null;
+  if (payload.role === "staff" && typeof payload.staff_id === "string") {
+    const sql = getSql(env);
+    const staffId = typeof payload.staff_id === "string" ? payload.staff_id : "";
+    const venue = typeof payload.venue === "string" ? payload.venue : "";
+    const version = Number(payload.staff_credential_version);
+    if (!sql || !staffId || !venue || !Number.isInteger(version)) return null;
+    const [staff] = await sql`
+      SELECT id FROM staff
+      WHERE id = ${staffId}
+        AND venue_id = ${venue}
+        AND active = true
+        AND pin_hash IS NOT NULL
+        AND credential_reset_required = false
+        AND credential_version = ${version}
+      LIMIT 1`;
+    if (!staff) return null;
+  } else if (isVenueRole(payload.role) && typeof payload.venue === "string") {
+    const sql = getSql(env);
+    const email = typeof payload.sub === "string" ? payload.sub.toLowerCase() : "";
+    const venue = payload.venue.trim();
+    const version = Number(payload.membership_version);
+    if (
+      !sql ||
+      !email.includes("@") ||
+      !venue ||
+      !Number.isInteger(version)
+    ) {
+      return null;
+    }
+    const membership = await cachedVenueMembership(sql, env, email, venue);
+    if (
+      !membership ||
+      membership.role !== payload.role ||
+      membership.membershipVersion !== version
+    ) {
+      return null;
+    }
+  }
+  return { ...payload, kind: "human-jwt" };
 }
 
 // The JWT secret is cached in-isolate so a warm worker verifies tokens WITHOUT a
@@ -140,6 +290,17 @@ async function getAuthSecret(env: unknown): Promise<string | null> {
   return cfg.secret;
 }
 
+export async function getOtpPepper(env: unknown): Promise<string | null> {
+  return getAuthSecret(env);
+}
+
+// The server-side HMAC key, for short-lived signed handles that leave the app
+// and come back (e.g. the Google OAuth `state` round-trip). Same key as session
+// JWTs, so it is rotated with them.
+export async function getSigningSecret(env: unknown): Promise<string | null> {
+  return getAuthSecret(env);
+}
+
 // Tenant isolation + plan-limit helpers live in lib/tenancy (pure, testable);
 // re-exported here so route handlers keep importing them from "@/api/auth".
 export { PLAN_LIMITS, planOf, venueFromPayload } from "@/lib/tenancy";
@@ -154,6 +315,27 @@ export async function resolveVenue(
   return venueFromPayload(payload, url);
 }
 
+// Human-only session guard. API tokens deliberately cannot use account,
+// credential, membership, billing-owner, organization-admin, or token-management
+// surfaces even when they were created by a highly privileged human.
+export async function requireHumanAuth(
+  request: Request,
+  env: unknown,
+): Promise<HumanJwtPrincipal | null> {
+  return humanPrincipalFromPayload(await requireAuth(request, env));
+}
+
+// Strict tenant guard for authenticated venue routes. Missing venue claims are
+// authorization failures; they never silently become the shared `main` tenant.
+export async function requirePrincipalVenue(
+  request: Request,
+  env: unknown,
+): Promise<{ payload: Record<string, unknown>; venue: string } | null> {
+  const payload = await requireAuth(request, env);
+  const venue = principalVenue(payload);
+  return payload && venue ? { payload, venue } : null;
+}
+
 // Role gate: returns the payload only if the token carries one of the allowed
 // roles (RBAC). Reusable for platform-admin-only or role-scoped endpoints.
 export async function requireRole(
@@ -162,7 +344,7 @@ export async function requireRole(
   roles: string[],
 ): Promise<Record<string, unknown> | null> {
   const payload = await requireAuth(request, env);
-  if (!payload) return null;
+  if (!payload || payload.isApiToken === true) return null;
   const role = typeof payload.role === "string" ? payload.role : null;
   return role && roles.includes(role) ? payload : null;
 }
@@ -175,7 +357,13 @@ export async function mintToken(
 ): Promise<string | null> {
   const cfg = await getAuthConfig(env);
   if (!cfg) return null;
-  return signJwt(claims, cfg.secret);
+  const sql = getSql(env);
+  const authoritative = sql
+    ? await authoritativeVenueClaims(sql, claims)
+    : isVenueRole(claims.role) && claims.venue
+      ? null
+      : claims;
+  return authoritative ? signJwt(authoritative, cfg.secret) : null;
 }
 
 // Passwordless provisioning: create a venue + owner app_user with NO password, so
@@ -238,7 +426,7 @@ export async function handleAuthRoute(
     if (sql) {
       try {
         const [user] = await sql`
-          SELECT email, password_hash, name, venue_id, role, plan, org_id,
+          SELECT id, email, password_hash, name, venue_id, role, plan, org_id,
                  totp_secret, totp_enabled
           FROM app_users WHERE lower(email) = ${email} LIMIT 1`;
         if (
@@ -255,24 +443,23 @@ export async function handleAuthRoute(
               return json({ error: "Invalid authenticator code." }, 401);
             }
           }
-          const token = await signJwt(
-            {
-              sub: String(user.email),
-              role: String(user.role),
-              name: user.name ?? undefined,
-              venue: user.venue_id ?? undefined,
-              plan: (user.plan as string) ?? "free",
-              org: (user.org_id as string) ?? undefined,
-            },
-            cfg.secret,
-          );
+          const claims = await authoritativeVenueClaims(sql, {
+            sub: String(user.email),
+            role: String(user.role),
+            name: user.name ?? undefined,
+            venue: user.venue_id ?? undefined,
+            plan: (user.plan as string) ?? "free",
+            org: (user.org_id as string) ?? undefined,
+          });
+          if (!claims) return json({ error: "account is not assigned" }, 403);
+          const token = await signJwt(claims, cfg.secret);
           return json({
             token,
             user: {
               email: user.email,
-              role: user.role,
+              role: claims.role,
               name: user.name,
-              venue: user.venue_id,
+              venue: claims.venue,
               plan: (user.plan as string) ?? "free",
               org: (user.org_id as string) ?? null,
             },
@@ -289,7 +476,7 @@ export async function handleAuthRoute(
   // chain owner can switch stores with one login. Membership is verified
   // server-side, so a token can never be pointed at a venue the user doesn't own.
   if (path === "/api/auth/switch-venue" && request.method === "POST") {
-    const payload = await requireAuth(request, env);
+    const payload = await requireHumanAuth(request, env);
     if (!payload) return json({ error: "unauthorized" }, 401);
     const cfg = await getAuthConfig(env);
     const sql = getSql(env);
@@ -299,7 +486,8 @@ export async function handleAuthRoute(
     if (!target) return json({ error: "venue required" }, 400);
     const email = String(payload.sub ?? "").toLowerCase();
     const [member] = await sql`
-      SELECT uv.role, u.name, u.plan, u.org_id, v.name AS venue_name
+            SELECT uv.role, uv.membership_version, u.name, u.plan, u.org_id,
+              v.name AS venue_name
       FROM user_venues uv
       JOIN app_users u ON u.id = uv.user_id
       JOIN venues v ON v.id = uv.venue_id
@@ -314,6 +502,7 @@ export async function handleAuthRoute(
         venue: target,
         plan: (member.plan as string) ?? "free",
         org: (member.org_id as string) ?? undefined,
+        membership_version: Number(member.membership_version),
       },
       cfg.secret,
     );
@@ -334,28 +523,30 @@ export async function handleAuthRoute(
   // Refresh the JWT from the CURRENT DB state (e.g. after a plan upgrade) without
   // a full re-login, so a new plan claim takes effect immediately.
   if (path === "/api/auth/refresh" && request.method === "POST") {
-    const payload = await requireAuth(request, env);
+    const payload = await requireHumanAuth(request, env);
     if (!payload) return json({ error: "unauthorized" }, 401);
     const cfg = await getAuthConfig(env);
     const sql = getSql(env);
     if (!cfg || !sql) return json({ error: "auth unavailable" }, 503);
     const email = String(payload.sub ?? "").toLowerCase();
     const venue = (payload as { venue?: string }).venue ?? null;
+    if (!venue) return json({ error: "venue required" }, 400);
     const [u] = await sql`
-      SELECT role, name, plan, org_id, venue_id
-      FROM app_users
-      WHERE lower(email) = ${email}
-      ORDER BY (venue_id = ${venue}) DESC NULLS LAST
+      SELECT uv.role, uv.membership_version, u.name, u.plan, u.org_id
+      FROM user_venues uv
+      JOIN app_users u ON u.id = uv.user_id
+      WHERE lower(u.email) = ${email} AND uv.venue_id = ${venue}
       LIMIT 1`;
-    if (!u) return json({ error: "account not found" }, 404);
+    if (!u) return json({ error: "membership not found" }, 403);
     const token = await signJwt(
       {
         sub: email,
         role: String(u.role ?? payload.role ?? "merchant"),
         name: (u.name as string) ?? undefined,
-        venue: venue ?? (u.venue_id as string) ?? undefined,
+        venue,
         plan: (u.plan as string) ?? "free",
         org: (u.org_id as string) ?? undefined,
+        membership_version: Number(u.membership_version),
       },
       cfg.secret,
     );
@@ -365,7 +556,7 @@ export async function handleAuthRoute(
         email,
         role: u.role,
         name: u.name,
-        venue: venue ?? u.venue_id,
+        venue,
         plan: (u.plan as string) ?? "free",
         org: (u.org_id as string) ?? null,
       },
@@ -409,14 +600,28 @@ export async function handleAuthRoute(
     const message = `Your PesaSwap code is ${code}. It expires in 10 minutes. If you didn't request it, ignore this message.`;
     const handle = channel === "email" ? `email:${dest}` : dest;
     try {
-      await getAdapter(channel).send(handle, message, env, "main");
+      if (!(await hasVerifiedChannelAccount(env, "main", channel as "email" | "whatsapp" | "sms"))) {
+        throw new Error("channel account unavailable");
+      }
+      await queueOutbound(env, {
+        deliveryKey: `auth-otp:${id}`,
+        venue: "main",
+        sourceType: "authentication",
+        sourceId: id,
+        channel: channel as "email" | "whatsapp" | "sms",
+        handle,
+        purpose: "authentication",
+        body: message,
+      });
     } catch {
-      /* delivery best-effort; the code is still valid + can be re-sent */
+      if (!otpDebugAllowed(env)) {
+        await sql`UPDATE auth_otps SET consumed_at = now() WHERE id = ${id}`;
+        return json({ error: "Could not queue verification code." }, 503);
+      }
     }
     // On non-prod (no HYPERDRIVE binding) or with AUTH_OTP_DEBUG, echo the code so
     // dev/E2E can complete the flow without a live ESP/WhatsApp. NEVER in prod.
-    const isProd = Boolean((env as { HYPERDRIVE?: unknown } | null)?.HYPERDRIVE);
-    const debug = !isProd || truthyEnv(envVar(env, "AUTH_OTP_DEBUG"));
+    const debug = otpDebugAllowed(env);
     console.info(`[auth] OTP ${channel}:${dest}${debug ? ` = ${code}` : ""}`);
     return json({
       sent: true,
@@ -446,6 +651,7 @@ export async function handleAuthRoute(
     const [otp] = await sql`
       SELECT id, code_hash, attempts FROM auth_otps
       WHERE destination = ${dest} AND channel = ${channel}
+        AND purpose = 'login'
         AND consumed_at IS NULL AND expires_at > now()
       ORDER BY created_at DESC LIMIT 1`;
     if (!otp) return json({ error: "That code has expired. Request a new one." }, 401);
@@ -496,24 +702,23 @@ export async function handleAuthRoute(
         return json({ error: "Invalid authenticator code." }, 401);
       }
     }
-    const token = await signJwt(
-      {
-        sub: String(user.email),
-        role: String(user.role ?? "merchant"),
-        name: (user.name as string) ?? undefined,
-        venue: (user.venue_id as string) ?? undefined,
-        plan: (user.plan as string) ?? "free",
-        org: (user.org_id as string) ?? undefined,
-      },
-      cfg.secret,
-    );
+    const claims = await authoritativeVenueClaims(sql, {
+      sub: String(user.email),
+      role: String(user.role ?? "merchant"),
+      name: (user.name as string) ?? undefined,
+      venue: (user.venue_id as string) ?? undefined,
+      plan: (user.plan as string) ?? "free",
+      org: (user.org_id as string) ?? undefined,
+    });
+    if (!claims) return json({ error: "account is not assigned" }, 403);
+    const token = await signJwt(claims, cfg.secret);
     return json({
       token,
       user: {
         email: user.email,
-        role: user.role,
+        role: claims.role,
         name: user.name,
-        venue: user.venue_id,
+        venue: claims.venue,
         plan: (user.plan as string) ?? "free",
         org: (user.org_id as string) ?? null,
       },
@@ -522,7 +727,7 @@ export async function handleAuthRoute(
 
   // ===================== TOTP 2FA (opt-in high assurance) ====================
   if (path === "/api/auth/totp/setup" && request.method === "POST") {
-    const payload = await requireAuth(request, env);
+    const payload = await requireHumanAuth(request, env);
     if (!payload) return json({ error: "unauthorized" }, 401);
     const sql = getSql(env);
     if (!sql) return json({ error: "auth unavailable" }, 503);
@@ -533,7 +738,7 @@ export async function handleAuthRoute(
   }
 
   if (path === "/api/auth/totp/enable" && request.method === "POST") {
-    const payload = await requireAuth(request, env);
+    const payload = await requireHumanAuth(request, env);
     if (!payload) return json({ error: "unauthorized" }, 401);
     const sql = getSql(env);
     if (!sql) return json({ error: "auth unavailable" }, 503);
@@ -550,7 +755,7 @@ export async function handleAuthRoute(
   }
 
   if (path === "/api/auth/totp/disable" && request.method === "POST") {
-    const payload = await requireAuth(request, env);
+    const payload = await requireHumanAuth(request, env);
     if (!payload) return json({ error: "unauthorized" }, 401);
     const sql = getSql(env);
     if (!sql) return json({ error: "auth unavailable" }, 503);
@@ -573,7 +778,7 @@ export async function handleAuthRoute(
   // Optionally set/replace a password (upgrade a passwordless account to one that
   // also supports password + TOTP for enterprise/high-assurance scenarios).
   if (path === "/api/auth/password/set" && request.method === "POST") {
-    const payload = await requireAuth(request, env);
+    const payload = await requireHumanAuth(request, env);
     if (!payload) return json({ error: "unauthorized" }, 401);
     const sql = getSql(env);
     if (!sql) return json({ error: "auth unavailable" }, 503);
@@ -708,6 +913,7 @@ export async function handleAuthRoute(
           venue: venueId,
           plan: "free",
           org: orgId ?? undefined,
+          membership_version: 1,
         },
         cfg.secret,
       );
@@ -731,14 +937,14 @@ export async function handleAuthRoute(
   }
 
   if (path === "/api/auth/me" && request.method === "GET") {
-    const payload = await requireAuth(request, env);
+    const payload = await requireHumanAuth(request, env);
     if (!payload) return json({ error: "unauthorized" }, 401);
     return json({ user: payload });
   }
 
   // Change the platform admin password — admin role only (RBAC).
   if (path === "/api/auth/password" && request.method === "POST") {
-    const payload = await requireAuth(request, env);
+    const payload = await requireHumanAuth(request, env);
     if (!payload) return json({ error: "unauthorized" }, 401);
     if (payload.role !== "admin") return json({ error: "forbidden" }, 403);
     const sql = getSql(env);
@@ -834,24 +1040,75 @@ export async function handleAuthRoute(
           }
         }
       }
-      const token = await signJwt(
-        { sub: info.email, role, name: info.name ?? info.email, venue, plan, org },
-        cfg.secret,
-      );
+      const sql = getSql(env);
+      const claims = sql
+        ? await authoritativeVenueClaims(sql, {
+            sub: info.email,
+            role,
+            name: info.name ?? info.email,
+            venue,
+            plan,
+            org,
+          })
+        : { sub: info.email, role, name: info.name ?? info.email, plan, org };
+      if (!claims) return json({ error: "account is not assigned" }, 403);
+      const token = await signJwt(claims, cfg.secret);
       return json({
         token,
         user: {
           email: info.email,
           name: info.name,
           picture: info.picture,
-          role,
-          venue: venue ?? null,
+          role: claims.role,
+          venue: claims.venue ?? null,
           plan,
         },
       });
     } catch {
       return json({ error: "google verification failed" }, 500);
     }
+  }
+
+  // Sandbox convenience: hand back a session for ONE configured test account so
+  // testers aren't re-authenticating constantly. Refused outright in production,
+  // and it grants only what that account already has — it cannot mint an admin.
+  if (path === "/api/auth/sandbox-session" && request.method === "POST") {
+    const email = sandboxAutoLoginEmail(env);
+    if (!email) return json({ error: "not available" }, 404);
+    const cfg = await getAuthConfig(env);
+    const sql = getSql(env);
+    if (!cfg || !sql) return json({ error: "auth unavailable" }, 503);
+    if (email === cfg.adminEmail.toLowerCase()) {
+      return json({ error: "sandbox auto-login cannot target the admin" }, 403);
+    }
+    const [user] = await sql`
+      SELECT email, name, role, venue_id, plan, org_id
+      FROM app_users WHERE lower(email) = ${email} LIMIT 1`;
+    if (!user) return json({ error: "sandbox account not provisioned" }, 404);
+    if (String(user.role) === "admin") {
+      return json({ error: "sandbox auto-login cannot target the admin" }, 403);
+    }
+    const claims = await authoritativeVenueClaims(sql, {
+      sub: String(user.email),
+      role: String(user.role),
+      name: user.name ?? undefined,
+      venue: user.venue_id ?? undefined,
+      plan: (user.plan as string) ?? "free",
+      org: (user.org_id as string) ?? undefined,
+    });
+    if (!claims) return json({ error: "sandbox account is not assigned" }, 403);
+    const token = await signJwt(claims, cfg.secret);
+    return json({
+      token,
+      user: {
+        email: user.email,
+        role: claims.role,
+        name: user.name,
+        venue: claims.venue,
+        plan: (user.plan as string) ?? "free",
+        org: (user.org_id as string) ?? null,
+      },
+    });
   }
 
   // Dashboard session bootstrap. The SPA still uses demo-role logins that carry
@@ -880,51 +1137,13 @@ export async function handleAuthRoute(
   // store's staff row; the assignment is verified server-side (same phone, active
   // there), so a staff token can never be pointed at a store they don't work at.
   if (path === "/api/auth/staff-switch-venue" && request.method === "POST") {
-    const payload = await requireAuth(request, env);
-    if (!payload || payload.role !== "staff") {
-      return json({ error: "unauthorized" }, 401);
-    }
-    const cfg = await getAuthConfig(env);
-    const sql = getSql(env);
-    if (!cfg || !sql) return json({ error: "auth unavailable" }, 503);
-    const staffId =
-      typeof payload.staff_id === "string" ? payload.staff_id : null;
-    if (!staffId) return json({ error: "not a staff session" }, 403);
-    const body = (await request.json().catch(() => ({}))) as { venue?: string };
-    const target = String(body.venue ?? "").trim();
-    if (!target) return json({ error: "venue required" }, 400);
-    const [me] = await sql`SELECT phone FROM staff WHERE id = ${staffId} LIMIT 1`;
-    const phone = me?.phone ? String(me.phone).trim() : "";
-    if (!phone) return json({ error: "no linked venues" }, 403);
-    const [targetStaff] = await sql`
-      SELECT s.id, s.name, v.name AS venue_name
-      FROM staff s JOIN venues v ON v.id = s.venue_id
-      WHERE s.phone = ${phone} AND s.venue_id = ${target} AND s.active = true
-      LIMIT 1`;
-    if (!targetStaff) {
-      return json({ error: "not assigned to that store" }, 403);
-    }
-    const token = await signJwt(
+    return json(
       {
-        sub: `staff:${targetStaff.id}`,
-        role: "staff",
-        name: (targetStaff.name as string) ?? "Staff",
-        venue: target,
-        staff_id: targetStaff.id,
+        error:
+          "Staff store switching requires a separate venue-scoped login. Sign in to the target store.",
       },
-      cfg.secret,
+      403,
     );
-    return json({
-      token,
-      user: {
-        email: null,
-        role: "staff",
-        name: targetStaff.name,
-        venue: target,
-        venueName: targetStaff.venue_name,
-        staffId: targetStaff.id,
-      },
-    });
   }
 
   // Staff PIN login: verify a PIN against the staff table + mint a staff JWT
@@ -934,13 +1153,94 @@ export async function handleAuthRoute(
     const cfg = await getAuthConfig(env);
     const sql = getSql(env);
     if (!cfg || !sql) return json({ error: "auth unavailable" }, 503);
-    const body = (await request.json().catch(() => ({}))) as { pin?: string };
+    const body = (await request.json().catch(() => ({}))) as {
+      venue?: string;
+      account?: string;
+      pin?: string;
+    };
+    const venue = String(body.venue ?? "").trim();
+    const account = normalizeDestination("sms", String(body.account ?? ""));
     const pin = String(body.pin ?? "").trim();
-    if (!/^\d{4,8}$/.test(pin)) return json({ error: "invalid pin" }, 400);
-    const [staff] = await sql`
-      SELECT id, name, venue_id FROM staff
-      WHERE pin = ${pin} AND active = true LIMIT 1`;
-    if (!staff) return json({ error: "invalid pin" }, 401);
+    if (!venue || !account || !isValidStaffPin(pin)) {
+      return json({ error: "invalid credentials" }, 401);
+    }
+    const [candidate] = await sql`
+      SELECT id FROM staff
+      WHERE venue_id = ${venue}
+        AND lower(login_handle) = lower(${account})
+        AND active = true
+      LIMIT 1`;
+    if (!candidate) {
+      await dummyVerifyStaffPin(pin);
+      return json({ error: "invalid credentials" }, 401);
+    }
+
+    const outcome = await sql.begin(async (tx) => {
+      const [staff] = await tx`
+        SELECT id, name, venue_id, pin_hash, failed_pin_attempts,
+               pin_locked_until, credential_version, credential_reset_required
+        FROM staff
+        WHERE id = ${candidate.id} AND venue_id = ${venue} AND active = true
+        FOR UPDATE`;
+      if (!staff?.pin_hash) {
+        await dummyVerifyStaffPin(pin);
+        return { kind: "invalid" as const };
+      }
+      const lockedUntil = staff.pin_locked_until
+        ? new Date(String(staff.pin_locked_until))
+        : null;
+      if (lockedUntil && lockedUntil.getTime() > Date.now()) {
+        return {
+          kind: "locked" as const,
+          retryAfter: Math.max(1, Math.ceil((lockedUntil.getTime() - Date.now()) / 1000)),
+        };
+      }
+      const check = await verifyStaffPin(pin, String(staff.pin_hash));
+      if (!check.valid) {
+        const previous =
+          lockedUntil && lockedUntil.getTime() <= Date.now()
+            ? 0
+            : Number(staff.failed_pin_attempts ?? 0);
+        const attempts = previous + 1;
+        const lock = attempts >= 5;
+        await tx`
+          UPDATE staff
+          SET failed_pin_attempts = ${lock ? 0 : attempts},
+              pin_locked_until = ${lock ? new Date(Date.now() + 15 * 60 * 1000) : null}
+          WHERE id = ${staff.id}`;
+        return {
+          kind: lock ? ("locked" as const) : ("invalid" as const),
+          retryAfter: lock ? 15 * 60 : undefined,
+        };
+      }
+      await tx`
+        UPDATE staff
+        SET failed_pin_attempts = 0, pin_locked_until = NULL
+        WHERE id = ${staff.id}`;
+      return {
+        kind: "valid" as const,
+        staff,
+        resetRequired: Boolean(staff.credential_reset_required),
+      };
+    });
+
+    if (outcome.kind === "locked") {
+      return new Response(JSON.stringify({ error: "invalid credentials" }), {
+        status: 429,
+        headers: {
+          "content-type": "application/json",
+          "retry-after": String(outcome.retryAfter ?? 900),
+          ...corsHeaders,
+        },
+      });
+    }
+    if (outcome.kind !== "valid") {
+      return json({ error: "invalid credentials" }, 401);
+    }
+    if (outcome.resetRequired) {
+      return json({ error: "pin reset required", resetRequired: true }, 403);
+    }
+    const staff = outcome.staff;
     const token = await signJwt(
       {
         sub: `staff:${staff.id}`,
@@ -948,8 +1248,10 @@ export async function handleAuthRoute(
         name: (staff.name as string) ?? "Staff",
         venue: (staff.venue_id as string) ?? undefined,
         staff_id: staff.id,
+        staff_credential_version: Number(staff.credential_version),
       },
       cfg.secret,
+      4 * 60 * 60,
     );
     return json({
       token,

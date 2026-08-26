@@ -2,6 +2,7 @@ import { getSql } from "@/lib/db";
 import { roleAtLeast } from "@/lib/rbac";
 import { requireAuth } from "@/api/auth";
 import { venueFromPayload } from "@/lib/tenancy";
+import { tokenHasScope } from "@/lib/api-tokens";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -52,6 +53,13 @@ export async function handleDisputeRoute(
 
   const payload = await requireAuth(request, env);
   if (!payload) return json({ error: "unauthorized" }, 401);
+  const write = request.method !== "GET";
+  if (
+    !roleAtLeast(payload, "manager") ||
+    !tokenHasScope(payload, write ? "payments:write" : "payments:read")
+  ) {
+    return json({ error: "forbidden" }, 403);
+  }
   const venue = venueFromPayload(payload, url);
   const sql = getSql(env);
   if (!sql) return json({ error: "database not configured" }, 503);

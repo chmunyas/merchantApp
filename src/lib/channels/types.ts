@@ -34,7 +34,20 @@ export type InboundMessage = {
   providerMsgId: string | null;
 };
 
-export type OutboundResult = { delivery: "sent" | "simulated" | "pull" };
+export type OutboundResult = {
+  delivery: "accepted" | "failed" | "unknown" | "simulated" | "pull";
+  providerMessageId?: string;
+  providerCode?: string;
+  retryable?: boolean;
+  retryAfterSeconds?: number;
+  error?: string;
+};
+
+export type OutboundOptions = {
+  template?: { name: string; locale: string };
+  idempotencyKey?: string;
+  accountId?: string;
+};
 
 export type ChannelAdapter = {
   id: ChannelId;
@@ -47,6 +60,7 @@ export type ChannelAdapter = {
     text: string,
     env: unknown,
     venue?: string,
+    options?: OutboundOptions,
   ): Promise<OutboundResult>;
   // Optional GET webhook verification handshake (Meta-style hub.challenge).
   verifyWebhook?(url: URL, env: unknown): Response | null;

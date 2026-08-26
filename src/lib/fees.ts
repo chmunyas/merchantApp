@@ -105,6 +105,99 @@ export function methodFromMetadata(
   return "mpesa"; // the default rail in this market
 }
 
+// ---------------------------------------------------------------------------
+// Guest service fee (roadmap A5.5)
+//
+// A separate, OPTIONAL fee the guest pays for paying instantly from their own
+// phone — instant settlement of the bill, splitting it in seconds, and an
+// instant digital receipt. Sunday's guest-facing article is explicit that it is
+// avoidable: a guest who prefers to wait for the traditional card machine pays
+// nothing. That framing is contractual, so it is stated here next to the maths
+// and rendered verbatim at checkout. Amounts are MINOR units.
+// ---------------------------------------------------------------------------
+
+export type GuestFeeConfig = {
+  enabled: boolean;
+  percent: number; // percent of the amount being paid
+  fixed: number; // flat minor-unit fee
+  cap: number | null; // optional per-transaction ceiling, minor units
+};
+
+// Off by default: a venue opts in explicitly, and until it does the guest sees
+// "no extra fee" rather than a number we invented.
+export const DEFAULT_GUEST_FEE: GuestFeeConfig = {
+  enabled: false,
+  percent: 0,
+  fixed: 0,
+  cap: null,
+};
+
+// A guest fee above this is not "convenience", it is a surprise. Hard ceiling.
+export const MAX_GUEST_FEE_PERCENT = 5;
+
+export const GUEST_FEE_BENEFITS = [
+  "Settle the bill instantly — no waiting for the card machine",
+  "Split it with the table in seconds",
+  "Your receipt lands on your phone straight away",
+] as const;
+
+export const GUEST_FEE_OPT_OUT =
+  "This fee is optional — you can wait for the traditional card machine instead and pay nothing extra.";
+
+export type GuestFeeQuote = {
+  enabled: boolean;
+  fee: number; // minor units the guest pays on top
+  total: number; // amount + fee, minor units
+  percent: number;
+  fixed: number;
+  cap: number | null;
+  benefits: readonly string[];
+  optOut: string;
+};
+
+// Normalise whatever is stored/submitted into a config we are willing to charge.
+export function normalizeGuestFeeConfig(
+  input: Partial<GuestFeeConfig> | null | undefined,
+): GuestFeeConfig {
+  const percent = Math.min(
+    MAX_GUEST_FEE_PERCENT,
+    Math.max(0, Number(input?.percent) || 0),
+  );
+  const fixed = Math.max(0, Math.round(Number(input?.fixed) || 0));
+  const rawCap = Number(input?.cap);
+  const cap =
+    input?.cap === null || input?.cap === undefined || !Number.isFinite(rawCap)
+      ? null
+      : Math.max(0, Math.round(rawCap));
+  return { enabled: Boolean(input?.enabled), percent, fixed, cap };
+}
+
+// What the guest actually pays on top. Never negative, never above the cap, and
+// always zero while the venue has not opted in.
+export function computeGuestServiceFee(
+  amount: number,
+  config: Partial<GuestFeeConfig> | null | undefined = DEFAULT_GUEST_FEE,
+): GuestFeeQuote {
+  const cfg = normalizeGuestFeeConfig(config);
+  const base = Math.max(0, Math.round(Number(amount) || 0));
+  let fee = 0;
+  if (cfg.enabled && base > 0) {
+    fee = Math.round((base * cfg.percent) / 100) + cfg.fixed;
+    if (cfg.cap !== null) fee = Math.min(fee, cfg.cap);
+    fee = Math.max(0, fee);
+  }
+  return {
+    enabled: cfg.enabled,
+    fee,
+    total: base + fee,
+    percent: cfg.percent,
+    fixed: cfg.fixed,
+    cap: cfg.cap,
+    benefits: GUEST_FEE_BENEFITS,
+    optOut: GUEST_FEE_OPT_OUT,
+  };
+}
+
 export type BlendedTotals = {
   gross: number;
   fees: number;

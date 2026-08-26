@@ -19,8 +19,8 @@ import {
   saveMember,
   type TeamMember,
 } from "@/lib/auth";
-import { getCurrentVenueId } from "@/lib/merchant-dashboard";
-import { MANAGEABLE_ROLES, ROLE_RANK } from "@/lib/tenancy";
+import { getCurrentVenueId } from "@/lib/tenant-store";
+import { MANAGEABLE_ROLES, canGrantRole, canRemoveMember } from "@/lib/tenancy";
 
 export const Route = createFileRoute("/dashboard/team")({
   component: DashboardTeamPage,
@@ -64,10 +64,11 @@ function DashboardTeamPage() {
     void load(v);
   }, [load]);
 
-  // A caller can only assign roles at or below their own rank.
+  // Keep the visible choices identical to the server's authority policy.
   const grantableRoles = useMemo(() => {
-    const rank = ROLE_RANK[callerRole] ?? 0;
-    return MANAGEABLE_ROLES.filter((r) => (ROLE_RANK[r] ?? 99) <= rank);
+    return MANAGEABLE_ROLES.filter((candidate) =>
+      canGrantRole(callerRole, candidate),
+    );
   }, [callerRole]);
 
   useEffect(() => {
@@ -109,8 +110,6 @@ function DashboardTeamPage() {
     toast.success(`Removed ${m.email}`);
     await load(venue);
   }
-
-  const callerRank = ROLE_RANK[callerRole] ?? 0;
 
   return (
     <div className="space-y-6">
@@ -197,7 +196,7 @@ function DashboardTeamPage() {
               ) : (
                 members.map((m) => {
                   const canRemove =
-                    !m.you && (ROLE_RANK[m.role] ?? 0) <= callerRank;
+                    !m.you && canRemoveMember(callerRole, m.role);
                   return (
                     <div
                       key={m.email}

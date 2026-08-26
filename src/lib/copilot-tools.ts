@@ -192,18 +192,19 @@ async function toolSettlementStatus(
   const sql = getSql(ctx.env);
   if (!sql) return { reply: "Settlement data is unavailable right now.", tool: "settlement_status" };
   const [row] = await sql`
-    SELECT coalesce(sum(amount) FILTER (WHERE settlement_id IS NULL), 0)::bigint AS unreconciled,
-           count(*) FILTER (WHERE settlement_id IS NULL)::int AS unreconciled_tx
+        SELECT coalesce(sum(amount) FILTER (WHERE settlement_id IS NULL), 0)::bigint AS unbatched,
+          count(*) FILTER (WHERE settlement_id IS NULL)::int AS unbatched_tx
     FROM payments
     WHERE venue_id = ${ctx.venue}
-      AND status IN ('succeeded', 'paid', 'captured')`;
-  const unreconciled = Number(row?.unreconciled ?? 0) / 100;
-  const n = Number(row?.unreconciled_tx ?? 0);
+        AND currency = 'KES' AND kind <> 'refund'
+        AND status IN ('succeeded','paid','captured','partially_refunded','refunded')`;
+      const unbatched = Number(row?.unbatched ?? 0) / 100;
+      const n = Number(row?.unbatched_tx ?? 0);
   const reply =
     n === 0
-      ? "Everything is settled — no unreconciled payments."
-      : `${kes(unreconciled)} across ${n} payment${n === 1 ? "" : "s"} is unsettled. Run a settlement in the Settlement tab to batch it.`;
-  return { reply, tool: "settlement_status", data: { unreconciled, count: n } };
+        ? "All known KES payments are in internal estimate batches. Provider payout and bank reconciliation still require evidence."
+        : `${kes(unbatched)} across ${n} payment${n === 1 ? "" : "s"} is not yet in an internal estimate batch. This is not provider payout reconciliation.`;
+      return { reply, tool: "settlement_status", data: { unbatched, count: n, basis: "internal-estimate" } };
 }
 
 async function toolBookingsToday(

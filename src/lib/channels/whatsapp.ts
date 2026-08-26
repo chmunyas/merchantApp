@@ -79,9 +79,9 @@ export const whatsappAdapter: ChannelAdapter = {
   //   auto   -> Baileys bridge -> official Cloud API -> simulated
   //   bridge -> Baileys bridge -> simulated
   //   cloud  -> official Cloud API -> simulated
-  async send(handle, text, env, venue): Promise<OutboundResult> {
+  async send(handle, text, env, venue, options): Promise<OutboundResult> {
     const { token, phoneId, bridgeUrl, bridgeToken, transport } =
-      await getWhatsappConfig(env, venue);
+      await getWhatsappConfig(env, venue, options?.accountId);
 
     if (bridgeUrl && transport !== "cloud") {
       try {
@@ -93,38 +93,98 @@ export const whatsappAdapter: ChannelAdapter = {
               ? { authorization: `Bearer ${bridgeToken}` }
               : {}),
           },
-          body: JSON.stringify({ to: handle, text }),
+          body: JSON.stringify({ to: handle, text, idempotencyKey: options?.idempotencyKey }),
         });
         if (res.ok) {
-          const data = (await res.json()) as { ok?: boolean };
-          if (data.ok) return { delivery: "sent" };
+          const data = (await res.json()) as { ok?: boolean; id?: string };
+          if (data.ok && data.id) {
+            return {
+              delivery: "accepted",
+              providerMessageId: data.id,
+              providerCode: String(res.status),
+              retryable: false,
+            };
+          }
         }
+        return {
+          delivery: "failed",
+          providerCode: String(res.status),
+          retryable: res.status === 429 || res.status >= 500,
+          error: "bridge rejected message",
+        };
       } catch {
-        /* bridge offline — fall back to Cloud API / simulated */
+        return {
+          delivery: "unknown",
+          retryable: false,
+          error: "bridge outcome unknown",
+        };
       }
     }
 
     if (token && phoneId && transport !== "bridge") {
       try {
-        await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
+        const response = await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
           method: "POST",
           headers: {
             authorization: `Bearer ${token}`,
             "content-type": "application/json",
           },
-          body: JSON.stringify({
-            messaging_product: "whatsapp",
-            to: handle,
-            type: "text",
-            text: { body: text },
-          }),
+          body: JSON.stringify(
+            options?.template
+              ? {
+                  messaging_product: "whatsapp",
+                  to: handle,
+                  type: "template",
+                  template: {
+                    name: options.template.name,
+                    language: { code: options.template.locale },
+                  },
+                }
+                : {
+                  messaging_product: "whatsapp",
+                  to: handle,
+                  type: "text",
+                  text: { body: text },
+                  biz_opaque_callback_data: options?.idempotencyKey,
+                },
+          ),
         });
-        return { delivery: "sent" };
+        if (!response.ok) {
+          return {
+            delivery: "failed",
+            providerCode: String(response.status),
+            retryable: response.status === 429 || response.status >= 500,
+          };
+        }
+        const body = (await response.json().catch(() => null)) as
+          | { messages?: Array<{ id?: string }>; error?: unknown }
+          | null;
+        return body?.messages?.[0]?.id
+          ? {
+              delivery: "accepted",
+              providerMessageId: body.messages[0].id,
+              providerCode: String(response.status),
+              retryable: false,
+            }
+          : {
+              delivery: "unknown",
+              providerCode: String(response.status),
+              retryable: false,
+              error: "provider accepted request without a message id",
+            };
       } catch {
-        return { delivery: "simulated" };
+        return {
+          delivery: "unknown",
+          retryable: true,
+          error: "network outcome unknown",
+        };
       }
     }
 
-    return { delivery: "simulated" };
+    return {
+      delivery: "failed",
+      retryable: false,
+      error: "channel credentials missing",
+    };
   },
 };

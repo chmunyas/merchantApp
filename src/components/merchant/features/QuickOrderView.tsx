@@ -10,7 +10,8 @@ import {
   Trash2,
 } from "lucide-react";
 
-import { authFetch } from "@/lib/auth";
+import { authFetch, hasAuthoritativeVenueSession } from "@/lib/auth";
+import { ensureMerchantDemoData } from "@/lib/merchant-dashboard";
 import { toOrderItems, orderPadTotal, type OrderPadLine } from "@/lib/order-pad";
 
 // A fast, clear, accurate staff order pad. Tap menu items to build an order, then
@@ -56,7 +57,20 @@ export function QuickOrderView() {
 
   useEffect(() => {
     let alive = true;
-    authFetch("/api/menu")
+    const request = hasAuthoritativeVenueSession()
+      ? authFetch("/api/menu")
+      : Promise.resolve({
+          ok: true,
+          json: async () => ({
+            items: ensureMerchantDemoData().catalogue.map((item) => ({
+              id: item.id,
+              name: item.name,
+              category: item.category,
+              price: item.price,
+            })),
+          }),
+        });
+    request
       .then((r) => (r.ok ? r.json() : { items: [] }))
       .then((d: { items?: Array<Record<string, unknown>> }) => {
         if (!alive) return;
@@ -125,6 +139,15 @@ export function QuickOrderView() {
     if (lines.length === 0 || sending) return;
     setSending(true);
     try {
+      if (!hasAuthoritativeVenueSession()) {
+        toast.success("Demo order saved locally", {
+          description: "Sign in to send orders to the shared kitchen.",
+        });
+        ding();
+        clearAll();
+        setReviewing(false);
+        return;
+      }
       const res = await authFetch("/api/orders", {
         method: "POST",
         headers: { "content-type": "application/json" },

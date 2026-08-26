@@ -2,6 +2,7 @@ import { requireAuth } from "@/api/auth";
 import { getSql } from "@/lib/db";
 import { roleAtLeast } from "@/lib/rbac";
 import { venueFromPayload } from "@/lib/tenancy";
+import { tokenHasScope } from "@/lib/api-tokens";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -35,6 +36,12 @@ export async function handlePaymentMethodsAdminRoute(
   if (!roleAtLeast(payload, "manager")) {
     return json({ error: "forbidden" }, 403);
   }
+  if (
+    !tokenHasScope(payload, "contacts:read") ||
+    !tokenHasScope(payload, "payments:read")
+  ) {
+    return json({ error: "forbidden" }, 403);
+  }
   const venue = venueFromPayload(payload, url);
   const sql = getSql(env);
   if (!sql) return json({ error: "database not configured" }, 503);
@@ -44,7 +51,7 @@ export async function handlePaymentMethodsAdminRoute(
            c.name, c.tier
     FROM customer_payment_methods cpm
     LEFT JOIN contacts c ON c.venue_id = ${venue} AND c.phone = cpm.phone
-    WHERE cpm.venue_id = ${venue} OR c.id IS NOT NULL
+    WHERE cpm.venue_id = ${venue}
     ORDER BY cpm.last_used_at DESC
     LIMIT 500`;
 

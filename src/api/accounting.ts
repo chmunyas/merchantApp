@@ -17,6 +17,8 @@ import {
 import { getSql } from "@/lib/db";
 import { sha256Hex } from "@/lib/hash";
 import { venueFromPayload } from "@/lib/tenancy";
+import { tokenHasScope } from "@/lib/api-tokens";
+import { roleAtLeast } from "@/lib/rbac";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,7 +26,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
-const POST_ROLES = new Set(["manager", "merchant", "admin"]);
 const VALID_CODES = new Set(CHART.map((a) => a.code));
 
 function json(data: unknown, status = 200): Response {
@@ -55,6 +56,9 @@ export async function handleAccountingRoute(
 
   const payload = await requireAuth(request, env);
   if (!payload) return json({ error: "unauthorized" }, 401);
+  if (!roleAtLeast(payload, "manager") || !tokenHasScope(payload, "accounting:read")) {
+    return json({ error: "forbidden" }, 403);
+  }
   const venue = venueFromPayload(payload, url);
   const sql = getSql(env);
   if (!sql) return json({ error: "database not configured" }, 503);
@@ -64,22 +68,38 @@ export async function handleAccountingRoute(
     url.searchParams.get("from"),
     isoDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
   );
+  const currency = String(url.searchParams.get("currency") ?? "KES").toUpperCase();
+  if (currency !== "KES") return json({ error: "Only KES reports are supported." }, 409);
 
   if (path === "/api/accounting/chart" && request.method === "GET") {
     return json({ accounts: CHART });
   }
 
   if (path === "/api/accounting/trial-balance" && request.method === "GET") {
-    return json(await trialBalance(sql, venue, from, to));
+    return json({ currency, ...(await trialBalance(sql, venue, from, to, currency)) });
+  }
+
+  if (path === "/api/accounting/checkpoints" && request.method === "GET") {
+    if (payload.role !== "merchant" || payload.isApiToken === true) {
+      return json({ error: "forbidden" }, 403);
+    }
+    const checkpoints = await sql`
+      SELECT id, currency, period_end, algorithm, entry_count, previous_hash,
+             final_hash, signer_key_id, signature, anchor_receipt, created_at,
+             supersedes
+      FROM ledger_audit_checkpoints
+      WHERE venue_id = ${venue} AND currency = ${currency}
+      ORDER BY period_end DESC, created_at DESC LIMIT 100`;
+    return json({ currency, checkpoints });
   }
 
   if (path === "/api/accounting/income-statement" && request.method === "GET") {
-    return json({ from, to, ...(await incomeStatement(sql, venue, from, to)) });
+    return json({ from, to, currency, ...(await incomeStatement(sql, venue, from, to, currency)) });
   }
 
   if (path === "/api/accounting/balance-sheet" && request.method === "GET") {
     const asOf = parseDate(url.searchParams.get("asOf"), to);
-    return json({ asOf, ...(await balanceSheet(sql, venue, asOf)) });
+    return json({ asOf, currency, ...(await balanceSheet(sql, venue, asOf, currency)) });
   }
 
   if (path === "/api/accounting/journal" && request.method === "GET") {
@@ -87,7 +107,7 @@ export async function handleAccountingRoute(
       500,
       Math.max(1, Number(url.searchParams.get("limit") ?? 200) || 200),
     );
-    return json({ entries: await journalList(sql, venue, from, to, limit) });
+    return json({ currency, entries: await journalList(sql, venue, from, to, limit, currency) });
   }
 
   // Tamper-evident audit export: each entry carries a content hash, and every
@@ -95,11 +115,15 @@ export async function handleAccountingRoute(
   // contentHash)). Altering, inserting, deleting or reordering any entry breaks
   // the chain, so `finalHash` anchors the integrity of the whole period.
   if (path === "/api/accounting/audit" && request.method === "GET") {
-    const role = typeof payload.role === "string" ? payload.role : "";
-    if (!POST_ROLES.has(role)) return json({ error: "forbidden" }, 403);
-    const rows = (await auditEntries(sql, venue, from, to)) as unknown as Array<{
+    if (payload.role !== "merchant" || payload.isApiToken === true) {
+      return json({ error: "forbidden" }, 403);
+    }
+    const limit = 5000;
+    const rows = (await auditEntries(sql, venue, from, to, limit + 1, currency)) as unknown as Array<{
       id: string;
       entry_date: string;
+      created_at: string;
+      created_by: string | null;
       memo: string | null;
       source_type: string | null;
       source_id: string | null;
@@ -107,6 +131,7 @@ export async function handleAccountingRoute(
       amount: string | number | null;
       lines: Array<{
         account: string;
+        id: string;
         debit: number | string;
         credit: number | string;
         memo: string | null;
@@ -116,7 +141,8 @@ export async function handleAccountingRoute(
     let totalDebits = 0;
     let totalCredits = 0;
     const entries = [];
-    for (const row of rows) {
+    const truncated = rows.length > limit;
+    for (const row of rows.slice(0, limit)) {
       const lines = Array.isArray(row.lines) ? row.lines : [];
       for (const l of lines) {
         totalDebits += Number(l.debit) || 0;
@@ -125,6 +151,8 @@ export async function handleAccountingRoute(
       const core = {
         id: row.id,
         entry_date: row.entry_date,
+        created_at: row.created_at,
+        created_by: row.created_by,
         memo: row.memo,
         source_type: row.source_type,
         source_id: row.source_id,
@@ -140,12 +168,13 @@ export async function handleAccountingRoute(
     return json({
       from,
       to,
-      currency: "KES",
+      currency,
       count: entries.length,
       balanced: Math.round(totalDebits) === Math.round(totalCredits),
       totalDebits,
       totalCredits,
       finalHash: prevHash,
+      truncated,
       entries,
     });
   }
@@ -154,30 +183,30 @@ export async function handleAccountingRoute(
   if (ledgerMatch && request.method === "GET") {
     const code = ledgerMatch[1];
     if (!VALID_CODES.has(code)) return json({ error: "unknown account" }, 404);
-    return json(await generalLedger(sql, venue, code, from, to));
+    return json({ currency, ...(await generalLedger(sql, venue, code, from, to, currency)) });
   }
 
   if (path === "/api/accounting/ar-aging" && request.method === "GET") {
-    return json(await arAging(sql, venue));
+    return json({ currency, ...(await arAging(sql, venue, currency)) });
   }
 
   if (path === "/api/accounting/lost-basket" && request.method === "GET") {
-    return json({ from, to, ...(await lostBasket(sql, venue, from, to)) });
+    return json({ from, to, currency, ...(await lostBasket(sql, venue, from, to, 2, currency)) });
   }
 
   // One-shot dashboard rollup.
   if (path === "/api/accounting/summary" && request.method === "GET") {
     const [pnl, sheet, tb, ar, basket] = await Promise.all([
-      incomeStatement(sql, venue, from, to),
-      balanceSheet(sql, venue, to),
-      trialBalance(sql, venue, from, to),
-      arAging(sql, venue),
-      lostBasket(sql, venue, from, to),
+      incomeStatement(sql, venue, from, to, currency),
+      balanceSheet(sql, venue, to, currency),
+      trialBalance(sql, venue, from, to, currency),
+      arAging(sql, venue, currency),
+      lostBasket(sql, venue, from, to, 2, currency),
     ]);
     return json({
       from,
       to,
-      currency: "KES",
+      currency,
       incomeStatement: pnl,
       balanceSheet: sheet,
       trialBalanceBalanced: tb.balanced,
@@ -192,8 +221,9 @@ export async function handleAccountingRoute(
   }
 
   if (path === "/api/accounting/period/close" && request.method === "POST") {
-    const role = typeof payload.role === "string" ? payload.role : "";
-    if (!POST_ROLES.has(role)) return json({ error: "forbidden" }, 403);
+    if (payload.role !== "merchant" || payload.isApiToken === true) {
+      return json({ error: "forbidden" }, 403);
+    }
     const body = (await request.json().catch(() => ({}))) as {
       period_end?: string;
       note?: string;
@@ -210,8 +240,9 @@ export async function handleAccountingRoute(
   }
 
   if (path === "/api/accounting/period/reopen" && request.method === "POST") {
-    const role = typeof payload.role === "string" ? payload.role : "";
-    if (!POST_ROLES.has(role)) return json({ error: "forbidden" }, 403);
+    if (payload.role !== "merchant" || payload.isApiToken === true) {
+      return json({ error: "forbidden" }, 403);
+    }
     const body = (await request.json().catch(() => ({}))) as { period_end?: string };
     const periodEnd = body.period_end ?? "";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(periodEnd)) {
@@ -225,8 +256,9 @@ export async function handleAccountingRoute(
   // Manual journal adjustment (accountant-only). Body is validated + balanced by
   // postEntry, which rejects any entry whose debits != credits.
   if (path === "/api/accounting/journal" && request.method === "POST") {
-    const role = typeof payload.role === "string" ? payload.role : "";
-    if (!POST_ROLES.has(role)) return json({ error: "forbidden" }, 403);
+    if (payload.role !== "merchant" || payload.isApiToken === true) {
+      return json({ error: "forbidden" }, 403);
+    }
     const body = (await request.json().catch(() => ({}))) as {
       memo?: string;
       date?: string;
@@ -244,13 +276,16 @@ export async function handleAccountingRoute(
     if (lines.length < 2) {
       return json({ error: "at least two valid lines required" }, 400);
     }
+    if (String(body.currency ?? "KES").toUpperCase() !== "KES") {
+      return json({ error: "Only KES journals are supported." }, 409);
+    }
     try {
       const id = await postEntry(sql, {
         venue,
         sourceType: "manual",
         sourceId: crypto.randomUUID(),
         memo: body.memo ?? "Manual adjustment",
-        currency: body.currency,
+        currency: "KES",
         date: body.date,
         createdBy: typeof payload.sub === "string" ? payload.sub : null,
         lines: lines.map((l) => ({

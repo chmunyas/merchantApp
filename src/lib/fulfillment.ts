@@ -33,9 +33,61 @@ export function normalizeFulfillment(value: unknown): FulfillmentType {
 export function parseScheduledAt(
   value: unknown,
   now: Date = new Date(),
+  timeZone = "Africa/Nairobi",
 ): string | null {
   if (!value) return null;
-  const d = new Date(String(value));
+  const raw = String(value);
+  let d: Date;
+  const wall = raw.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/,
+  );
+  if (wall) {
+    try {
+      const targetUtc = Date.UTC(
+        Number(wall[1]),
+        Number(wall[2]) - 1,
+        Number(wall[3]),
+        Number(wall[4]),
+        Number(wall[5]),
+        Number(wall[6] ?? 0),
+      );
+      let candidate = targetUtc;
+      for (let i = 0; i < 3; i += 1) {
+        const parts = new Intl.DateTimeFormat("en-CA", {
+          timeZone,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hourCycle: "h23",
+        }).formatToParts(new Date(candidate));
+        const part = (type: Intl.DateTimeFormatPartTypes) =>
+          Number(parts.find((entry) => entry.type === type)?.value ?? 0);
+        const represented = Date.UTC(
+          part("year"), part("month") - 1, part("day"), part("hour"),
+          part("minute"), part("second"),
+        );
+        candidate += targetUtc - represented;
+      }
+      d = new Date(candidate);
+      const verification = new Intl.DateTimeFormat("sv-SE", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).format(d).replace(" ", "T");
+      if (verification !== raw.slice(0, 16)) return null;
+    } catch {
+      return null;
+    }
+  } else {
+    d = new Date(raw);
+  }
   if (Number.isNaN(d.getTime())) return null;
   if (d.getTime() < now.getTime() - 60_000) return null;
   return d.toISOString();

@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
   Bell,
-  Check,
   Plus,
   Receipt,
   Repeat,
@@ -23,13 +22,13 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { buildKeQr, resolveKeQrMerchant } from "@/lib/ke-qr";
+import { LoadFailure } from "@/components/LoadFailure";
+import { ModalOverlay } from "@/components/ui/modal-overlay";
 import {
   getCurrentVenueId,
-  MERCHANT_NAME,
-  TILL_NUMBER,
 } from "@/lib/merchant-dashboard";
 import { authFetch } from "@/lib/auth";
+import { usePesaSwapEvent } from "@/lib/realtime";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/dashboard/invoices")({
@@ -107,12 +106,26 @@ function absoluteLink(link: string | null): string {
   return link;
 }
 
+// due_date arrives as a full timestamp; rendering it raw showed the merchant
+// "due 2026-04-27T00:00:00.000Z".
+function formatDueDate(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 function InvoicesPage() {
   const venue = useMemo(() => getCurrentVenueId(), []);
   const [tab, setTab] = useState<"invoices" | "recurring">("invoices");
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [recurring, setRecurring] = useState<Recurring[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [accessError, setAccessError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [activity, setActivity] = useState<{
     number: string;
@@ -137,22 +150,65 @@ function InvoicesPage() {
   const [rAutoSend, setRAutoSend] = useState(true);
 
   async function loadAll() {
+    setLoadFailed(false);
     try {
+      const [invRes, stRes, recRes] = await Promise.all([
+        authFetch(`/api/invoices?venue=${venue}`),
+        authFetch(`/api/invoices/stats?venue=${venue}`),
+        authFetch(`/api/recurring?venue=${venue}`),
+      ]);
+      // A 401/403 is not "offline". Swallowing it showed an empty invoice list
+      // that looked like a sync failure, when the session simply carries no
+      // venue claim and the server is correctly refusing to serve tenant data.
+      if (invRes.status === 401 || invRes.status === 403) {
+        const detail = (await invRes.json().catch(() => ({}))) as { error?: string };
+        setAccessError(
+          detail.error === "venue claim required"
+            ? "This session isn't linked to a venue, so no invoices can be shown. Sign in with a venue account — invoices created elsewhere will not appear here until you do."
+            : "You're signed out. Sign in to see this venue's invoices.",
+        );
+        setInvoices([]);
+        setStats(null);
+        setRecurring([]);
+        return;
+      }
+      setAccessError(null);
       const [inv, st, rec] = await Promise.all([
-        authFetch(`/api/invoices?venue=${venue}`).then((r) => r.json()),
-        authFetch(`/api/invoices/stats?venue=${venue}`).then((r) => r.json()),
-        authFetch(`/api/recurring?venue=${venue}`).then((r) => r.json()),
+        invRes.json(),
+        stRes.json(),
+        recRes.json(),
       ]);
       setInvoices((inv as { invoices?: Invoice[] }).invoices ?? []);
       setStats(st as Stats);
       setRecurring((rec as { schedules?: Recurring[] }).schedules ?? []);
     } catch {
-      /* offline */
+      // An empty list and an unreachable server used to look identical here.
+      setLoadFailed(true);
     }
   }
 
   useEffect(() => {
     loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [venue]);
+
+  // A guest paying an invoice settles it on the server, not in this tab. Without
+  // these the page shows "Pending" for an invoice that is already paid until
+  // someone reloads.
+  usePesaSwapEvent("payment.succeeded", () => void loadAll());
+  usePesaSwapEvent("payment.refunded", () => void loadAll());
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void loadAll();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [venue]);
 
@@ -185,6 +241,7 @@ function InvoicesPage() {
           taxRate: Number(taxRate || 0),
           lineItems: cleanItems,
           amount: total,
+          currency: "KES",
         }),
       });
       if (!res.ok) throw new Error("failed");
@@ -224,16 +281,9 @@ function InvoicesPage() {
   }
 
   async function recordPayment(inv: Invoice) {
-    const input = window.prompt(
-      `Record a payment for ${inv.number} (balance ${money(inv.balance, inv.currency)}):`,
-      String(inv.balance),
-    );
-    if (!input) return;
-    const amount = Number(input);
-    if (!amount || amount <= 0) return;
-    if (await invoiceAction(inv.id, "pay", { amount })) {
-      toast.success("Payment recorded.");
-    }
+    if (!inv.pay_link) return toast.error("No server payment link is available.");
+    await navigator.clipboard.writeText(inv.pay_link);
+    toast.success("Server-authoritative payment link copied.");
   }
 
   async function remind(inv: Invoice) {
@@ -288,7 +338,7 @@ function InvoicesPage() {
 
   async function runNow() {
     try {
-      const res = await fetch(`/api/invoicing/run?venue=${venue}`, {
+      const res = await authFetch(`/api/invoicing/run?venue=${venue}`, {
         method: "POST",
       });
       const data = (await res.json()) as {
@@ -331,6 +381,20 @@ function InvoicesPage() {
           <Bell className="h-3.5 w-3.5" /> Run reminders &amp; recurring
         </Button>
       </div>
+
+      {accessError && (
+        <div
+          role="alert"
+          className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
+        >
+          <p className="font-semibold">Invoices can&apos;t be loaded</p>
+          <p className="mt-1">{accessError}</p>
+        </div>
+      )}
+
+      {loadFailed && !accessError && (
+        <LoadFailure what="invoices" onRetry={() => void loadAll()} />
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {statCards.map((card) => (
@@ -510,22 +574,7 @@ function InvoicesPage() {
                       {invoice.pay_link && (
                         <div className="rounded-lg bg-white p-1.5 ring-1 ring-slate-100">
                           <QRCodeSVG
-                            value={
-                              invoice.currency === "KES"
-                                ? buildKeQr(
-                                    resolveKeQrMerchant({
-                                      name: MERCHANT_NAME,
-                                      merchantId: TILL_NUMBER,
-                                    }),
-                                    {
-                                      amountMinor: Math.round(
-                                        Number(invoice.amount) * 100,
-                                      ),
-                                      reference: invoice.number,
-                                    },
-                                  )
-                                : absoluteLink(invoice.pay_link)
-                            }
+                            value={absoluteLink(invoice.pay_link)}
                             size={56}
                           />
                         </div>
@@ -546,7 +595,7 @@ function InvoicesPage() {
                         <p className="text-xs text-slate-500">
                           {invoice.customer_name ?? "—"}
                           {invoice.phone ? ` · ${invoice.phone}` : ""}
-                          {invoice.due_date ? ` · due ${invoice.due_date}` : ""}
+                          {invoice.due_date ? ` · due ${formatDueDate(invoice.due_date)}` : ""}
                           {invoice.reminder_count > 0
                             ? ` · ${invoice.reminder_count} reminder(s)`
                             : ""}
@@ -584,16 +633,7 @@ function InvoicesPage() {
                               size="sm"
                               onClick={() => recordPayment(invoice)}
                             >
-                              Record payment
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="gap-1"
-                              onClick={() => invoiceAction(invoice.id, "paid")}
-                            >
-                              <Check className="h-3.5 w-3.5" /> Paid
+                              Copy payment link
                             </Button>
                           </>
                         )}
@@ -738,16 +778,15 @@ function InvoicesPage() {
       )}
 
       {activity && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => setActivity(null)}
+        <ModalOverlay
+          onClose={() => setActivity(null)}
+          labelledBy="invoice-activity-heading"
+          className="flex items-center justify-center p-4"
+          panelClassName="flex max-h-[80vh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+          closeLabel="Close invoice activity"
         >
-          <div
-            className="flex max-h-[80vh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
             <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-              <p className="text-sm font-semibold">
+              <p id="invoice-activity-heading" className="text-sm font-semibold">
                 Activity · {activity.number}
               </p>
               <button
@@ -790,8 +829,7 @@ function InvoicesPage() {
                 ))
               )}
             </div>
-          </div>
-        </div>
+        </ModalOverlay>
       )}
     </div>
   );

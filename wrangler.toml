@@ -4,6 +4,9 @@ main = "dist/server/server.js"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
 
+[triggers]
+crons = ["*/2 * * * *"]
+
 [assets]
 directory = "dist/client"
 
@@ -16,16 +19,18 @@ PESASWAP_URL = "https://api.pesaswap.io"
 # M-Pesa STK). From the merchant account (GET /payments shows it on any payment).
 PESASWAP_PROFILE_ID = "pro_4TgkuteoiYO8M9hvtNCa"
 
-# Auth posture (config-as-code so it is version-controlled, not a floating
-# secret). "0"/unset = open, scoped, NON-admin pilot session — demo login works
-# and the back office can call protected endpoints. Set to "1" to force a real
-# credentialed login (email+password / Google / staff PIN) for every operator.
-# Kept "0" for the live pilot; flip to "1" here and redeploy to harden.
-AUTH_REQUIRE_LOGIN = "0"
+# Production never mints anonymous operator sessions. Sandbox has its own
+# explicit demo posture below.
+AUTH_REQUIRE_LOGIN = "1"
+APP_ENV = "production"
 
 # Public origin for shareable links (pay links, QR, booking). Without this,
 # links fall back to http://localhost:8080 and break for real customers/agents.
 PUBLIC_BASE_URL = "https://pesaswap-merchant-app.pesaswap.workers.dev"
+
+# Set this to the venue that owns WHATSAPP_BRIDGE_URL. Keep the bridge URL unset
+# in production unless this owner and WHATSAPP_BRIDGE_TOKEN are both configured.
+WHATSAPP_BRIDGE_VENUE = "main"
 
 # Lock browser cross-origin access to the app's own origin (leave unset in dev to
 # keep "*"). Same-origin requests are unaffected; this blocks unknown web origins.
@@ -38,13 +43,17 @@ CORS_ALLOWED_ORIGIN = "https://pesaswap-merchant-app.pesaswap.workers.dev"
 # to take real M-Pesa payments.
 PAYMENTS_TEST_MODE = "0"
 
-# PILOT ONLY — echo the login OTP back in the /api/auth/otp/request response (the
-# sign-in screen then shows "Dev code: NNNNNN"). This unblocks passwordless login
-# while no email/SMS provider is wired. SECURITY: anyone who can reach /sign-in can
-# request AND see a code for ANY email, so this effectively disables OTP delivery
-# as a security boundary (account-takeover risk for accounts without TOTP). Turn
-# this OFF ("0"/remove) as soon as a real email provider is configured.
-AUTH_OTP_DEBUG = "1"
+# Never disclose one-time codes from the production API. Development and the
+# isolated sandbox may opt into debug delivery explicitly.
+AUTH_OTP_DEBUG = "0"
+ALLOW_SIMULATORS = "0"
+SANDBOX_AUTO_LOGIN = "0"
+# Every authenticated request re-checks venue membership in Postgres so a
+# revoked account dies immediately. Set to e.g. "5000" to cache that check
+# in-isolate and remove the round-trip from the hot path — the cost is that a
+# revocation then takes up to that many milliseconds to bite. Left off here:
+# immediate revocation is the safer default, and this is a deliberate choice.
+AUTH_MEMBERSHIP_TTL_MS = "0"
 
 # --- Cloudflare edge capabilities ---
 
@@ -72,9 +81,22 @@ localConnectionString = "postgres://pesaswap:pesaswap@localhost:5433/pesaswap"
 name = "REALTIME"
 class_name = "RealtimeHub"
 
+# Rate limiting. Previously a Postgres INSERT on every rate-limited request —
+# a write to the primary database on the hottest path, scaling in exactly the
+# wrong direction. Sharded into a fixed number of DOs (see RATE_LIMIT_SHARDS);
+# counters are in-memory, so there is no storage I/O per request. If the binding
+# is absent the limiter falls back to the Postgres table.
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterShard"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RealtimeHub"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["RateLimiterShard"]
 
 # Secrets (set via `wrangler secret put`):
 # - PESASWAP_API_KEY
@@ -83,6 +105,10 @@ new_sqlite_classes = ["RealtimeHub"]
 #                           bridge, so the edge Worker can send via WhatsApp)
 # - WHATSAPP_BRIDGE_TOKEN  (shared secret guarding the bridge; must match the
 #                           bridge container's BRIDGE_TOKEN)
+# - BRIDGE_SECRET          (bridge/SMS inbound shared secret)
+# - WHATSAPP_APP_SECRET    (Meta webhook HMAC secret)
+# - TELEGRAM_WEBHOOK_SECRET / INSTAGRAM_APP_SECRET / EMAIL_WEBHOOK_SECRET
+#                           (required whenever that provider webhook is enabled)
 # - CRON_SECRET            (shared secret guarding the invoicing/run +
 #                           sequences/run sweeps against anonymous callers)
 
@@ -97,11 +123,15 @@ new_sqlite_classes = ["RealtimeHub"]
 [env.sandbox]
 name = "pesaswap-merchant-app-sandbox"
 
+[env.sandbox.triggers]
+crons = ["*/2 * * * *"]
+
 [env.sandbox.vars]
 # Point server->PesaSwap calls at the sandbox host (unused while TEST_MODE=1).
 PESASWAP_URL = "https://api.sandbox.pesaswap.io"
 PESASWAP_PROFILE_ID = "pro_4TgkuteoiYO8M9hvtNCa"
 AUTH_REQUIRE_LOGIN = "0"
+APP_ENV = "sandbox"
 # Shareable links + CORS resolve to the sandbox origin, not production.
 PUBLIC_BASE_URL = "https://pesaswap-merchant-app-sandbox.pesaswap.workers.dev"
 CORS_ALLOWED_ORIGIN = "https://pesaswap-merchant-app-sandbox.pesaswap.workers.dev"
@@ -113,6 +143,13 @@ SENTRY_ENVIRONMENT = "sandbox"
 # Pilot: echo the login OTP on-screen (no email/SMS provider wired). See the note
 # on the top-level AUTH_OTP_DEBUG.
 AUTH_OTP_DEBUG = "1"
+ALLOW_SIMULATORS = "1"
+# Testers land signed in as a real, venue-bound merchant instead of the
+# venue-less anonymous session (which 403s every tenant endpoint). Refused by
+# the server in production, and validateRuntimeSecurity fails startup if set
+# there. The account must already exist in app_users.
+SANDBOX_AUTO_LOGIN = "1"
+SANDBOX_AUTO_LOGIN_EMAIL = "merchant@demo.com"
 
 # Sandbox database — a SEPARATE Neon database (pesaswap_sandbox) so test data
 # never mixes with production. Provisioned via:
@@ -121,12 +158,20 @@ AUTH_OTP_DEBUG = "1"
 binding = "HYPERDRIVE"
 id = "f9c735c4224f4ca6b40c1ad61aad1632"
 
-# Named environments do NOT inherit bindings/migrations, so the real-time DO is
+# Named environments do NOT inherit bindings/migrations, so both DOs are
 # redeclared for the sandbox Worker.
 [[env.sandbox.durable_objects.bindings]]
 name = "REALTIME"
 class_name = "RealtimeHub"
 
+[[env.sandbox.durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterShard"
+
 [[env.sandbox.migrations]]
 tag = "v1"
 new_sqlite_classes = ["RealtimeHub"]
+
+[[env.sandbox.migrations]]
+tag = "v2"
+new_sqlite_classes = ["RateLimiterShard"]

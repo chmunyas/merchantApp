@@ -13,6 +13,19 @@ export default defineConfig({
     server: { entry: "server" },
   },
   vite: {
+    build: {
+      chunkSizeWarningLimit: 450,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes("node_modules/recharts")) return "charts";
+            if (id.includes("node_modules/@radix-ui")) return "radix";
+            if (id.includes("node_modules/lucide-react")) return "icons";
+            return undefined;
+          },
+        },
+      },
+    },
     server: {
       // Allow the public Cloudflare quick-tunnel host so pay links work on phones.
       allowedHosts: [".trycloudflare.com"],

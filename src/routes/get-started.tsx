@@ -229,7 +229,6 @@ function GetStartedPage() {
                   onChange={(e) => setBizName(e.target.value)}
                   placeholder={existing.settings.businessProfile.name}
                   className="h-11 rounded-xl border-slate-700 bg-slate-900 text-white placeholder:text-slate-500"
-                  autoFocus
                 />
               </label>
               <label className="block space-y-1.5">

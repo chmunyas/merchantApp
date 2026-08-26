@@ -1,27 +1,10 @@
-import { useEffect, useState } from "react";
+import { usePaymentConfig } from "@/lib/use-payment-config";
 
 // A small, non-blocking indicator shown only on the sandbox deployment (where
 // payments are simulated). It reads the server's payment mode so the same build
 // can serve both production (live M-Pesa) and sandbox (test) without a rebuild.
 export function SandboxBadge() {
-  const [testMode, setTestMode] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch("/api/payments/config");
-        if (!res.ok) return;
-        const data = (await res.json()) as { testMode?: boolean };
-        if (!cancelled && data.testMode) setTestMode(true);
-      } catch {
-        /* if we can't tell, show nothing (assume production) */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { testMode } = usePaymentConfig();
 
   if (!testMode) return null;
 

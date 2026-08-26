@@ -58,8 +58,22 @@ type Summary = {
   trialBalanceBalanced: boolean;
   arAging: {
     total: number;
-    buckets: { d0_30: number; d31_60: number; d61_90: number; d90_plus: number };
+    overdueMinor: number;
+    buckets: {
+      current: number;
+      d1_30: number;
+      d31_60: number;
+      d61_90: number;
+      d90_plus: number;
+    };
     openCount: number;
+    customers?: Array<{
+      customerName: string;
+      phone: string | null;
+      totalMinor: number;
+      oldestDaysPastDue: number;
+      invoiceCount: number;
+    }>;
   };
   lostBasket: {
     paidCount: number;
@@ -181,19 +195,20 @@ function AccountingPage() {
   async function payoutTips() {
     const r = await authFetch("/api/tips/payout", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "Idempotency-Key": `tip-payout:${periodEnd}`,
+      },
       body: JSON.stringify({}),
     });
     if (r.ok) {
-      const d = (await r.json()) as { total: number; paidCount: number };
+      const d = (await r.json()) as { payout?: { amount?: number } };
       toast.success(
-        d.total > 0
-          ? `Paid out ${kes(d.total)} to ${d.paidCount} staff`
-          : "No tips awaiting payout",
+        `Pending tip payout created for ${kes(Number(d.payout?.amount ?? 0))}. Transfer evidence is still required.`,
       );
       void load();
     } else {
-      toast.error("Couldn't pay out tips");
+      toast.error("Couldn't create the tip payout request");
     }
   }
 
@@ -332,10 +347,12 @@ function AccountingPage() {
             {ar ? (
               <Table>
                 <TableBody>
-                  <Line label="Current (0–30 days)" value={kes(ar.buckets.d0_30)} />
-                  <Line label="31–60 days" value={kes(ar.buckets.d31_60)} />
-                  <Line label="61–90 days" value={kes(ar.buckets.d61_90)} />
-                  <Line label="90+ days" value={kes(ar.buckets.d90_plus)} />
+                  <Line label="Current (not yet due)" value={kes(ar.buckets.current)} />
+                  <Line label="1–30 days overdue" value={kes(ar.buckets.d1_30)} />
+                  <Line label="31–60 days overdue" value={kes(ar.buckets.d31_60)} />
+                  <Line label="61–90 days overdue" value={kes(ar.buckets.d61_90)} />
+                  <Line label="90+ days overdue" value={kes(ar.buckets.d90_plus)} />
+                  <Line label="Total overdue" value={kes(ar.overdueMinor)} />
                   <Line label="Total outstanding" value={kes(ar.total)} strong />
                 </TableBody>
               </Table>

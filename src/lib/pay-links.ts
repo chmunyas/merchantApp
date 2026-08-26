@@ -1,5 +1,11 @@
 import { getSql } from "@/lib/db";
 import { getBaseUrl, payRequestLink } from "@/lib/links";
+import { createPaymentIntent } from "@/lib/payment-intents";
+import { computeGuestServiceFee } from "@/lib/fees";
+import {
+  fromMinorUnits,
+  normalizeCurrency,
+} from "@/lib/currency";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = Record<string, any>;
@@ -27,6 +33,7 @@ export type CreatePayLinkInput = {
   phone?: string | null;
   name?: string | null;
   createdBy?: string | null;
+  idempotencyKey?: string | null;
   expiresInMinutes?: number | null; // omit = no expiry
 };
 
@@ -52,22 +59,42 @@ export async function createPayLink(
   if (amount <= 0) return { error: "amount must be positive" };
 
   const token = payToken();
-  const currency = input.currency ?? "KES";
+  const currency = normalizeCurrency(input.currency);
+  if (!currency) return { error: "unsupported currency" };
   const kind = input.kind ?? "request";
   const expiresAt =
     input.expiresInMinutes && input.expiresInMinutes > 0
       ? new Date(Date.now() + input.expiresInMinutes * 60_000).toISOString()
       : null;
 
+  if (input.idempotencyKey) {
+    const [existing] = await sql`
+      SELECT token, amount, currency, description, kind
+      FROM pay_links
+      WHERE venue_id = ${venue} AND idempotency_key = ${input.idempotencyKey}
+      LIMIT 1`;
+    if (existing) {
+      const base = await getBaseUrl(env);
+      return {
+        token: String(existing.token),
+        url: payRequestLink(base, String(existing.token)),
+        amount: Number(existing.amount),
+        currency: String(existing.currency),
+        description: existing.description ?? null,
+        kind: existing.kind as PayLinkKind,
+      };
+    }
+  }
+
   try {
     await sql`
       INSERT INTO pay_links
         (token, venue_id, amount, currency, description, kind, reference,
-         customer_phone, customer_name, created_by, expires_at)
+         customer_phone, customer_name, created_by, expires_at, idempotency_key)
       VALUES (${token}, ${venue}, ${amount}, ${currency},
               ${input.description ?? null}, ${kind}, ${input.reference ?? null},
               ${input.phone ?? null}, ${input.name ?? null},
-              ${input.createdBy ?? null}, ${expiresAt})`;
+              ${input.createdBy ?? null}, ${expiresAt}, ${input.idempotencyKey ?? null})`;
   } catch {
     return { error: "could not create pay link" };
   }
@@ -119,12 +146,32 @@ export async function resolvePayLink(
     ? ((org.poweredBy as string) ?? `Powered by ${row.org_name}`)
     : null;
   const amountMinor = Number(row.amount) || 0;
+  const currency = normalizeCurrency(row.currency);
+  if (!currency) return { error: "unsupported currency", status: 409 };
+  const intent = await createPaymentIntent(env, {
+    venue: String(row.venue_id),
+    amount: amountMinor,
+    currency,
+    sourceType: "pay-link",
+    sourceId: String(row.id),
+    allowedMethod: "m_pesa_express",
+    maxTipAmount: 0,
+    metadata: {
+      pay_link_id: String(row.id),
+      customer_phone: row.customer_phone ?? null,
+      till: String(row.reference ?? row.id),
+    },
+  });
+  if ("error" in intent) return { error: intent.error, status: 503 };
+  // A5.5: the guest-side fee is quoted server-side, from the published policy,
+  // so /pay renders a number it never invented.
+  const guestFee = computeGuestServiceFee(amountMinor);
   return {
     payLinkId: String(row.id),
     till: String(row.reference ?? row.id),
     venue: row.venue_id,
-    amount: amountMinor / 100,
-    currency: row.currency ?? "KES",
+    amount: fromMinorUnits(amountMinor, currency),
+    currency,
     description: row.description ?? null,
     kind: row.kind ?? "request",
     merchant: row.merchant,
@@ -132,6 +179,15 @@ export async function resolvePayLink(
     poweredBy,
     phone: row.customer_phone ?? null,
     customerName: row.customer_name ?? null,
+    guestFee: {
+      enabled: guestFee.enabled,
+      amount: guestFee.fee / 100,
+      percent: guestFee.percent,
+      fixed: guestFee.fixed / 100,
+      benefits: guestFee.benefits,
+      optOut: guestFee.optOut,
+    },
+    paymentIntentToken: intent.token,
     status: "pending",
   };
 }

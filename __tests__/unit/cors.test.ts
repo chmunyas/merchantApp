@@ -9,7 +9,7 @@ function req(origin?: string): Request {
 }
 
 describe("resolveCorsOrigin", () => {
-  it("returns null (keeps open '*') when CORS_ALLOWED_ORIGIN is unset", () => {
+  it("returns null when CORS_ALLOWED_ORIGIN is unset", () => {
     expect(resolveCorsOrigin(req("https://a.com"), {})).toBeNull();
     expect(resolveCorsOrigin(req("https://a.com"), { CORS_ALLOWED_ORIGIN: "" })).toBeNull();
   });
@@ -26,17 +26,15 @@ describe("resolveCorsOrigin", () => {
     ).toBe("https://a.com");
   });
 
-  it("falls back to the first entry for a non-listed origin (locks it down)", () => {
+  it("denies a non-listed origin", () => {
     expect(
       resolveCorsOrigin(req("https://evil.com"), {
         CORS_ALLOWED_ORIGIN: "https://a.com,https://b.com",
       }),
-    ).toBe("https://a.com");
+    ).toBeNull();
   });
 
-  it("uses the configured origin when the request has no Origin header", () => {
-    expect(resolveCorsOrigin(req(), { CORS_ALLOWED_ORIGIN: "https://a.com" })).toBe(
-      "https://a.com",
-    );
+  it("does not emit CORS for same-origin requests without Origin", () => {
+    expect(resolveCorsOrigin(req(), { CORS_ALLOWED_ORIGIN: "https://a.com" })).toBeNull();
   });
 });

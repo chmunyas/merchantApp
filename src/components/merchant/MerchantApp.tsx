@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { realtime } from "../../lib/realtime";
-import { authFetch } from "@/lib/auth";
+import { authFetch, decodeTokenClaims } from "@/lib/auth";
 import { DemoVenueBanner } from "@/components/DemoVenueBanner";
 import { PaymentQr } from "@/components/pay/PaymentQr";
 import { useMerchantIdentity } from "@/lib/use-merchant-identity";
 import {
   ArrowDownLeft,
   ArrowUpRight,
+  AlertTriangle,
   Bell,
   Brain,
   Check,
@@ -26,6 +28,7 @@ import {
   Pencil,
   Plus,
   QrCode,
+  RefreshCw,
   Repeat2,
   ScanLine,
   Send,
@@ -36,17 +39,29 @@ import {
   Zap,
 } from "lucide-react";
 
+import { ModalOverlay } from "@/components/ui/modal-overlay";
+
 import { AIInsightsView } from "./features/AIInsightsView";
 import { FeeCard } from "./features/FeeCard";
 import { InvoiceCreator } from "./features/InvoiceCreator";
 import { SyncCockpit, SyncStatusPill } from "./features/SyncCockpit";
-import { TableServiceView } from "./features/TableServiceView";
+import { SyncedTableServiceView } from "./features/SyncedTableServiceView";
 import { QuickOrderView } from "./features/QuickOrderView";
 import { TapGoPOS } from "./features/TapGoPOS";
 import { WalletReconciliationView } from "./features/WalletReconciliationView";
 import { OmniShare } from "./OmniShare";
 import { useInvoices } from "./features/hooks";
 import type { Invoice } from "./features/types";
+import {
+  isSettledPayment,
+  netSettledAmount,
+  paymentFlowLabel,
+  paymentMatchesFilter,
+  paymentStatusLabel,
+  type PaymentLedgerFilter,
+  type PaymentLedgerRow,
+} from "@/lib/payment-ledger";
+import { usePaymentLedger } from "@/lib/use-payment-ledger";
 import {
   amountRemaining,
   appendTimelineEvent,
@@ -55,11 +70,9 @@ import {
   fxLockTimeRemaining,
   getPaymentMethodsForRegion,
   payLink,
-  smsLink,
   timeAgo,
   timelineFor,
   totalPaid,
-  whatsAppLink,
 } from "./features/utils";
 
 type Tab =
@@ -103,7 +116,11 @@ export function MerchantApp({
 
   // Connect to PesaSwap real-time notifications (per-tenant channel).
   useEffect(() => {
-    realtime.connect(merchantName);
+    const claims = decodeTokenClaims();
+    // The anonymous showcase uses venue "main" but has no authoritative
+    // membership. It must not poll protected financial events as if it did.
+    if (!claims?.venue || claims.venue === "main") return;
+    realtime.connect(claims.venue);
     return () => realtime.disconnect();
   }, [merchantName]);
 
@@ -183,7 +200,7 @@ export function MerchantApp({
   return (
     <div className="h-full flex flex-col bg-background relative">
       {/* status bar */}
-      <div className="flex justify-between items-center px-6 pt-3 pb-1 text-[11px] font-mono">
+      <div className="flex items-center justify-between px-6 pb-1 pt-[calc(0.75rem+env(safe-area-inset-top))] text-[11px] font-mono">
         <span>{clock}</span>
         <span className="flex items-center gap-2">
           <SyncStatusPill onClick={() => setTab("home")} />
@@ -201,20 +218,25 @@ export function MerchantApp({
           <HomeView
             merchantName={merchantName}
             invoices={ledger.invoices}
+            isServerBacked={ledger.isServerBacked}
             onOpen={setShowInvoice}
             onNew={() => setTab("invoice")}
             onScan={() => setTab("scan")}
+            onSeeAll={() => setTab("list")}
           />
         )}
         {tab === "invoice" && (
           <InvoiceCreator
             onCreate={(inv) => {
-              ledger.add(inv);
-              toast.success("Invoice created", {
-                description: `${inv.id} · ${inv.currency} ${inv.amount}`,
+              void ledger.add(inv).then(() => {
+                toast.success("Invoice created", {
+                  description: `${inv.id} · ${inv.currency} ${inv.amount}`,
+                });
+                setShowInvoice(inv);
+                setTab("list");
+              }).catch((error) => {
+                toast.error(error instanceof Error ? error.message : "Invoice rejected");
               });
-              setShowInvoice(inv);
-              setTab("list");
             }}
           />
         )}
@@ -225,7 +247,7 @@ export function MerchantApp({
           />
         )}
         {tab === "list" && (
-          <InvoiceListView
+          <OperatorLedgerView
             invoices={ledger.invoices}
             onOpen={setShowInvoice}
             onMarkPaid={(id) => ledger.markPaid(id, "Batch")}
@@ -237,18 +259,27 @@ export function MerchantApp({
           />
         )}
         {tab === "insights" && (
-          <AIInsightsView invoices={ledger.invoices} onOpen={setShowInvoice} />
+          <AIInsightsView
+            invoices={ledger.invoices}
+            isServerBacked={ledger.isServerBacked}
+            onOpen={setShowInvoice}
+          />
         )}
         {tab === "wallets" && (
-          <WalletReconciliationView invoices={ledger.invoices} />
+          <WalletReconciliationView
+            isServerBacked={ledger.isServerBacked}
+          />
         )}
         {tab === "tapgo" && <TapGoPOS />}
         {tab === "order" && <QuickOrderView />}
-        {tab === "tables" && <TableServiceView />}
+        {tab === "tables" && <SyncedTableServiceView />}
       </div>
 
       {/* bottom nav */}
-      <nav className={`absolute bottom-0 inset-x-0 border-t border-border bg-card/95 backdrop-blur px-2 py-2 grid grid-cols-7 gap-1 ${standalone ? "pb-[calc(0.5rem+env(safe-area-inset-bottom))]" : "rounded-b-[2.4rem]"}`}>
+      <nav
+        aria-label="Operator sections"
+        className={`absolute inset-x-0 bottom-0 grid grid-cols-7 gap-1 border-t border-border bg-card/95 px-2 py-2 backdrop-blur ${standalone ? "pb-[calc(0.5rem+env(safe-area-inset-bottom))]" : "rounded-b-[2.4rem]"}`}
+      >
         {[
           { id: "order", icon: ClipboardList, label: "Order" },
           { id: "tapgo", icon: Zap, label: "Tap&Go" },
@@ -263,13 +294,14 @@ export function MerchantApp({
             <button
               key={t.id}
               onClick={() => setTab(t.id as Tab)}
-              className={`flex flex-col items-center gap-1 py-2 rounded-xl transition-colors ${
+              aria-current={active ? "page" : undefined}
+              className={`flex min-h-11 flex-col items-center justify-center gap-1 rounded-xl py-2 transition-colors ${
                 active
                   ? "bg-foreground text-background"
                   : "text-muted-foreground"
               }`}
             >
-              <t.icon className="size-4" />
+              <t.icon aria-hidden="true" className="size-4" />
               <span className="text-[9px] font-medium uppercase tracking-wider">
                 {t.label}
               </span>
@@ -298,12 +330,14 @@ export function MerchantApp({
       )}
 
       {editingInvoice && (
-        <div className="absolute inset-0 z-50 flex items-end rounded-b-[2.4rem] overflow-hidden">
-          <div
-            className="absolute inset-0 bg-foreground/50"
-            onClick={() => setEditingInvoiceId(null)}
-          />
-          <div className="relative w-full bg-card rounded-t-3xl pb-5 max-h-[92%] overflow-y-auto animate-slide-up">
+        <ModalOverlay
+          onClose={() => setEditingInvoiceId(null)}
+          label="Edit invoice"
+          closeLabel="Close invoice editor"
+          className="absolute inset-0 flex items-end rounded-b-[2.4rem] overflow-hidden"
+          backdropClassName="bg-foreground/50"
+          panelClassName="w-full bg-card rounded-t-3xl pb-5 max-h-[92%] overflow-y-auto animate-slide-up"
+        >
             <InvoiceCreator
               mode="edit"
               initialInvoice={editingInvoice}
@@ -326,8 +360,7 @@ export function MerchantApp({
                 setEditingInvoiceId(null);
               }}
             />
-          </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {payTarget && (
@@ -351,15 +384,19 @@ export function MerchantApp({
 function HomeView({
   merchantName,
   invoices,
+  isServerBacked,
   onOpen,
   onNew,
   onScan,
+  onSeeAll,
 }: {
   merchantName: string;
   invoices: Invoice[];
+  isServerBacked: boolean;
   onOpen: (i: Invoice) => void;
   onNew: () => void;
   onScan: () => void;
+  onSeeAll: () => void;
 }) {
   const outstanding = invoices
     .filter((i) => i.status !== "Paid")
@@ -400,9 +437,13 @@ function HomeView({
           </p>
           <h1 className="text-lg font-bold">{merchantName}</h1>
         </div>
-        <button className="size-9 rounded-full bg-muted flex items-center justify-center">
-          <Bell className="size-4" />
-        </button>
+        <a
+          href="/dashboard/inbox"
+          aria-label="Open notifications"
+          className="flex size-11 items-center justify-center rounded-full bg-muted"
+        >
+          <Bell aria-hidden="true" className="size-4" />
+        </a>
       </div>
 
       {/* balance card */}
@@ -411,11 +452,14 @@ function HomeView({
           <p className="text-[10px] font-mono uppercase tracking-widest opacity-60">
             Outstanding receivables
           </p>
+          <p className="text-[9px] font-mono uppercase tracking-widest opacity-50">
+            {isServerBacked ? "Live venue ledger" : "Demo data"}
+          </p>
           <p className="text-3xl font-bold font-mono mt-1">
             {primaryCurrency} {outstanding.toLocaleString()}
           </p>
         </div>
-        <div className="grid grid-cols-3 gap-2 text-center pt-2 border-t border-background/10">
+        <div className="grid grid-cols-4 gap-2 border-t border-background/10 pt-2 text-center">
           <Stat label="Paid" value={String(counts.paid)} />
           <Stat label="Pending" value={String(counts.pending)} />
           <Stat label="Partial" value={String(counts.partial)} />
@@ -423,8 +467,7 @@ function HomeView({
         </div>
       </div>
 
-      {/* Store-and-forward: offline / queued-sale status + manual sync. Renders
-          only when offline or there are sales waiting to sync. */}
+        {/* Review-only offline payment drafts. Never auto-submit money movement. */}
       <SyncCockpit />
 
       {/* Fee transparency: the real blended rate paid over the last 30 days. */}
@@ -473,7 +516,10 @@ function HomeView({
           <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
             Recent activity
           </h2>
-          <button className="text-[11px] text-accent font-medium">
+          <button
+            onClick={onSeeAll}
+            className="min-h-11 text-[11px] font-medium text-accent"
+          >
             See all
           </button>
         </div>
@@ -538,6 +584,7 @@ function InvoiceRow({
     Pending: "bg-amber-50 text-amber-700",
     Overdue: "bg-red-50 text-red-700",
     Partial: "bg-blue-50 text-blue-700",
+    Void: "bg-slate-100 text-slate-500",
   };
   const Icon = invoice.status === "Paid" ? ArrowDownLeft : ArrowUpRight;
   return (
@@ -738,16 +785,356 @@ function ScanView({
   );
 }
 
+type OperatorLedgerProps = {
+  invoices: Invoice[];
+  onOpen: (invoice: Invoice) => void;
+  onMarkPaid: (id: string) => void;
+  onSendReminder: (id: string) => void;
+};
+
+function OperatorLedgerView(props: OperatorLedgerProps) {
+  const [view, setView] = useState<"payments" | "invoices">("payments");
+
+  return (
+    <div className="space-y-4 px-5 pt-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+            Ledger
+          </p>
+          <h1 className="text-lg font-bold">Transaction records</h1>
+        </div>
+        <Link
+          to="/dashboard/payments"
+          className="inline-flex min-h-11 items-center rounded-full border border-border px-3 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
+        >
+          Back office
+        </Link>
+      </div>
+
+      <div className="grid grid-cols-2 rounded-xl bg-muted p-1">
+        {(
+          [
+            ["payments", "Payments"],
+            ["invoices", "Invoices"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setView(id)}
+            aria-pressed={view === id}
+            className={`min-h-11 rounded-lg text-xs font-semibold transition-colors ${
+              view === id
+                ? "bg-card text-foreground shadow-sm"
+                : "text-muted-foreground"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {view === "payments" ? (
+        <PaymentLedgerView />
+      ) : (
+        <InvoiceListView {...props} embedded />
+      )}
+    </div>
+  );
+}
+
+const PAYMENT_STATUS_STYLE: Record<string, string> = {
+  succeeded: "bg-emerald-100 text-emerald-800",
+  paid: "bg-emerald-100 text-emerald-800",
+  captured: "bg-emerald-100 text-emerald-800",
+  processing: "bg-amber-100 text-amber-800",
+  failed: "bg-rose-100 text-rose-800",
+  cancelled: "bg-slate-200 text-slate-700",
+  partially_refunded: "bg-indigo-100 text-indigo-800",
+  refunded: "bg-indigo-100 text-indigo-800",
+};
+
+function formatLedgerMoney(amountMinor: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat("en-KE", {
+      style: "currency",
+      currency,
+      minimumFractionDigits: amountMinor % 100 === 0 ? 0 : 2,
+      maximumFractionDigits: 2,
+    }).format(amountMinor / 100);
+  } catch {
+    return `${currency} ${(amountMinor / 100).toLocaleString()}`;
+  }
+}
+
+function PaymentLedgerView() {
+  const query = usePaymentLedger(100);
+  const [filter, setFilter] = useState<PaymentLedgerFilter>("all");
+  const [selected, setSelected] = useState<PaymentLedgerRow | null>(null);
+  const claims = decodeTokenClaims();
+  const canRead =
+    Boolean(claims?.venue && claims.venue !== "main") &&
+    ["manager", "merchant"].includes(String(claims?.role ?? ""));
+  const payments = query.data ?? [];
+  const visible = payments.filter((payment) =>
+    paymentMatchesFilter(payment, filter),
+  );
+  const settledCount = payments.filter(isSettledPayment).length;
+  const netReceived = netSettledAmount(payments);
+
+  if (!canRead) {
+    return (
+      <div className="rounded-2xl border border-dashed border-border bg-card p-5 text-center">
+        <ShieldCheck className="mx-auto size-6 text-muted-foreground" />
+        <p className="mt-2 text-sm font-semibold">Sign in to view live payments</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          The demo keeps example invoices locally. Venue transaction records are
+          available only to an authenticated manager or owner.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-2xl bg-foreground p-4 text-background">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="font-mono text-[9px] uppercase tracking-widest opacity-60">
+              Settled after refunds
+            </p>
+            <p className="mt-1 font-mono text-2xl font-bold">
+              {formatLedgerMoney(netReceived, "KES")}
+            </p>
+            <p className="mt-1 text-[10px] opacity-60">
+              {settledCount} settled · {payments.length} attempts
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void query.refetch()}
+            disabled={query.isFetching}
+            aria-label="Refresh payment ledger"
+            className="flex size-11 items-center justify-center rounded-full bg-background/10 disabled:opacity-50"
+          >
+            <RefreshCw
+              aria-hidden="true"
+              className={`size-4 ${query.isFetching ? "animate-spin" : ""}`}
+            />
+          </button>
+        </div>
+      </div>
+
+      <div className="flex gap-1.5 overflow-x-auto pb-1">
+        {(
+          [
+            ["all", "All"],
+            ["settled", "Settled"],
+            ["processing", "Processing"],
+            ["failed", "Failed"],
+            ["refunded", "Refunded"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setFilter(id)}
+            className={`min-h-9 shrink-0 rounded-full border px-3 text-[10px] font-semibold ${
+              filter === id
+                ? "border-foreground bg-foreground text-background"
+                : "border-border text-muted-foreground"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {query.isLoading ? (
+        <p className="py-8 text-center text-xs text-muted-foreground">
+          Loading venue transactions…
+        </p>
+      ) : query.isError ? (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-800">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <AlertTriangle className="size-4" /> Ledger unavailable
+          </div>
+          <p className="mt-1 text-xs">
+            No local values are substituted. Retry when the server is available.
+          </p>
+        </div>
+      ) : visible.length === 0 ? (
+        <p className="rounded-2xl border border-dashed border-border py-8 text-center text-xs text-muted-foreground">
+          {payments.length === 0
+            ? "No payment attempts have been recorded for this venue yet."
+            : "No transactions match this filter."}
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {visible.map((payment) => {
+            const principal = Math.max(0, payment.amount - payment.tipAmount);
+            return (
+              <button
+                key={payment.id}
+                type="button"
+                onClick={() => setSelected(payment)}
+                className="w-full rounded-2xl border border-border bg-card p-4 text-left"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold">
+                      {paymentFlowLabel(payment)}
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">
+                      {new Date(payment.createdAt).toLocaleString()} · {payment.customerName || payment.customerPhone || "Guest"}
+                    </p>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-semibold ${
+                      PAYMENT_STATUS_STYLE[payment.status] ??
+                      "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {paymentStatusLabel(payment.status)}
+                  </span>
+                </div>
+                <div className="mt-3 flex items-end justify-between gap-3">
+                  <div>
+                    <p className="font-mono text-lg font-bold">
+                      {formatLedgerMoney(payment.amount, payment.currency)}
+                    </p>
+                    {payment.tipAmount > 0 ? (
+                      <p className="text-[10px] text-muted-foreground">
+                        Bill {formatLedgerMoney(principal, payment.currency)} + tip {formatLedgerMoney(payment.tipAmount, payment.currency)}
+                      </p>
+                    ) : null}
+                    {payment.refundedAmount > 0 ? (
+                      <p className="text-[10px] font-semibold text-indigo-700">
+                        {formatLedgerMoney(payment.refundedAmount, payment.currency)} refunded
+                      </p>
+                    ) : null}
+                  </div>
+                  <p className="max-w-[45%] truncate font-mono text-[9px] text-muted-foreground">
+                    {payment.providerRef || payment.reference || payment.sourceId || payment.id}
+                  </p>
+                </div>
+                {payment.errorMessage ? (
+                  <p className="mt-2 rounded-lg bg-rose-50 px-2 py-1.5 text-[10px] text-rose-700">
+                    {payment.errorMessage}
+                  </p>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <p className="text-center text-[9px] text-muted-foreground">
+        Server ledger · refreshes every 15 seconds
+      </p>
+
+      {selected ? (
+        <OperatorPaymentDetail
+          payment={selected}
+          onClose={() => setSelected(null)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function OperatorPaymentDetail({
+  payment,
+  onClose,
+}: {
+  payment: PaymentLedgerRow;
+  onClose: () => void;
+}) {
+  const principal = Math.max(0, payment.amount - payment.tipAmount);
+  const rows: Array<[string, string]> = [
+    ["Total", formatLedgerMoney(payment.amount, payment.currency)],
+    ["Bill", formatLedgerMoney(principal, payment.currency)],
+    ...(payment.tipAmount > 0
+      ? [["Tip", formatLedgerMoney(payment.tipAmount, payment.currency)] as [string, string]]
+      : []),
+    ["Status", paymentStatusLabel(payment.status)],
+    ["Source", paymentFlowLabel(payment)],
+    ["Customer", payment.customerName || payment.customerPhone || "Guest"],
+    ["Provider reference", payment.providerRef || "Not assigned"],
+    [
+      "Merchant reference",
+      payment.reference || payment.sourceId || "Not assigned",
+    ],
+    ...(payment.refundedAmount > 0
+      ? [["Refunded", formatLedgerMoney(payment.refundedAmount, payment.currency)] as [string, string]]
+      : []),
+    ...(payment.refundReason
+      ? [["Refund reason", payment.refundReason] as [string, string]]
+      : []),
+    ...(payment.errorMessage
+      ? [["Failure reason", payment.errorMessage] as [string, string]]
+      : []),
+    ["Initiated by", payment.initiator],
+    ["Recorded", new Date(payment.createdAt).toLocaleString()],
+    ["Payment ID", payment.id],
+  ];
+
+  return (
+    <ModalOverlay
+      onClose={onClose}
+      labelledBy="operator-payment-heading"
+      className="absolute inset-0 flex items-end overflow-hidden"
+      backdropClassName="bg-foreground/50"
+      panelClassName="max-h-[88%] w-full overflow-y-auto rounded-t-3xl bg-card p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))]"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
+            Authoritative record
+          </p>
+          <h2 id="operator-payment-heading" className="text-lg font-bold">
+            Payment detail
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close payment detail"
+          className="flex size-11 items-center justify-center rounded-full bg-muted"
+        >
+          <X aria-hidden="true" className="size-4" />
+        </button>
+      </div>
+      <div className="mt-4 divide-y divide-border rounded-2xl border border-border">
+        {rows.map(([label, value]) => (
+          <div
+            key={label}
+            className="flex items-start justify-between gap-4 px-4 py-3"
+          >
+            <span className="text-xs text-muted-foreground">{label}</span>
+            <span className="max-w-[62%] break-all text-right font-mono text-xs font-semibold">
+              {value}
+            </span>
+          </div>
+        ))}
+      </div>
+    </ModalOverlay>
+  );
+}
+
 function InvoiceListView({
   invoices,
   onOpen,
   onMarkPaid,
   onSendReminder,
+  embedded = false,
 }: {
   invoices: Invoice[];
   onOpen: (i: Invoice) => void;
   onMarkPaid: (id: string) => void;
   onSendReminder: (id: string) => void;
+  embedded?: boolean;
 }) {
   const [filter, setFilter] = useState<"All" | Invoice["status"]>("All");
   const [selectMode, setSelectMode] = useState(false);
@@ -779,14 +1166,18 @@ function InvoiceListView({
   }
 
   return (
-    <div className="px-5 pt-3 space-y-4">
+    <div className={`${embedded ? "" : "px-5 pt-3"} space-y-4`}>
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
-            Ledger
-          </p>
-          <h1 className="text-lg font-bold">All invoices</h1>
-        </div>
+        {!embedded ? (
+          <div>
+            <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+              Ledger
+            </p>
+            <h1 className="text-lg font-bold">All invoices</h1>
+          </div>
+        ) : (
+          <p className="text-sm font-semibold">Invoice records</p>
+        )}
         <button
           onClick={() => {
             setSelectMode((value) => !value);
@@ -909,15 +1300,24 @@ function InvoiceDetailSheet({
   const [showShare, setShowShare] = useState(false);
   const [partialVia, setPartialVia] = useState("PesaSwap");
   // Persist this (client-side) invoice to Postgres so its shared link + QR
-  // resolve to a real, payable /pay?i=<number> page. Falls back to the in-app
-  // link until it publishes (or if the app is unauthenticated).
+  // resolve to a real, payable /pay?i=<number> page. Until that succeeds there
+  // is no payable link to give anyone, so sharing stays closed.
   const [publicLink, setPublicLink] = useState<string | null>(null);
+  const [publishState, setPublishState] = useState<
+    "publishing" | "published" | "signed-out" | "failed"
+  >(invoice.serverId ? "published" : "publishing");
   const link = publicLink ?? payLink(invoice);
+  const shareable = publishState === "published";
   const paid = totalPaid(invoice);
   const remaining = amountRemaining(invoice);
 
   useEffect(() => {
+    if (invoice.serverId) {
+      setPublishState("published");
+      return;
+    }
     let cancelled = false;
+    setPublishState("publishing");
     void (async () => {
       try {
         const res = await authFetch("/api/invoices/publish", {
@@ -933,19 +1333,37 @@ function InvoiceDetailSheet({
             status: invoice.status,
           }),
         });
-        if (!res.ok) return;
+        if (cancelled) return;
+        if (!res.ok) {
+          setPublishState(
+            res.status === 401 || res.status === 403 ? "signed-out" : "failed",
+          );
+          return;
+        }
         const data = (await res.json()) as { payLink?: string };
-        if (!cancelled && data.payLink) setPublicLink(data.payLink);
+        if (cancelled) return;
+        if (data.payLink) setPublicLink(data.payLink);
+        setPublishState("published");
       } catch {
-        /* keep the in-app fallback link */
+        if (!cancelled) setPublishState("failed");
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [invoice.id, invoice.amount, invoice.currency, invoice.status]);
+  }, [
+    invoice.id,
+    invoice.serverId,
+    invoice.amount,
+    invoice.currency,
+    invoice.customer,
+    invoice.customerPhone,
+    invoice.note,
+    invoice.status,
+  ]);
 
   async function copyLink() {
+    if (!shareable) return;
     try {
       await navigator.clipboard.writeText(link);
       toast.success("Payment link copied");
@@ -955,6 +1373,7 @@ function InvoiceDetailSheet({
   }
 
   async function share() {
+    if (!shareable) return;
     const shareData = {
       title: `Invoice ${invoice.id}`,
       text: `${invoice.customer} · ${invoice.currency} ${invoice.amount}`,
@@ -972,9 +1391,14 @@ function InvoiceDetailSheet({
   }
 
   return (
-    <div className="absolute inset-0 z-40 flex items-end rounded-b-[2.4rem] overflow-hidden">
-      <div className="absolute inset-0 bg-foreground/40" onClick={onClose} />
-      <div className="relative w-full bg-card rounded-t-3xl p-5 space-y-4 animate-slide-up max-h-[92%] overflow-y-auto">
+    <ModalOverlay
+      onClose={onClose}
+      label={`Invoice ${invoice.id}`}
+      closeLabel="Close invoice sheet"
+      className="absolute inset-0 z-40 flex items-end rounded-b-[2.4rem] overflow-hidden"
+      backdropClassName="bg-foreground/40"
+      panelClassName="w-full bg-card rounded-t-3xl p-5 space-y-4 animate-slide-up max-h-[92%] overflow-y-auto"
+    >
         <div className="flex justify-between items-start">
           <div>
             <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
@@ -991,21 +1415,51 @@ function InvoiceDetailSheet({
         </div>
 
         <div className="rounded-2xl border border-border bg-background p-5 flex flex-col items-center gap-3">
-          <PaymentQr
-            merchantName={MERCHANT_NAME}
-            till={TILL_NUMBER}
-            amountMinor={Math.round(
-              (remaining > 0 ? remaining : Number(invoice.amount)) * 100,
-            )}
-            reference={invoice.id}
-            cameraUrl={link}
-            keqr={invoice.currency === "KES"}
-            defaultMode="keqr"
-            size={180}
-          />
-          <p className="text-[10px] font-mono text-muted-foreground text-center break-all px-4">
-            {link}
-          </p>
+          {shareable ? (
+            <>
+              <PaymentQr
+                merchantName={MERCHANT_NAME}
+                till={TILL_NUMBER}
+                amountMinor={Math.round(
+                  (remaining > 0 ? remaining : Number(invoice.amount)) * 100,
+                )}
+                reference={invoice.id}
+                cameraUrl={link}
+                keqr={invoice.currency === "KES"}
+                defaultMode="keqr"
+                size={180}
+              />
+              <p className="text-[10px] font-mono text-muted-foreground text-center break-all px-4">
+                {link}
+              </p>
+            </>
+          ) : (
+            // Showing a QR for an unpublished invoice hands the merchant a code
+            // that 404s at the till, so it is withheld rather than decorated.
+            <div
+              role="status"
+              className="flex flex-col items-center gap-2 py-6 text-center"
+            >
+              <AlertTriangle
+                className="size-5 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <p className="text-xs font-semibold text-foreground">
+                {publishState === "publishing"
+                  ? "Publishing invoice…"
+                  : publishState === "signed-out"
+                    ? "Saved on this device only"
+                    : "Couldn't publish this invoice"}
+              </p>
+              <p className="max-w-[16rem] text-[11px] text-muted-foreground">
+                {publishState === "publishing"
+                  ? "The payment QR appears once this invoice reaches your account."
+                  : publishState === "signed-out"
+                    ? "This session isn't linked to a venue, so this invoice stays in this browser — it won't appear in your back office and can't be paid. Sign in with a venue account to publish it."
+                    : "The payment link isn't live, so it can't be shared yet. Check your connection and reopen this invoice."}
+              </p>
+            </div>
+          )}
         </div>
 
         <div className="rounded-xl bg-muted p-4 text-center">
@@ -1045,8 +1499,18 @@ function InvoiceDetailSheet({
         <div
           className={`grid gap-2 ${invoice.status === "Pending" || invoice.status === "Overdue" || invoice.status === "Partial" ? "grid-cols-5" : "grid-cols-3"}`}
         >
-          <SheetBtn icon={Copy} label="Copy link" onClick={copyLink} />
-          <SheetBtn icon={Share2} label="Share" onClick={share} />
+          <SheetBtn
+            icon={Copy}
+            label="Copy link"
+            disabled={!shareable}
+            onClick={copyLink}
+          />
+          <SheetBtn
+            icon={Share2}
+            label="Share"
+            disabled={!shareable}
+            onClick={share}
+          />
           {(invoice.status === "Pending" ||
             invoice.status === "Overdue" ||
             invoice.status === "Partial") && (
@@ -1154,35 +1618,32 @@ function InvoiceDetailSheet({
             </p>
             <button
               type="button"
+              disabled={!shareable}
               onClick={() => setShowShare(true)}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-foreground py-3 text-xs font-bold text-background"
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-foreground py-3 text-xs font-bold text-background disabled:opacity-40"
             >
-              <Send className="size-4" /> Send to {invoice.customer}
+              <Send className="size-4" aria-hidden="true" /> Send to{" "}
+              {invoice.customer}
             </button>
-            <div className="grid grid-cols-3 gap-2">
-              <a
-                href={whatsAppLink(invoice, link)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex flex-col items-center gap-1 py-3 rounded-xl bg-green-50 border border-green-200 hover:bg-green-100 transition-colors"
-              >
-                <MessageCircle className="size-4 text-green-600" />
-                <span className="text-[9px] font-mono uppercase tracking-widest text-green-700">
-                  WhatsApp
-                </span>
-              </a>
-              <a
-                href={smsLink(invoice, link)}
-                className="flex flex-col items-center gap-1 py-3 rounded-xl bg-blue-50 border border-blue-200 hover:bg-blue-100 transition-colors"
-              >
-                <Send className="size-4 text-blue-600" />
-                <span className="text-[9px] font-mono uppercase tracking-widest text-blue-700">
-                  SMS
-                </span>
-              </a>
+            <div className="grid grid-cols-2 gap-2">
               <button
+                type="button"
+                disabled={!shareable}
+                onClick={() => setShowShare(true)}
+                className="flex flex-col items-center gap-1 py-3 rounded-xl bg-green-50 border border-green-200 hover:bg-green-100 transition-colors disabled:opacity-40"
+              >
+                <MessageCircle
+                  className="size-4 text-green-600"
+                  aria-hidden="true"
+                />
+                <span className="text-[9px] font-mono uppercase tracking-widest text-green-700">
+                  Audited channel
+                </span>
+              </button>
+              <button
+                disabled={!shareable}
                 onClick={share}
-                className="flex flex-col items-center gap-1 py-3 rounded-xl bg-muted border border-border hover:bg-foreground hover:text-background transition-colors"
+                className="flex flex-col items-center gap-1 py-3 rounded-xl bg-muted border border-border hover:bg-foreground hover:text-background transition-colors disabled:opacity-40"
               >
                 <Share2 className="size-4" />
                 <span className="text-[9px] font-mono uppercase tracking-widest">
@@ -1197,6 +1658,7 @@ function InvoiceDetailSheet({
           open={showShare}
           onClose={() => setShowShare(false)}
           title="Send payment link"
+          kind="invoice"
           message={`Hi ${invoice.customer}, here's your ${invoice.currency} ${invoice.amount.toLocaleString()} invoice (${invoice.id}).`}
           link={link}
           defaultPhone={invoice.customerPhone ?? ""}
@@ -1393,8 +1855,7 @@ function InvoiceDetailSheet({
             ))}
           </div>
         </div>
-      </div>
-    </div>
+    </ModalOverlay>
   );
 }
 
@@ -1452,9 +1913,14 @@ function PaySheet({
   const alreadyPaid = invoice.status === "Paid";
 
   return (
-    <div className="absolute inset-0 z-50 flex items-end rounded-b-[2.4rem] overflow-hidden">
-      <div className="absolute inset-0 bg-foreground/50" onClick={onClose} />
-      <div className="relative w-full bg-card rounded-t-3xl p-5 space-y-4 animate-slide-up">
+    <ModalOverlay
+      onClose={onClose}
+      label="Confirm payment"
+      closeLabel="Close payment sheet"
+      className="absolute inset-0 flex items-end rounded-b-[2.4rem] overflow-hidden"
+      backdropClassName="bg-foreground/50"
+      panelClassName="w-full bg-card rounded-t-3xl p-5 space-y-4 animate-slide-up"
+    >
         <div className="flex justify-between items-start">
           <div>
             <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
@@ -1565,7 +2031,6 @@ function PaySheet({
             </p>
           </>
         )}
-      </div>
-    </div>
+    </ModalOverlay>
   );
 }

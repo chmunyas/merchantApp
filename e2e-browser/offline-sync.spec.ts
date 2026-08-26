@@ -2,12 +2,11 @@ import { expect, test } from "@playwright/test";
 
 import { seedAuth } from "./_auth";
 
-// Store-and-forward resilience: a sale taken OFFLINE is queued locally (shown as
-// pending, never "paid"), then syncs automatically when connectivity returns.
+// Offline money safety: a sale draft never auto-charges on reconnection.
 const rnd = () => Math.random().toString(36).slice(2, 8);
 
-test.describe("offline store-and-forward (browser)", () => {
-  test("a sale queued offline syncs to the server when back online", async ({
+test.describe("offline payment drafts (browser)", () => {
+  test("a sale draft remains local until explicit online review", async ({
     page,
     context,
     request,
@@ -71,37 +70,21 @@ test.describe("offline store-and-forward (browser)", () => {
       { saleId, venue },
     );
 
-    // Back online: the queue drains automatically. Fire the browser 'online' event
-    // the hook listens for. (The queued-sale UI pill is covered by unit tests; the
-    // end-to-end proof below is the sale reaching the ledger + the outbox emptying,
-    // which is the store-and-forward guarantee that matters.)
+    // Back online: reconnection must not submit money movement.
     await context.setOffline(false);
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
 
-    // The sale reaches the server ledger for THIS venue. Re-nudge the flush each
-    // pass (an 'online' event) in case a cold client missed the first one.
-    await expect
-      .poll(
-        async () => {
-          await page
-            .evaluate(() => window.dispatchEvent(new Event("online")))
-            .catch(() => {});
-          const list = await request
-            .get(`/api/payments/list?venue=${venue}&limit=20`, {
-              headers: { authorization: `Bearer ${su.token}` },
-            })
-            .then((r) => r.json())
-            .catch(() => ({ payments: [] }));
-          const rows = list.payments ?? [];
-          return rows.some(
-            (p: { amount?: number }) => Math.round(Number(p.amount)) === 50000,
-          );
-        },
-        { timeout: 40_000, intervals: [1000, 1500, 2000, 2500] },
-      )
-      .toBe(true);
+    await page.waitForTimeout(2000);
+    const list = await request
+      .get(`/api/payments/list?venue=${venue}&limit=20`, {
+        headers: { authorization: `Bearer ${su.token}` },
+      })
+      .then((r) => r.json());
+    expect((list.payments ?? []).some(
+      (p: { amount?: number }) => Math.round(Number(p.amount)) === 50000,
+    )).toBe(false);
 
-    // ...and the local outbox is emptied once synced.
+    // The draft remains until the operator reviews or discards it.
     await expect
       .poll(
         async () =>
@@ -115,6 +98,6 @@ test.describe("offline store-and-forward (browser)", () => {
           }),
         { timeout: 25_000, intervals: [1000, 1500] },
       )
-      .toBe(0);
+      .toBe(1);
   });
 });

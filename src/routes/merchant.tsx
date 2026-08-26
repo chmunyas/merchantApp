@@ -84,7 +84,7 @@ function MerchantPage() {
             <div className="space-y-2">
               <InstallButton />
               <p className="text-center text-[10px] text-muted-foreground">
-                Installable on iOS, Android &amp; desktop · works offline
+                Installable on iOS, Android &amp; desktop · cached read-only offline
               </p>
             </div>
           </div>
@@ -145,10 +145,10 @@ function MerchantPage() {
           eyebrow="Capability · 04"
           title="PWA & mobile"
           headline="Installable. Offline. Biometric-secure."
-          body="PesaSwap works as a native iOS / Android app and an installable PWA. Drafts are queued offline, synced when the merchant comes back online. Camera-grade QR scanner, push receipts and Face ID-protected ledger."
+          body="PesaSwap works as an installable PWA. Cached information remains available offline; payment drafts require explicit online review before charging. Camera QR scanner and push notifications are supported where the browser permits."
           bullets={[
             "Add to home screen on iOS, Android & desktop",
-            "Offline draft invoicing with background sync",
+            "Read-only offline cache with reviewed payment drafts",
             "Push alerts, Face ID / Touch ID protection",
           ]}
           phone={<PWAFlow />}

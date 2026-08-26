@@ -17,6 +17,9 @@ export type QueuedCharge = {
   // Last failure reason + a backoff gate, surfaced in the sync cockpit.
   lastError?: string;
   nextRetryAt?: number;
+  deviceId?: string;
+  expiresAt?: number;
+  mode?: "draft";
 };
 
 export interface QueueStore {
@@ -54,10 +57,15 @@ export function enqueueCharge(
   charge: Omit<QueuedCharge, "queuedAt" | "attempts">,
 ): QueuedCharge {
   const items = read(store);
+  const queuedAt = Date.now();
+  const deviceId = charge.deviceId ?? crypto.randomUUID();
   const entry: QueuedCharge = {
     ...charge,
-    idempotencyKey: charge.idempotencyKey ?? charge.id,
-    queuedAt: Date.now(),
+    idempotencyKey: charge.idempotencyKey ?? `${deviceId}:${charge.id}:${queuedAt}`,
+    deviceId,
+    mode: "draft",
+    queuedAt,
+    expiresAt: charge.expiresAt ?? queuedAt + 24 * 60 * 60 * 1000,
     attempts: 0,
   };
   items.push(entry);
@@ -66,7 +74,7 @@ export function enqueueCharge(
 }
 
 export function listQueued(store: QueueStore): QueuedCharge[] {
-  return read(store);
+  return read(store).filter((entry) => !entry.expiresAt || entry.expiresAt > Date.now());
 }
 
 export function queueSize(store: QueueStore): number {
@@ -99,17 +107,11 @@ export type QueueStats = {
 };
 
 export function queueStats(store: QueueStore, now = Date.now()): QueueStats {
-  const items = read(store);
-  let pending = 0;
-  let failed = 0;
-  for (const c of items) {
-    if (c.attempts > 0 && c.nextRetryAt && c.nextRetryAt > now) failed += 1;
-    else pending += 1;
-  }
+  const items = read(store).filter((entry) => !entry.expiresAt || entry.expiresAt > now);
   return {
     total: items.length,
-    pending,
-    failed,
+    pending: items.length,
+    failed: 0,
     oldestAt: items.length ? Math.min(...items.map((c) => c.queuedAt)) : null,
   };
 }

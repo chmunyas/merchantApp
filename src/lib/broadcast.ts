@@ -1,9 +1,6 @@
-import { getAdapter } from "@/lib/channels";
 import type { ChannelId } from "@/lib/channels/types";
-import { isSuppressed } from "@/lib/consent";
 import { getSql } from "@/lib/db";
-import { envVar } from "@/lib/env";
-import { hourAtOffset, withinQuietHours } from "@/lib/quiet-hours";
+import { queueOutbound } from "@/lib/outbound-jobs";
 
 type Sql = NonNullable<ReturnType<typeof getSql>>;
 
@@ -12,15 +9,16 @@ export type BroadcastParams = {
   segment: "all" | "gold_plus" | "lapsed";
   channel: ChannelId;
   message: string;
+  idempotencyKey: string;
+  createdBy?: string | null;
+  templateId?: string | null;
 };
 
 export type BroadcastResult = {
   total: number;
-  sent: number;
-  simulated: number;
-  failed: number;
-  suppressed: number;
-  deferred: number;
+  runId?: string;
+  queued: number;
+  duplicate: number;
   channel: string;
   segment: string;
   error?: string;
@@ -86,9 +84,8 @@ async function resolveRecipients(
   return rows.map((row) => ({ handle: row.handle, name: row.name ?? null }));
 }
 
-// Segmented bulk send across a channel. Delivers via the channel adapter,
-// reflects each message in the recipient's Inbox thread, and logs every send to
-// the event store (for history + DLQ). Best-effort per recipient.
+// Materialize one deterministic durable delivery per campaign recipient. A
+// leased worker performs policy checks and provider calls after the API returns.
 export async function sendBroadcast(
   env: unknown,
   params: BroadcastParams,
@@ -97,41 +94,42 @@ export async function sendBroadcast(
   if (!sql) {
     return {
       total: 0,
-      sent: 0,
-      simulated: 0,
-      failed: 0,
-      suppressed: 0,
-      deferred: 0,
+      queued: 0,
+      duplicate: 0,
       channel: params.channel,
       segment: params.segment,
       error: "database not configured",
     };
   }
   const { venue, segment, channel, message } = params;
-  const adapter = getAdapter(channel);
-  const recipients = await resolveRecipients(sql, venue, channel, segment);
-
-  // SMS quiet hours (compliance): defer a marketing batch sent outside the allowed
-  // window (only when SMS_QUIET_START/END are configured — otherwise unrestricted).
-  if (channel === "sms") {
-    const qs = Number(envVar(env, "SMS_QUIET_START"));
-    const qe = Number(envVar(env, "SMS_QUIET_END"));
-    if (Number.isFinite(qs) && Number.isFinite(qe)) {
-      const offset = Number(envVar(env, "SMS_TZ_OFFSET_MIN") ?? "180");
-      if (withinQuietHours(hourAtOffset(new Date(), offset), qs, qe)) {
-        return {
-          total: recipients.length,
-          sent: 0,
-          simulated: 0,
-          failed: 0,
-          suppressed: 0,
-          deferred: recipients.length,
-          channel,
-          segment,
-        };
-      }
+  const runRows = await sql`
+    INSERT INTO campaign_runs
+      (venue_id, kind, idempotency_key, channel, segment, purpose, template_id,
+       message, created_by)
+    VALUES (${venue}, 'broadcast', ${params.idempotencyKey}, ${channel}, ${segment},
+            'marketing', ${params.templateId ?? null}, ${message},
+            ${params.createdBy ?? null})
+    ON CONFLICT (venue_id, idempotency_key) DO NOTHING RETURNING id`;
+  let duplicateRun = false;
+  let runId: string;
+  if (runRows.length === 0) {
+    const [existing] = await sql`
+      SELECT id, channel, segment, message FROM campaign_runs
+      WHERE venue_id = ${venue} AND idempotency_key = ${params.idempotencyKey}`;
+    if (!existing?.id) throw new Error("campaign run conflict could not be resolved");
+    if (
+      String(existing.channel) !== channel ||
+      String(existing.segment) !== segment ||
+      String(existing.message) !== message
+    ) {
+      throw new Error("idempotency key reused with different broadcast input");
     }
+    runId = String(existing.id);
+    duplicateRun = true;
+  } else {
+    runId = String(runRows[0].id);
   }
+  const recipients = await resolveRecipients(sql, venue, channel, segment);
   const [venueRow] = await sql`SELECT name FROM venues WHERE id = ${venue}`;
   const venueName = venueRow?.name ?? venue;
 
@@ -140,54 +138,31 @@ export async function sendBroadcast(
       .replace(/\{\{\s*name\s*\}\}/g, name ?? "there")
       .replace(/\{\{\s*venue\s*\}\}/g, venueName);
 
-  let sent = 0;
-  let simulated = 0;
-  let failed = 0;
-  let suppressed = 0;
+  let queued = 0;
 
   for (const recipient of recipients) {
-    // Compliance: never send to a handle that has opted out (STOP) on this channel.
-    if (await isSuppressed(sql, venue, channel, recipient.handle)) {
-      suppressed += 1;
-      continue;
-    }
     const text = personalize(recipient.name);
-    try {
-      const out = await adapter.send(recipient.handle, text, env, venue);
-      if (out.delivery === "sent") sent += 1;
-      else simulated += 1;
-
-      const [conversation] = await sql`
-        INSERT INTO conversations (venue_id, wa_id, name, role, channel)
-        VALUES (${venue}, ${recipient.handle}, ${recipient.name}, 'customer', ${channel})
-        ON CONFLICT (venue_id, wa_id) DO UPDATE SET last_message_at = now()
-        RETURNING id`;
-      await sql`
-        INSERT INTO messages (conversation_id, direction, body, ai, channel)
-        VALUES (${conversation.id}, 'outbound', ${text}, false, ${channel})`;
-      await sql`
-        INSERT INTO events (venue_id, channel, direction, conversation_id, type, status)
-        VALUES (${venue}, ${channel}, 'outbound', ${conversation.id}, 'broadcast', ${out.delivery})`;
-    } catch {
-      failed += 1;
-      try {
-        await sql`
-          INSERT INTO events (venue_id, channel, direction, type, status, payload)
-          VALUES (${venue}, ${channel}, 'outbound', 'broadcast', 'failed',
-                  ${sql.json({ handle: recipient.handle })})`;
-      } catch {
-        /* ignore logging failure */
-      }
-    }
+    const result = await queueOutbound(env, {
+      deliveryKey: `broadcast:${runId}:${channel}:${recipient.handle}`,
+      runId,
+      venue,
+      sourceType: "broadcast",
+      sourceId: runId,
+      channel,
+      handle: recipient.handle,
+      recipientName: recipient.name,
+      purpose: "marketing",
+      templateId: params.templateId,
+      body: text,
+    });
+    if (result.queued) queued += 1;
   }
 
   return {
     total: recipients.length,
-    sent,
-    simulated,
-    failed,
-    suppressed,
-    deferred: 0,
+    runId,
+    queued,
+    duplicate: recipients.length - queued + (duplicateRun ? 1 : 0),
     channel,
     segment,
   };

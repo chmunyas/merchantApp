@@ -1,22 +1,30 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { CheckCircle2, Clock3, QrCode, Send, Share2, X, Zap } from "lucide-react";
 
 import {
   buildPaymentMetadata,
-  pesaswapClient,
+  executePayment,
 } from "../../../lib/pesaswap-payments";
-import { authFetch } from "@/lib/auth";
+import { authFetch, hasAuthoritativeVenueSession } from "@/lib/auth";
 import { PaymentQr } from "@/components/pay/PaymentQr";
 import { useMerchantIdentity } from "@/lib/use-merchant-identity";
-import { getCurrentVenueId } from "@/lib/merchant-dashboard";
+import { getCurrentVenueId } from "@/lib/tenant-store";
 import { useOfflineQueue } from "@/lib/use-offline-queue";
+import {
+  isSettledPayment,
+  netSettledAmount,
+} from "@/lib/payment-ledger";
+import { usePaymentLedger } from "@/lib/use-payment-ledger";
+import { usePaymentConfig } from "@/lib/use-payment-config";
 import { OmniShare } from "../OmniShare";
 import type { TapGoTransaction } from "./types";
 
 export function TapGoPOS() {
   const { name: MERCHANT_NAME, till: TILL_NUMBER } = useMerchantIdentity();
   const offline = useOfflineQueue();
+  const paymentLedger = usePaymentLedger(100);
+  const paymentConfig = usePaymentConfig();
   const [amount, setAmount] = useState("");
   const [mode, setMode] = useState<"keypad" | "qr" | "waiting" | "success">(
     "keypad",
@@ -25,14 +33,10 @@ export function TapGoPOS() {
   const [currentTx, setCurrentTx] = useState<TapGoTransaction | null>(null);
   const [customerNumber, setCustomerNumber] = useState("");
   const [shareLink, setShareLink] = useState<string | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
   const [minting, setMinting] = useState(false);
 
-  const payUrl =
-    typeof window !== "undefined"
-      ? `${window.location.origin}/pay?tapgo=${encodeURIComponent(btoa(JSON.stringify({ till: TILL_NUMBER, amount: Number(amount), merchant: MERCHANT_NAME, venue: getCurrentVenueId() })))}`
-      : "";
-
-  function initiatePayment() {
+  async function initiatePayment() {
     if (!amount || Number(amount) <= 0) return;
     const tx: TapGoTransaction = {
       id: `TG-${Date.now().toString(36).toUpperCase()}`,
@@ -43,12 +47,42 @@ export function TapGoPOS() {
       method: "QR Scan",
     };
     setCurrentTx(tx);
-    setMode("qr");
+    setMinting(true);
+    try {
+      const url = await createPayLink(tx.id);
+      if (!url) {
+        setCurrentTx(null);
+        return;
+      }
+      setShareLink(url);
+      setShareOpen(false);
+      setMode("qr");
+    } finally {
+      setMinting(false);
+    }
   }
 
   async function simulatePaymentReceived(phone?: string) {
     if (!currentTx) return;
     const tx = currentTx;
+
+    if (!hasAuthoritativeVenueSession()) {
+      const completedTx: TapGoTransaction = {
+        ...tx,
+        status: "confirmed",
+        method: phone ? "STK Push" : "QR Scan",
+        customerPhone: phone
+          ? phone.slice(0, 4) + "***" + phone.slice(-3)
+          : "Demo customer",
+      };
+      setTransactions((prev) => [completedTx, ...prev]);
+      setCurrentTx(completedTx);
+      setMode("success");
+      toast.success("Demo payment simulated", {
+        description: "No money moved and no database ledger entry was created.",
+      });
+      return;
+    }
 
     const metadata = buildPaymentMetadata({
       merchant: { name: MERCHANT_NAME, till: TILL_NUMBER, id: getCurrentVenueId() },
@@ -58,16 +92,15 @@ export function TapGoPOS() {
     const minorAmount = tx.amount * 100;
 
     function queueForLater(note: string) {
-      // Store-and-forward: save the sale locally and let the sync cockpit replay
-      // it when connectivity returns. We NEVER fake a "paid" state offline — the
-      // sale shows as pending sync until it's actually submitted.
+      // Preserve a draft only. Money movement needs a fresh online intent and
+      // explicit review after reconnecting; drafts are never auto-submitted.
       offline.enqueue({
         id: tx.id,
         amount: minorAmount,
         currency: "KES",
         metadata: metadata as unknown as Record<string, unknown>,
       });
-      toast.success("Saved offline", { description: note });
+      toast.success("Draft saved", { description: note });
       setMode("keypad");
       setAmount("");
       setCurrentTx(null);
@@ -76,26 +109,73 @@ export function TapGoPOS() {
 
     // Offline: queue immediately without hitting the network.
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
-      queueForLater("This sale will sync automatically when you're back online.");
+      queueForLater("Reconnect, review this draft, and start a fresh payment.");
       return;
     }
 
     setMode("waiting");
 
     try {
-      // Create a real payment intent via PesaSwap backend
-      const payment = await pesaswapClient.createPayment({
-        amount: minorAmount, // minor units
+      // Bind venue, amount and source on the authenticated server before any
+      // public checkout call can move money. Payment creation alone is not
+      // confirmation; executePayment waits for the provider-authoritative state.
+      const intentResponse = await authFetch("/api/payments/intent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          amount: minorAmount,
+          currency: "KES",
+          sourceId: tx.id,
+          metadata,
+        }),
+      });
+      const intent = (await intentResponse.json().catch(() => ({}))) as {
+        paymentIntentToken?: string;
+        error?: { message?: string } | string;
+      };
+      if (!intentResponse.ok || !intent.paymentIntentToken) {
+        const message =
+          typeof intent.error === "string"
+            ? intent.error
+            : intent.error?.message;
+        throw new Error(message || "Could not secure this payment request.");
+      }
+
+      const result = await executePayment({
+        amount: tx.amount,
         currency: "KES",
-        description: `Tap&Go payment to ${MERCHANT_NAME}`,
-        metadata: metadata,
+        metadata,
+        phone: phone || "0722000000",
+        paymentIntentToken: intent.paymentIntentToken,
       });
 
-      // Payment created — now wait for customer confirmation via webhook/realtime
-      // For now, mark as confirmed (webhook will update in real-time)
+      if (!result.success) {
+        const pending = result.status === "processing";
+        if (result.payment_id) {
+          setTransactions((prev) => [
+            {
+              ...tx,
+              id: result.payment_id!,
+              status: pending ? "pending" : "failed",
+              method: phone ? "STK Push" : "QR Scan",
+              customerPhone: phone
+                ? phone.slice(0, 4) + "***" + phone.slice(-3)
+                : "Not provided",
+            },
+            ...prev,
+          ]);
+        }
+        void paymentLedger.refetch();
+        throw new Error(
+          pending
+            ? "Payment is still processing. Check the ledger before retrying."
+            : result.error || "Payment was not completed.",
+        );
+      }
+
       const completedTx: TapGoTransaction = {
         ...tx,
-        id: payment.payment_id || tx.id,
+        id: result.payment_id || tx.id,
         status: "confirmed",
         method: phone ? "STK Push" : "QR Scan",
         customerPhone: phone
@@ -103,21 +183,16 @@ export function TapGoPOS() {
           : "0722***" + Math.floor(100 + Math.random() * 900),
       };
       setTransactions((prev) => [completedTx, ...prev]);
+      void paymentLedger.refetch();
       setCurrentTx(completedTx);
       setMode("success");
-      setTimeout(() => {
-        setMode("keypad");
-        setAmount("");
-        setCurrentTx(null);
-        setCustomerNumber("");
-      }, 3000);
     } catch (err) {
       // A network failure (fetch rejects with a TypeError) means we simply
-      // couldn't reach the server — don't lose the sale, queue it for sync. A
+      // couldn't reach the server — preserve a draft for explicit review. A
       // real server decline is surfaced as an error instead.
       if (err instanceof TypeError) {
         queueForLater(
-          "We couldn't reach the network — this sale will sync automatically.",
+          "We couldn't reach the network. Reconnect and review before charging.",
         );
         return;
       }
@@ -129,9 +204,19 @@ export function TapGoPOS() {
     }
   }
 
-  async function mintPayLink() {
-    if (!amount || Number(amount) <= 0) return;
-    setMinting(true);
+  async function createPayLink(reference: string): Promise<string | null> {
+    if (!amount || Number(amount) <= 0) return null;
+    if (!hasAuthoritativeVenueSession()) {
+      const payload = btoa(
+        JSON.stringify({
+          amount: Number(amount),
+          merchant: MERCHANT_NAME,
+          till: TILL_NUMBER,
+          demo: true,
+        }),
+      );
+      return `${window.location.origin}/pay?tapgo=${encodeURIComponent(payload)}`;
+    }
     try {
       const res = await authFetch("/api/pay-links", {
         method: "POST",
@@ -140,6 +225,8 @@ export function TapGoPOS() {
           amountKes: Number(amount),
           kind: "tapgo",
           description: `Tap&Go payment to ${MERCHANT_NAME}`,
+          reference,
+          phone: customerNumber ? `+254${customerNumber}` : undefined,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -148,22 +235,55 @@ export function TapGoPOS() {
       };
       if (!res.ok || !data.url) {
         toast.error(data.error || "Couldn't create the pay link");
-        return;
+        return null;
       }
-      setShareLink(data.url);
+      return data.url;
     } catch {
       toast.error("Couldn't create the pay link");
+      return null;
+    }
+  }
+
+  async function mintPayLink() {
+    if (!currentTx) return;
+    if (shareLink) {
+      setShareOpen(true);
+      return;
+    }
+    setMinting(true);
+    try {
+      const url = await createPayLink(currentTx.id);
+      if (url) {
+        setShareLink(url);
+        setShareOpen(true);
+      }
     } finally {
       setMinting(false);
     }
   }
 
-  const todayTotal = transactions
-    .filter((t) => t.status === "confirmed")
-    .reduce((s, t) => s + t.amount, 0);
-  const todayCount = transactions.filter(
-    (t) => t.status === "confirmed",
-  ).length;
+  const liveToday = useMemo(() => {
+    const now = new Date();
+    return (paymentLedger.data ?? []).filter((payment) => {
+      const created = new Date(payment.createdAt);
+      return (
+        payment.flowType === "tapgo" &&
+        created.getFullYear() === now.getFullYear() &&
+        created.getMonth() === now.getMonth() &&
+        created.getDate() === now.getDate()
+      );
+    });
+  }, [paymentLedger.data]);
+  const hasAuthoritativeLedger = paymentLedger.isSuccess;
+  const todayTotal = hasAuthoritativeLedger
+    ? netSettledAmount(liveToday) / 100
+    : transactions
+        .filter((transaction) => transaction.status === "confirmed")
+        .reduce((sum, transaction) => sum + transaction.amount, 0);
+  const todayCount = hasAuthoritativeLedger
+    ? liveToday.filter(isSettledPayment).length
+    : transactions.filter((transaction) => transaction.status === "confirmed")
+        .length;
   const avgTime = 8; // seconds (simulated)
 
   if (mode === "success" && currentTx) {
@@ -188,6 +308,20 @@ export function TapGoPOS() {
           <span className="text-sm font-mono font-bold">{avgTime}s</span>
           <span className="text-xs text-muted-foreground">checkout time</span>
         </div>
+        <button
+          type="button"
+          onClick={() => {
+            setMode("keypad");
+            setAmount("");
+            setCurrentTx(null);
+            setCustomerNumber("");
+            setShareLink(null);
+            setShareOpen(false);
+          }}
+          className="min-h-11 rounded-xl bg-foreground px-5 text-sm font-semibold text-background"
+        >
+          New payment
+        </button>
       </div>
     );
   }
@@ -226,6 +360,8 @@ export function TapGoPOS() {
               setMode("keypad");
               setCurrentTx(null);
               setCustomerNumber("");
+              setShareLink(null);
+              setShareOpen(false);
             }}
             className="size-8 rounded-full bg-muted flex items-center justify-center"
           >
@@ -254,10 +390,16 @@ export function TapGoPOS() {
             merchantName={MERCHANT_NAME}
             till={TILL_NUMBER}
             amountMinor={Math.round(Number(amount) * 100)}
-            cameraUrl={payUrl || null}
-            defaultMode="keqr"
+            reference={currentTx?.id ?? null}
+            cameraUrl={shareLink}
+            defaultMode="camera"
+            keqr={false}
             size={160}
           />
+          <p className="max-w-xs text-center text-[9px] text-muted-foreground">
+            This secure link records the attempt, confirmation, tip, refund and
+            receipt in the same venue ledger.
+          </p>
         </div>
 
         <div className="flex items-center gap-3">
@@ -304,13 +446,15 @@ export function TapGoPOS() {
           </p>
         </div>
 
-        <button
-          onClick={() => simulatePaymentReceived()}
-          className="w-full border border-border py-3 rounded-xl text-xs font-mono text-muted-foreground flex items-center justify-center gap-2"
-        >
-          <Zap className="size-3.5" />
-          Simulate payment received (demo)
-        </button>
+        {paymentConfig.testMode ? (
+          <button
+            onClick={() => simulatePaymentReceived()}
+            className="w-full border border-border py-3 rounded-xl text-xs font-mono text-muted-foreground flex items-center justify-center gap-2"
+          >
+            <Zap className="size-3.5" />
+            Simulate payment received (sandbox)
+          </button>
+        ) : null}
 
         <div className="flex items-center gap-3">
           <div className="flex-1 h-px bg-border" />
@@ -322,7 +466,7 @@ export function TapGoPOS() {
 
         {/* Option 3: Send a server-bound pay link over WhatsApp / Telegram / SMS */}
         <button
-          onClick={mintPayLink}
+          onClick={() => void mintPayLink()}
           disabled={minting}
           className="w-full bg-emerald-600 text-white py-3 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
         >
@@ -330,10 +474,11 @@ export function TapGoPOS() {
           {minting ? "Creating link…" : "Send pay link (WhatsApp/Telegram/SMS)"}
         </button>
 
-        {shareLink ? (
+        {shareLink && shareOpen ? (
           <OmniShare
-            open={!!shareLink}
-            onClose={() => setShareLink(null)}
+            kind="payment_link"
+            open
+            onClose={() => setShareOpen(false)}
             title={`Send KES ${Number(amount).toLocaleString()} pay link`}
             message={`Here's your secure payment link for KES ${Number(amount).toLocaleString()}. Tap to pay 👇`}
             link={shareLink}
@@ -394,7 +539,7 @@ export function TapGoPOS() {
       {/* Generate QR Button */}
       <button
         disabled={!amount || Number(amount) <= 0}
-        onClick={initiatePayment}
+        onClick={() => void initiatePayment()}
         className="w-full bg-foreground text-background py-4 rounded-xl text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-40"
       >
         <QrCode className="size-5" />
@@ -402,7 +547,7 @@ export function TapGoPOS() {
       </button>
 
       {/* Today's Stats */}
-      {transactions.length > 0 && (
+      {(hasAuthoritativeLedger ? liveToday.length > 0 : transactions.length > 0) && (
         <div className="grid grid-cols-3 gap-2">
           <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-2 text-center">
             <p className="text-sm font-bold font-mono text-emerald-700">

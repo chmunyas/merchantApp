@@ -3,6 +3,7 @@ import { getSql } from "@/lib/db";
 import { processInbound } from "@/lib/inbound";
 import { requireAuth } from "@/api/auth";
 import { roleAtLeast, venueFromPayload } from "@/lib/tenancy";
+import { tokenHasScope } from "@/lib/api-tokens";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -62,7 +63,8 @@ export async function handleOmniRoute(
       SELECT m.id, m.direction, m.body, m.ai, m.created_at
       FROM messages m
       JOIN conversations c ON c.id = m.conversation_id
-      WHERE c.venue_id = ${venue} AND c.wa_id = ${webHandle(session)}
+      WHERE c.venue_id = ${venue} AND c.channel = 'web'
+        AND c.wa_id = ${webHandle(session)}
       ORDER BY m.created_at`;
     return json({ messages });
   }
@@ -76,6 +78,9 @@ export async function handleOmniRoute(
     const payload = await requireAuth(request, env);
     if (!payload || !roleAtLeast(payload, "staff")) {
       return json({ error: "unauthorized" }, 401);
+    }
+    if (!tokenHasScope(payload, "messaging:read") || !tokenHasScope(payload, "contacts:read")) {
+      return json({ error: "forbidden" }, 403);
     }
     const sql = getSql(env);
     if (!sql) return json({ messages: [] });

@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, RefreshCw, Zap } from "lucide-react";
 
-import type { Invoice, WalletProvider, WalletTransaction } from "./types";
+import type { WalletProvider, WalletTransaction } from "./types";
+import { isSettledPayment } from "@/lib/payment-ledger";
+import { usePaymentLedger } from "@/lib/use-payment-ledger";
 
 const WALLET_PROVIDERS: WalletProvider[] = [
   {
@@ -66,7 +68,7 @@ const WALLET_PROVIDERS: WalletProvider[] = [
   },
 ];
 
-function generateWalletTransactions(invoices: Invoice[]): WalletTransaction[] {
+function generateWalletTransactions(): WalletTransaction[] {
   const txs: WalletTransaction[] = [
     {
       id: "TX-001",
@@ -173,18 +175,52 @@ function generateWalletTransactions(invoices: Invoice[]): WalletTransaction[] {
 }
 
 export function WalletReconciliationView({
-  invoices,
+  isServerBacked,
 }: {
-  invoices: Invoice[];
+  isServerBacked: boolean;
 }) {
+  const paymentLedger = usePaymentLedger(100);
   const [selectedWallet, setSelectedWallet] = useState<string | null>(null);
   const [showUnmatched, setShowUnmatched] = useState(false);
-  const transactions = useMemo(
-    () => generateWalletTransactions(invoices),
-    [invoices],
-  );
+  const transactions = useMemo(() => {
+    if (!isServerBacked) return generateWalletTransactions();
+    return (paymentLedger.data ?? []).map((payment) => ({
+      id: payment.id,
+      wallet: "pesaswap",
+      type: payment.kind === "refund" ? "debit" : "credit",
+      amount: payment.amount / 100,
+      currency: payment.currency,
+      from: payment.customerName ?? payment.customerPhone ?? "Customer",
+      reference: payment.providerRef ?? payment.reference ?? payment.id,
+      timestamp: payment.createdAt,
+      matched: Boolean(payment.invoiceNumber || payment.sourceId),
+      matchedInvoiceId: payment.invoiceNumber ?? payment.sourceId ?? undefined,
+      status: isSettledPayment(payment)
+        ? "confirmed"
+        : payment.status === "failed" || payment.status === "cancelled"
+          ? "failed"
+          : "pending",
+    })) as WalletTransaction[];
+  }, [isServerBacked, paymentLedger.data]);
 
-  const connectedWallets = WALLET_PROVIDERS.filter((w) => w.connected);
+  const connectedWallets = isServerBacked
+    ? [
+        {
+          id: "pesaswap",
+          name: "PesaSwap payment ledger",
+          icon: "◆",
+          color: "text-emerald-700",
+          bgColor: "bg-emerald-50",
+          connected: true,
+          balance: transactions
+            .filter((tx) => tx.type === "credit" && tx.status === "confirmed")
+            .reduce((sum, tx) => sum + tx.amount, 0),
+          currency: transactions[0]?.currency ?? "KES",
+          lastSync: paymentLedger.isFetching ? "Syncing" : "Just now",
+          txCount: transactions.length,
+        },
+      ]
+    : WALLET_PROVIDERS.filter((w) => w.connected);
   const totalBalance = connectedWallets.reduce((sum, w) => {
     // Normalize to KES for display
     const rate =
@@ -218,7 +254,7 @@ export function WalletReconciliationView({
         <button className="flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-1">
           <RefreshCw className="size-3 text-emerald-600" />
           <span className="text-[9px] font-mono text-emerald-700 uppercase">
-            Sync all
+            {isServerBacked ? "Sync ledger" : "Demo wallets"}
           </span>
         </button>
       </div>
@@ -233,7 +269,9 @@ export function WalletReconciliationView({
           {totalBalance.toLocaleString(undefined, { maximumFractionDigits: 0 })}
         </p>
         <p className="text-[10px] opacity-60 mt-1">
-          Across {connectedWallets.length} connected wallets
+          {isServerBacked
+            ? "Settled receipts recorded for this venue"
+            : `Across ${connectedWallets.length} demo wallets`}
         </p>
       </div>
 
@@ -274,7 +312,7 @@ export function WalletReconciliationView({
           Connected wallets
         </p>
         <div className="space-y-2">
-          {WALLET_PROVIDERS.map((wallet) => (
+          {(isServerBacked ? connectedWallets : WALLET_PROVIDERS).map((wallet) => (
             <button
               key={wallet.id}
               onClick={() =>

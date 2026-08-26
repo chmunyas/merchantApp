@@ -1,6 +1,8 @@
 // Client-side Web Push enrolment. All guarded so an unsupported browser or a
 // denied permission simply returns a status — never throws.
 
+import { authFetch } from "@/lib/auth";
+
 function urlBase64ToUint8Array(base64: string): Uint8Array {
   const padding = "=".repeat((4 - (base64.length % 4)) % 4);
   const normalized = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -45,16 +47,22 @@ export async function enablePush(venue = "main"): Promise<PushStatus> {
         applicationServerKey: urlBase64ToUint8Array(publicKey) as BufferSource,
       }));
 
-    await fetch("/api/push/subscribe", {
+    const subscribeResponse = await authFetch("/api/push/subscribe", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ venue, subscription, audience: "staff" }),
+      body: JSON.stringify({ subscription, audience: "staff" }),
     });
+    if (!subscribeResponse.ok) return "error";
+    const subscribed = (await subscribeResponse.json()) as {
+      deviceToken?: string;
+    };
+    if (!subscribed.deviceToken) return "error";
 
-    // Stash the venue so the SW can fetch the right notification text.
+    // Stash the opaque device credential for the service worker. The server
+    // derives the venue from this token; no caller-selected venue is trusted.
     try {
       const cache = await caches.open("pesaswap-push");
-      await cache.put("/push-venue", new Response(venue));
+      await cache.put("/push-device-token", new Response(subscribed.deviceToken));
     } catch {
       /* non-fatal */
     }

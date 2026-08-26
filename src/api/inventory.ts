@@ -3,6 +3,7 @@ import { requireAuth } from "@/api/auth";
 import { roleAtLeast } from "@/lib/rbac";
 import { planReorder, type InventoryStat } from "@/lib/reorder";
 import { venueFromPayload } from "@/lib/tenancy";
+import { tokenHasScope } from "@/lib/api-tokens";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -51,6 +52,13 @@ export async function handleInventoryRoute(
 
   const payload = await requireAuth(request, env);
   if (!payload) return json({ error: "unauthorized" }, 401);
+  const write = request.method !== "GET";
+  if (
+    !roleAtLeast(payload, "manager") ||
+    !tokenHasScope(payload, write ? "inventory:write" : "inventory:read")
+  ) {
+    return json({ error: "forbidden" }, 403);
+  }
   const venue = venueFromPayload(payload, url);
   const sql = getSql(env);
   if (!sql) return json({ error: "database not configured" }, 503);

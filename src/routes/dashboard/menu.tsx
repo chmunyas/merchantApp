@@ -3,11 +3,15 @@ import { Bot } from "lucide-react";
 import { toast } from "sonner";
 import { useEffect, useMemo, useState } from "react";
 import { CustomerMenuList } from "@/components/merchant/features/customer-menu-list";
+import {
+  DynamicMenusTab,
+  type ServerMenu,
+} from "@/components/merchant/features/DynamicMenusTab";
+import { MenuSettingsTab } from "@/components/merchant/features/MenuSettingsTab";
 import type {
   CatalogueItem,
   ItemModifier,
   Menu,
-  MenuSchedule,
   ModifierOption,
   Zone,
 } from "@/components/merchant/features/types";
@@ -24,9 +28,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   ensureMerchantDemoData,
-  getActiveMenuSchedules,
   getCurrentVenueId,
-  getCurrentActiveMenuIds,
   getMenuCategoriesByIds,
   getOrderedMerchantCategories,
   getZoneForTable,
@@ -44,7 +46,7 @@ export const Route = createFileRoute("/dashboard/menu")({
   component: DashboardMenuPage,
 });
 
-type TabKey = "items" | "menus" | "zones" | "schedules" | "engineering";
+type TabKey = "items" | "menus" | "zones" | "settings" | "engineering";
 
 type ApiMenuItem = {
   id: string;
@@ -53,6 +55,15 @@ type ApiMenuItem = {
   price: number | string;
   dietary?: string[] | null;
   available?: boolean;
+  revision?: number;
+  displayName?: string | null;
+  description?: string | null;
+  allergens?: string[] | null;
+  tags?: string[] | null;
+  imageUrl?: string | null;
+  imageAlt?: string | null;
+  videoUrl?: string | null;
+  videoDescription?: string | null;
 };
 
 type EngItem = {
@@ -102,9 +113,12 @@ const TAB_OPTIONS: Array<{ key: TabKey; label: string }> = [
   { key: "items", label: "Items" },
   { key: "menus", label: "Menus" },
   { key: "zones", label: "Zones" },
-  { key: "schedules", label: "Schedules" },
+  { key: "settings", label: "Settings" },
   { key: "engineering", label: "Engineering" },
 ];
+
+// Matches MAX_PRODUCT_UPSELLS in src/lib/menu-upsell.ts.
+const MAX_PAIRINGS = 5;
 
 const DIETARY_OPTIONS = [
   "vegan",
@@ -113,16 +127,6 @@ const DIETARY_OPTIONS = [
   "halal",
   "contains-nuts",
   "dairy-free",
-];
-
-const DAYS = [
-  { value: 0, label: "Sun" },
-  { value: 1, label: "Mon" },
-  { value: 2, label: "Tue" },
-  { value: 3, label: "Wed" },
-  { value: 4, label: "Thu" },
-  { value: 5, label: "Fri" },
-  { value: 6, label: "Sat" },
 ];
 
 const ZONE_BORDER_CLASSES = [
@@ -165,35 +169,12 @@ function createEmptyItem(): CatalogueItem {
   };
 }
 
-function createEmptyMenu(): Menu {
-  return {
-    id: createId("menu"),
-    name: "",
-    description: "",
-    categories: [],
-    isActive: false,
-    createdAt: new Date().toISOString(),
-  };
-}
-
 function createEmptyZone(): Zone {
   return {
     id: createId("zone"),
     name: "",
     menuIds: [],
     tableRange: [1, 10],
-  };
-}
-
-function createEmptySchedule(): MenuSchedule {
-  return {
-    id: createId("schedule"),
-    name: "",
-    days: [1, 2, 3, 4, 5],
-    startTime: "12:00",
-    endTime: "16:00",
-    categories: [],
-    menuIds: [],
   };
 }
 
@@ -214,10 +195,12 @@ function toggleValue(values: string[], value: string) {
     : [...values, value];
 }
 
-function toggleDay(days: number[], value: number) {
-  return days.includes(value)
-    ? days.filter((day) => day !== value)
-    : [...days, value].sort((a, b) => a - b);
+function splitList(value: string): string[] {
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .slice(0, 20);
 }
 
 function sortItems(items: CatalogueItem[], categoryOrder: string[]) {
@@ -243,11 +226,18 @@ function apiMenuItemToCatalogueItem(item: ApiMenuItem): CatalogueItem {
       item.category === "Drinks" || item.category === "Cocktails"
         ? "bar"
         : "kitchen",
-    image: "",
+    image: item.imageUrl ?? "",
     available: item.available ?? true,
-    description: "",
+    description: item.description ?? "",
     modifiers: [],
     linkedProductIds: [],
+    revision: item.revision,
+    displayName: item.displayName ?? "",
+    allergens: item.allergens ?? [],
+    tags: item.tags ?? [],
+    imageAlt: item.imageAlt ?? "",
+    videoUrl: item.videoUrl ?? "",
+    videoDescription: item.videoDescription ?? "",
   };
 }
 
@@ -258,6 +248,14 @@ function menuItemApiPayload(item: CatalogueItem) {
     price: Math.max(0, Math.floor(Number(item.price) || 0)),
     dietary: item.dietary ?? [],
     available: item.available ?? true,
+    displayName: item.displayName ?? "",
+    description: item.description ?? "",
+    allergens: item.allergens ?? [],
+    tags: item.tags ?? [],
+    imageUrl: item.image ?? "",
+    imageAlt: item.imageAlt ?? "",
+    videoUrl: item.videoUrl ?? "",
+    videoDescription: item.videoDescription ?? "",
   };
 }
 
@@ -299,14 +297,14 @@ function DashboardMenuPage() {
       setSyncingMenu(false);
     }
   }
-  const [menus, setMenus] = useState<Menu[]>([]);
+  // Menus are server-authoritative (DynamicMenusTab owns the writes). The page
+  // keeps a read-only projection so the zone editor and the customer preview
+  // still work off exactly what a guest would be served.
+  const [serverMenus, setServerMenus] = useState<ServerMenu[]>([]);
   const [zones, setZones] = useState<Zone[]>([]);
-  const [menuSchedules, setMenuSchedules] = useState<MenuSchedule[]>([]);
   const [categoryOrder, setCategoryOrder] = useState<string[]>([]);
   const [itemDraft, setItemDraft] = useState<CatalogueItem | null>(null);
-  const [menuDraft, setMenuDraft] = useState<Menu | null>(null);
   const [zoneDraft, setZoneDraft] = useState<Zone | null>(null);
-  const [scheduleDraft, setScheduleDraft] = useState<MenuSchedule | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
   const [draggedCategory, setDraggedCategory] = useState<string | null>(null);
   const [linkedProductSearch, setLinkedProductSearch] = useState("");
@@ -345,9 +343,7 @@ function DashboardMenuPage() {
     const snapshot = ensureMerchantDemoData();
     if (!cancelled) {
       setCatalogue(snapshot.catalogue);
-      setMenus(snapshot.menus);
       setZones(snapshot.zones);
-      setMenuSchedules(snapshot.menuSchedules);
       setCategoryOrder(snapshot.categoryOrder);
       setHydrated(true);
     }
@@ -362,6 +358,31 @@ function DashboardMenuPage() {
         if (cancelled || items == null) return;
         setCatalogue(items.map(apiMenuItemToCatalogueItem));
         setApiMenuEnabled(true);
+        return authFetch("/api/menu/upsells")
+          .then(async (res) =>
+            res.ok
+              ? ((await res.json()) as {
+                  links?: Array<{ itemId: string; suggestedItemId: string }>;
+                })
+              : null,
+          )
+          .then((data) => {
+            if (cancelled || !data?.links) return;
+            const byItem = new Map<string, string[]>();
+            for (const link of data.links) {
+              byItem.set(link.itemId, [
+                ...(byItem.get(link.itemId) ?? []),
+                link.suggestedItemId,
+              ]);
+            }
+            setCatalogue((current) =>
+              current.map((item) => ({
+                ...item,
+                linkedProductIds: byItem.get(item.id) ?? [],
+              })),
+            );
+          })
+          .catch(() => undefined);
       })
       .catch(() => {
         if (!cancelled) setApiMenuEnabled(false);
@@ -378,23 +399,38 @@ function DashboardMenuPage() {
 
   useEffect(() => {
     if (!hydrated) return;
-    saveMerchantMenus(menus);
-  }, [hydrated, menus]);
-
-  useEffect(() => {
-    if (!hydrated) return;
     saveMerchantZones(zones);
   }, [hydrated, zones]);
 
   useEffect(() => {
     if (!hydrated) return;
-    saveMerchantMenuSchedules(menuSchedules);
-  }, [hydrated, menuSchedules]);
-
-  useEffect(() => {
-    if (!hydrated) return;
     saveMerchantCategoryOrder(categoryOrder);
   }, [categoryOrder, hydrated]);
+
+  // Read-only projection of the server menus into the shape the zone editor and
+  // the preview already speak.
+  const menus = useMemo<Menu[]>(
+    () =>
+      serverMenus.map((menu) => ({
+        id: menu.id,
+        name: menu.name,
+        description: menu.description ?? "",
+        categories: menu.categories,
+        isActive: menu.isActive,
+        createdAt: "",
+      })),
+    [serverMenus],
+  );
+
+  // The legacy /table pages still read menus from the local snapshot. Mirror the
+  // server's list into it (one-way) so they cannot drift, and clear the retired
+  // schedule list — visibility now lives on the menu itself, and a stale
+  // schedule would filter the new menu ids out of those pages entirely.
+  useEffect(() => {
+    if (!hydrated || serverMenus.length === 0) return;
+    saveMerchantMenus(menus);
+    saveMerchantMenuSchedules([]);
+  }, [hydrated, menus, serverMenus.length]);
 
   const allCategories = useMemo(
     () =>
@@ -432,14 +468,9 @@ function DashboardMenuPage() {
     }
   }, [orderedCategories, selectedCategory]);
 
-  const activeSchedules = useMemo(
-    () => getActiveMenuSchedules(menuSchedules),
-    [menuSchedules],
-  );
-
   const activeMenuIds = useMemo(
-    () => getCurrentActiveMenuIds(menus, menuSchedules),
-    [menuSchedules, menus],
+    () => serverMenus.filter((menu) => menu.isActive).map((menu) => menu.id),
+    [serverMenus],
   );
 
   const previewZone = useMemo(
@@ -516,6 +547,8 @@ function DashboardMenuPage() {
     setDraggedCategory(null);
   }
 
+  // C6.7 — per-product pairings live on the server, not in the local draft, so
+  // the same suggestion follows a product into every menu it appears on.
   async function handleSaveItem() {
     if (!itemDraft) return;
     const cleanedItem: CatalogueItem = {
@@ -538,7 +571,7 @@ function DashboardMenuPage() {
               .filter((option) => option.label),
           }))
           .filter((modifier) => modifier.name && modifier.options.length) ?? [],
-      linkedProductIds: itemDraft.linkedProductIds?.slice(0, 3) ?? [],
+      linkedProductIds: itemDraft.linkedProductIds?.slice(0, MAX_PAIRINGS) ?? [],
       price: Number(itemDraft.price) || 0,
     };
 
@@ -554,11 +587,15 @@ function DashboardMenuPage() {
           {
             method: existing ? "PATCH" : "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify(menuItemApiPayload(cleanedItem)),
+            body: JSON.stringify({
+              ...menuItemApiPayload(cleanedItem),
+              ...(existing ? { revision: cleanedItem.revision } : {}),
+            }),
           },
         );
         if (!res.ok) throw new Error("menu item save failed");
         const data = (await res.json()) as { item?: ApiMenuItem };
+        const savedId = !existing && data.item ? data.item.id : cleanedItem.id;
         if (!existing && data.item) {
           const createdItem = apiMenuItemToCatalogueItem(data.item);
           setCatalogue((current) =>
@@ -569,12 +606,26 @@ function DashboardMenuPage() {
             ),
           );
         }
+        // C6.7 — pairings are a separate resource, saved against the real id so a
+        // brand-new item's suggestions are not written to its temporary one.
+        await authFetch(
+          `/api/menu/item/${encodeURIComponent(savedId)}/upsells`,
+          {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              suggestedItemIds: cleanedItem.linkedProductIds ?? [],
+            }),
+          },
+        ).catch(() => {
+          toast.error("Item saved, but its suggested pairings did not.");
+        });
         // Mirror the server truth into localStorage so legacy views update.
         void hydrateMenuFromServer();
       } catch {
-        setCatalogue(upsertById(previous, cleanedItem));
-        setApiMenuEnabled(false);
-        toast.error("Could not save item online. Saved locally instead.");
+        setCatalogue(previous);
+        toast.error("Could not save item. Refresh to resolve a possible conflict.");
+        return;
       }
     }
     setCategoryOrder((current) =>
@@ -601,61 +652,22 @@ function DashboardMenuPage() {
     );
     if (apiMenuEnabled) {
       try {
-        const res = await authFetch(`/api/menu/item/${itemId}`, {
+        const item = previous.find((entry) => entry.id === itemId);
+        const res = await authFetch(
+          `/api/menu/item/${itemId}?revision=${encodeURIComponent(String(item?.revision ?? ""))}`,
+          {
           method: "DELETE",
-        });
+          },
+        );
         if (!res.ok) throw new Error("menu item delete failed");
         void hydrateMenuFromServer();
       } catch {
-        setCatalogue(
-          previous
-            .filter((item) => item.id !== itemId)
-            .map((item) => ({
-              ...item,
-              linkedProductIds:
-                item.linkedProductIds?.filter(
-                  (linkedId) => linkedId !== itemId,
-                ) ?? [],
-            })),
-        );
-        setApiMenuEnabled(false);
-        toast.error("Could not delete item online. Removed locally instead.");
+        setCatalogue(previous);
+        toast.error("Could not delete item. Refresh to resolve a possible conflict.");
+        return;
       }
     }
     if (itemDraft?.id === itemId) setItemDraft(null);
-  }
-
-  function handleSaveMenu() {
-    if (!menuDraft) return;
-    const cleanedMenu: Menu = {
-      ...menuDraft,
-      name: menuDraft.name.trim(),
-      description: menuDraft.description?.trim() ?? "",
-      categories: getOrderedMerchantCategories(
-        menuDraft.categories,
-        categoryOrder,
-      ),
-      createdAt: menuDraft.createdAt || new Date().toISOString(),
-    };
-    if (!cleanedMenu.name || !cleanedMenu.categories.length) return;
-    setMenus((current) => upsertById(current, cleanedMenu));
-    setMenuDraft(null);
-  }
-
-  function handleDeleteMenu(menuId: string) {
-    setMenus((current) => removeById(current, menuId));
-    setZones((current) =>
-      current.map((zone) => ({
-        ...zone,
-        menuIds: zone.menuIds.filter((id) => id !== menuId),
-      })),
-    );
-    setMenuSchedules((current) =>
-      current.map((schedule) => ({
-        ...schedule,
-        menuIds: schedule.menuIds.filter((id) => id !== menuId),
-      })),
-    );
   }
 
   function handleSaveZone() {
@@ -673,19 +685,6 @@ function DashboardMenuPage() {
     setZoneDraft(null);
   }
 
-  function handleSaveSchedule() {
-    if (!scheduleDraft) return;
-    const cleanedSchedule: MenuSchedule = {
-      ...scheduleDraft,
-      name: scheduleDraft.name.trim(),
-      menuIds: Array.from(new Set(scheduleDraft.menuIds)),
-      days: [...scheduleDraft.days].sort((a, b) => a - b),
-    };
-    if (!cleanedSchedule.name || !cleanedSchedule.menuIds.length) return;
-    setMenuSchedules((current) => upsertById(current, cleanedSchedule));
-    setScheduleDraft(null);
-  }
-
   return (
     <div className="relative mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 md:px-6 lg:px-8">
       <div className="flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-sm">
@@ -700,25 +699,13 @@ function DashboardMenuPage() {
               </h1>
               <p className="text-sm text-slate-500">
                 Manage catalogue items, customer-facing menus, table zones, and
-                scheduled menu windows.
+                what a guest sees when they scan.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              {activeSchedules.length ? (
-                activeSchedules.map((schedule) => (
-                  <Badge
-                    key={schedule.id}
-                    className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100"
-                  >
-                    Live now: {schedule.name}
-                  </Badge>
-                ))
-              ) : (
-                <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-100">
-                  {menus.filter((menu) => menu.isActive).length} active default
-                  menu(s)
-                </Badge>
-              )}
+              <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-100">
+                {menus.filter((menu) => menu.isActive).length} active menu(s)
+              </Badge>
               <Badge
                 variant="outline"
                 className="border-slate-200 text-slate-600"
@@ -931,6 +918,18 @@ function DashboardMenuPage() {
                         placeholder="Nyama Choma Platter"
                       />
                     </Field>
+                    <Field label="Name guests see (optional)">
+                      <Input
+                        value={itemDraft.displayName ?? ""}
+                        onChange={(event) =>
+                          setItemDraft({
+                            ...itemDraft,
+                            displayName: event.target.value,
+                          })
+                        }
+                        placeholder={itemDraft.name || "Grilled beef platter"}
+                      />
+                    </Field>
                     <Field label="Category">
                       <Input
                         value={itemDraft.category}
@@ -984,6 +983,20 @@ function DashboardMenuPage() {
                         placeholder="https://..."
                       />
                     </Field>
+                    {itemDraft.image?.trim() ? (
+                      <Field label="Image description (read to screen-reader guests)">
+                        <Input
+                          value={itemDraft.imageAlt ?? ""}
+                          onChange={(event) =>
+                            setItemDraft({
+                              ...itemDraft,
+                              imageAlt: event.target.value,
+                            })
+                          }
+                          placeholder="Sliced beef on a wooden board"
+                        />
+                      </Field>
+                    ) : null}
                     <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">
                       <input
                         type="checkbox"
@@ -1013,6 +1026,65 @@ function DashboardMenuPage() {
                       rows={3}
                     />
                   </Field>
+
+                  <Field label="Allergens">
+                    <Input
+                      value={(itemDraft.allergens ?? []).join(", ")}
+                      onChange={(event) =>
+                        setItemDraft({
+                          ...itemDraft,
+                          allergens: splitList(event.target.value),
+                        })
+                      }
+                      placeholder="peanuts, sesame, shellfish"
+                    />
+                  </Field>
+                  <p className="-mt-2 text-xs text-slate-500">
+                    Comma separated, and shown to the guest as words — never as a
+                    colour or an icon on its own.
+                  </p>
+
+                  <Field label="Tags">
+                    <Input
+                      value={(itemDraft.tags ?? []).join(", ")}
+                      onChange={(event) =>
+                        setItemDraft({
+                          ...itemDraft,
+                          tags: splitList(event.target.value),
+                        })
+                      }
+                      placeholder="chef's pick, spicy, new"
+                    />
+                  </Field>
+
+                  {itemDraft.image?.trim() ? (
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <Field label="Video URL (optional)">
+                        <Input
+                          value={itemDraft.videoUrl ?? ""}
+                          onChange={(event) =>
+                            setItemDraft({
+                              ...itemDraft,
+                              videoUrl: event.target.value,
+                            })
+                          }
+                          placeholder="https://…/dish.mp4"
+                        />
+                      </Field>
+                      <Field label="Video description">
+                        <Input
+                          value={itemDraft.videoDescription ?? ""}
+                          onChange={(event) =>
+                            setItemDraft({
+                              ...itemDraft,
+                              videoDescription: event.target.value,
+                            })
+                          }
+                          placeholder="The platter being carved at the table"
+                        />
+                      </Field>
+                    </div>
+                  ) : null}
 
                   <div className="space-y-3">
                     <p className="text-sm font-medium text-slate-700">
@@ -1052,15 +1124,17 @@ function DashboardMenuPage() {
                           Suggested pairings
                         </p>
                         <p className="text-sm text-slate-500">
-                          Pick up to three linked products to surface after this
-                          item is added.
+                          Products to suggest whenever this item is in a guest's
+                          order, on every menu it appears on. A product without a
+                          photo is never offered — the card would be empty.
                         </p>
                       </div>
                       <Badge
                         variant="outline"
                         className="border-purple-200 text-purple-600"
                       >
-                        {(itemDraft.linkedProductIds ?? []).length}/3 selected
+                        {(itemDraft.linkedProductIds ?? []).length}/{MAX_PAIRINGS}{" "}
+                        selected
                       </Badge>
                     </div>
                     <Input
@@ -1077,7 +1151,7 @@ function DashboardMenuPage() {
                           false;
                         const canSelect =
                           isSelected ||
-                          (itemDraft.linkedProductIds?.length ?? 0) < 3;
+                          (itemDraft.linkedProductIds?.length ?? 0) < MAX_PAIRINGS;
                         return (
                           <label
                             key={item.id}
@@ -1111,7 +1185,7 @@ function DashboardMenuPage() {
                                     : [
                                         ...(itemDraft.linkedProductIds ?? []),
                                         item.id,
-                                      ].slice(0, 3),
+                                      ].slice(0, MAX_PAIRINGS),
                                 })
                               }
                               className="h-4 w-4 rounded border-slate-300 text-purple-600"
@@ -1354,222 +1428,10 @@ function DashboardMenuPage() {
       ) : null}
 
       {activeTab === "menus" ? (
-        <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-          <Card className="border-slate-200 bg-white/90 shadow-sm">
-            <CardHeader>
-              <CardTitle>{menuDraft ? "Edit menu" : "Create menu"}</CardTitle>
-              <CardDescription>
-                Bundle categories into customer-facing menus and toggle them
-                live.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <Field label="Menu name">
-                  <Input
-                    value={menuDraft?.name ?? ""}
-                    onChange={(event) =>
-                      setMenuDraft((current) => ({
-                        ...(current ?? createEmptyMenu()),
-                        name: event.target.value,
-                      }))
-                    }
-                    placeholder="Lunch Menu"
-                  />
-                </Field>
-                <Field label="Description">
-                  <Textarea
-                    value={menuDraft?.description ?? ""}
-                    onChange={(event) =>
-                      setMenuDraft((current) => ({
-                        ...(current ?? createEmptyMenu()),
-                        description: event.target.value,
-                      }))
-                    }
-                    rows={3}
-                    placeholder="Short description for staff reference"
-                  />
-                </Field>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-4">
-                    <p className="text-sm font-medium text-slate-700">
-                      Included categories
-                    </p>
-                    <Badge
-                      variant="outline"
-                      className="border-slate-200 text-slate-600"
-                    >
-                      {(menuDraft?.categories ?? []).length} selected
-                    </Badge>
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {orderedCategories.map((category) => (
-                      <label
-                        key={category}
-                        className={cn(
-                          "flex items-center justify-between rounded-2xl border px-3 py-3 text-sm",
-                          menuDraft?.categories.includes(category)
-                            ? "border-purple-300 bg-purple-50"
-                            : "border-slate-200 bg-white",
-                        )}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="text-base leading-none">⠿</span>
-                          <span>{category}</span>
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={
-                            menuDraft?.categories.includes(category) ?? false
-                          }
-                          onChange={() =>
-                            setMenuDraft((current) => ({
-                              ...(current ?? createEmptyMenu()),
-                              categories: toggleValue(
-                                current?.categories ?? [],
-                                category,
-                              ),
-                            }))
-                          }
-                          className="h-4 w-4 rounded border-slate-300 text-purple-600"
-                        />
-                      </label>
-                    ))}
-                  </div>
-                </div>
-                <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={menuDraft?.isActive ?? false}
-                    onChange={(event) =>
-                      setMenuDraft((current) => ({
-                        ...(current ?? createEmptyMenu()),
-                        isActive: event.target.checked,
-                      }))
-                    }
-                    className="h-4 w-4 rounded border-slate-300 text-purple-600"
-                  />
-                  Set as active default menu
-                </label>
-                <div className="flex justify-end gap-3">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setMenuDraft(createEmptyMenu())}
-                  >
-                    Reset
-                  </Button>
-                  <Button type="button" onClick={handleSaveMenu}>
-                    Save menu
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <div className="grid gap-4 md:grid-cols-2">
-            {menus.map((menu) => {
-              const linkedSchedules = menuSchedules.filter((schedule) =>
-                schedule.menuIds.includes(menu.id),
-              );
-              return (
-                <Card
-                  key={menu.id}
-                  className="border-slate-200 bg-white/90 shadow-sm"
-                >
-                  <CardContent className="space-y-4 p-5">
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="text-lg font-semibold text-slate-950">
-                            {menu.name}
-                          </h3>
-                          <Badge
-                            className={
-                              menu.isActive
-                                ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-100"
-                                : "bg-slate-100 text-slate-700 hover:bg-slate-100"
-                            }
-                          >
-                            {menu.isActive ? "Active" : "Inactive"}
-                          </Badge>
-                        </div>
-                        <p className="mt-2 text-sm text-slate-500">
-                          {menu.description || "No description yet."}
-                        </p>
-                      </div>
-                      <div className="text-right text-sm text-slate-500">
-                        <p className="font-semibold text-slate-900">
-                          {menu.categories.length} categories
-                        </p>
-                        <p>{new Date(menu.createdAt).toLocaleDateString()}</p>
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {menu.categories.map((category) => (
-                        <Badge
-                          key={`${menu.id}-${category}`}
-                          variant="outline"
-                          className="border-slate-200 text-slate-600"
-                        >
-                          {category}
-                        </Badge>
-                      ))}
-                    </div>
-                    <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                      <p className="font-medium text-slate-800">
-                        Schedule info
-                      </p>
-                      <p className="mt-1">
-                        {linkedSchedules.length
-                          ? linkedSchedules
-                              .map((schedule) => schedule.name)
-                              .join(", ")
-                          : "Not linked to a schedule yet."}
-                      </p>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() =>
-                          setMenus((current) =>
-                            current.map((entry) =>
-                              entry.id === menu.id
-                                ? { ...entry, isActive: !entry.isActive }
-                                : entry,
-                            ),
-                          )
-                        }
-                      >
-                        {menu.isActive ? "Deactivate" : "Activate"}
-                      </Button>
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setMenuDraft(menu)}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="border-rose-200 text-rose-600 hover:bg-rose-50"
-                          onClick={() => handleDeleteMenu(menu.id)}
-                        >
-                          Delete
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </div>
+        <DynamicMenusTab
+          categories={orderedCategories}
+          onMenusChange={setServerMenus}
+        />
       ) : null}
 
       {activeTab === "zones" ? (
@@ -1758,227 +1620,14 @@ function DashboardMenuPage() {
         </div>
       ) : null}
 
-      {activeTab === "schedules" ? (
-        <div className="grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
-          <Card className="border-slate-200 bg-white/90 shadow-sm">
-            <CardHeader>
-              <CardTitle>
-                {scheduleDraft ? "Edit schedule" : "Create schedule"}
-              </CardTitle>
-              <CardDescription>
-                Choose the menus that should be live for a given day and time
-                range.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <Field label="Schedule name">
-                  <Input
-                    value={scheduleDraft?.name ?? ""}
-                    onChange={(event) =>
-                      setScheduleDraft((current) => ({
-                        ...(current ?? createEmptySchedule()),
-                        name: event.target.value,
-                      }))
-                    }
-                    placeholder="Happy Hour"
-                  />
-                </Field>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <Field label="Start time">
-                    <Input
-                      type="time"
-                      value={scheduleDraft?.startTime ?? "12:00"}
-                      onChange={(event) =>
-                        setScheduleDraft((current) => ({
-                          ...(current ?? createEmptySchedule()),
-                          startTime: event.target.value,
-                        }))
-                      }
-                    />
-                  </Field>
-                  <Field label="End time">
-                    <Input
-                      type="time"
-                      value={scheduleDraft?.endTime ?? "16:00"}
-                      onChange={(event) =>
-                        setScheduleDraft((current) => ({
-                          ...(current ?? createEmptySchedule()),
-                          endTime: event.target.value,
-                        }))
-                      }
-                    />
-                  </Field>
-                </div>
-                <div className="space-y-3">
-                  <p className="text-sm font-medium text-slate-700">Days</p>
-                  <div className="flex flex-wrap gap-2">
-                    {DAYS.map((day) => (
-                      <button
-                        key={day.value}
-                        type="button"
-                        onClick={() =>
-                          setScheduleDraft((current) => ({
-                            ...(current ?? createEmptySchedule()),
-                            days: toggleDay(current?.days ?? [], day.value),
-                          }))
-                        }
-                        className={cn(
-                          "rounded-full border px-3 py-2 text-sm transition",
-                          scheduleDraft?.days.includes(day.value)
-                            ? "border-slate-950 bg-slate-950 text-white"
-                            : "border-slate-200 bg-white text-slate-600",
-                        )}
-                      >
-                        {day.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-4">
-                    <p className="text-sm font-medium text-slate-700">
-                      Menus linked to this schedule
-                    </p>
-                    <Badge
-                      variant="outline"
-                      className="border-slate-200 text-slate-600"
-                    >
-                      {(scheduleDraft?.menuIds ?? []).length} selected
-                    </Badge>
-                  </div>
-                  <div className="space-y-2">
-                    {menus.map((menu) => (
-                      <label
-                        key={menu.id}
-                        className={cn(
-                          "flex items-center justify-between rounded-2xl border px-3 py-3 text-sm",
-                          scheduleDraft?.menuIds.includes(menu.id)
-                            ? "border-emerald-300 bg-emerald-50"
-                            : "border-slate-200 bg-white",
-                        )}
-                      >
-                        <div>
-                          <p className="font-medium text-slate-900">
-                            {menu.name}
-                          </p>
-                          <p className="text-xs text-slate-500">
-                            {menu.categories.join(", ")}
-                          </p>
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={
-                            scheduleDraft?.menuIds.includes(menu.id) ?? false
-                          }
-                          onChange={() =>
-                            setScheduleDraft((current) => ({
-                              ...(current ?? createEmptySchedule()),
-                              menuIds: toggleValue(
-                                current?.menuIds ?? [],
-                                menu.id,
-                              ),
-                            }))
-                          }
-                          className="h-4 w-4 rounded border-slate-300 text-purple-600"
-                        />
-                      </label>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex justify-end gap-3">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setScheduleDraft(createEmptySchedule())}
-                  >
-                    Reset
-                  </Button>
-                  <Button type="button" onClick={handleSaveSchedule}>
-                    Save schedule
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <div className="grid gap-4 md:grid-cols-2">
-            {menuSchedules.map((schedule) => (
-              <Card
-                key={schedule.id}
-                className="border-slate-200 bg-white/90 shadow-sm"
-              >
-                <CardContent className="space-y-4 p-5">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-lg font-semibold text-slate-950">
-                          {schedule.name}
-                        </h3>
-                        {activeSchedules.some(
-                          (activeSchedule) => activeSchedule.id === schedule.id,
-                        ) ? (
-                          <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
-                            Live now
-                          </Badge>
-                        ) : null}
-                      </div>
-                      <p className="mt-2 text-sm text-slate-500">
-                        {schedule.startTime} – {schedule.endTime}
-                      </p>
-                    </div>
-                    <Badge
-                      variant="outline"
-                      className="border-slate-200 text-slate-600"
-                    >
-                      {schedule.days
-                        .map(
-                          (day) =>
-                            DAYS.find((entry) => entry.value === day)?.label,
-                        )
-                        .filter(Boolean)
-                        .join(", ")}
-                    </Badge>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {schedule.menuIds.map((menuId) => (
-                      <Badge
-                        key={`${schedule.id}-${menuId}`}
-                        variant="outline"
-                        className="border-slate-200 text-slate-600"
-                      >
-                        {menuLookup.get(menuId)?.name ?? "Unknown menu"}
-                      </Badge>
-                    ))}
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setScheduleDraft(schedule)}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="border-rose-200 text-rose-600 hover:bg-rose-50"
-                      onClick={() =>
-                        setMenuSchedules((current) =>
-                          removeById(current, schedule.id),
-                        )
-                      }
-                    >
-                      Delete
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
+      {activeTab === "settings" ? (
+        <MenuSettingsTab
+          items={catalogue.map((item) => ({
+            id: item.id,
+            name: item.name,
+            category: item.category,
+          }))}
+        />
       ) : null}
 
       {activeTab === "engineering" ? (
@@ -2151,21 +1800,23 @@ function DashboardMenuPage() {
                             {previewZone.name}
                           </Badge>
                         ) : null}
-                        {activeSchedules.length ? (
-                          activeSchedules.map((schedule) => (
-                            <Badge
-                              key={schedule.id}
-                              className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100"
-                            >
-                              {schedule.name}
-                            </Badge>
-                          ))
+                        {serverMenus.filter((menu) => menu.isActive).length ? (
+                          serverMenus
+                            .filter((menu) => menu.isActive)
+                            .map((menu) => (
+                              <Badge
+                                key={menu.id}
+                                className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100"
+                              >
+                                {menu.name}
+                              </Badge>
+                            ))
                         ) : (
                           <Badge
                             variant="outline"
                             className="border-slate-200 text-slate-600"
                           >
-                            Active menus
+                            Whole catalogue
                           </Badge>
                         )}
                       </div>

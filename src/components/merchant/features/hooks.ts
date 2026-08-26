@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { authFetch, getToken } from "@/lib/auth";
+import { authFetch, getToken, hasAuthoritativeVenueSession } from "@/lib/auth";
+import { realtime } from "@/lib/realtime";
 import type { Invoice, PartialPayment } from "./types";
 import { appendTimelineEvent, timelineFor } from "./utils";
 
@@ -24,7 +25,8 @@ type ServerInvoice = {
 
 function mapStatus(s: string): Invoice["status"] {
   const x = String(s ?? "").toLowerCase();
-  if (x === "paid" || x === "void") return "Paid";
+  if (x === "paid") return "Paid";
+  if (x === "void") return "Void";
   if (x === "partial") return "Partial";
   if (x === "overdue") return "Overdue";
   return "Pending";
@@ -72,14 +74,14 @@ function mapServerInvoice(r: ServerInvoice): Invoice {
   };
 }
 
-const STORAGE_KEY = "fxengine.merchant.invoices";
+const STORAGE_KEY = "fxengine.merchant.invoices.v2";
 
 // The venue a token is bound to, if it's a REAL merchant login (v_…) — not a demo
 // session (venue "main") or a venue-less principal. Used to decide whether to load
 // live invoices or keep the showcase seed.
 function realVenueFromToken(): string | null {
   const token = getToken();
-  if (!token) return null;
+  if (!token || !hasAuthoritativeVenueSession(token)) return null;
   try {
     const b64 = token.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/");
     if (!b64) return null;
@@ -93,75 +95,76 @@ function realVenueFromToken(): string | null {
 const seed: Invoice[] = [
   {
     id: "INV-10241",
-    customer: "Lumio Studios",
-    amount: 1240,
-    currency: "USD",
+    customer: "Westlands Catering Co.",
+    amount: 18500,
+    currency: "KES",
     status: "Paid",
-    date: "Oct 24",
-    paidVia: "Coop Bank Kenya",
-    paidAt: "2026-05-26T12:20:00.000Z",
+    date: "Aug 25",
+    paidVia: "M-Pesa",
+    paidAt: "2026-08-25T12:20:00.000Z",
     timeline: [
-      { label: "Created", at: "2026-05-24T08:30:00.000Z" },
-      { label: "QR shared", at: "2026-05-24T08:42:00.000Z" },
-      { label: "Payment received", at: "2026-05-26T12:20:00.000Z" },
-      { label: "Settled via Coop Bank Kenya", at: "2026-05-26T12:38:00.000Z" },
+      { label: "Created", at: "2026-08-25T08:30:00.000Z" },
+      { label: "QR shared", at: "2026-08-25T08:42:00.000Z" },
+      { label: "Payment received", at: "2026-08-25T12:20:00.000Z" },
+      { label: "Settled via M-Pesa", at: "2026-08-25T12:38:00.000Z" },
     ],
   },
   {
     id: "INV-10240",
-    customer: "Northwind GmbH",
-    amount: 4820,
-    currency: "EUR",
+    customer: "Njeri Family Booking",
+    amount: 7200,
+    currency: "KES",
     status: "Pending",
-    date: "Oct 23",
-    recurring: { frequency: "Monthly", nextDate: "2026-06-23T09:00:00.000Z" },
+    date: "Aug 25",
+    recurring: { frequency: "Monthly", nextDate: "2026-09-25T09:00:00.000Z" },
     timeline: [
-      { label: "Created", at: "2026-05-23T09:00:00.000Z" },
-      { label: "QR shared", at: "2026-05-23T09:14:00.000Z" },
+      { label: "Created", at: "2026-08-25T09:00:00.000Z" },
+      { label: "QR shared", at: "2026-08-25T09:14:00.000Z" },
     ],
   },
   {
     id: "INV-10238",
-    customer: "Acme Trading",
-    amount: 920,
-    currency: "GBP",
+    customer: "Achieng Studio",
+    amount: 4500,
+    currency: "KES",
     status: "Overdue",
-    date: "Oct 19",
-    lastReminder: "2026-05-29T10:45:00.000Z",
+    date: "Aug 22",
+    lastReminder: "2026-08-24T10:45:00.000Z",
     timeline: [
-      { label: "Created", at: "2026-05-19T11:15:00.000Z" },
-      { label: "QR shared", at: "2026-05-19T11:28:00.000Z" },
-      { label: "Reminder sent", at: "2026-05-29T10:45:00.000Z" },
+      { label: "Created", at: "2026-08-22T11:15:00.000Z" },
+      { label: "QR shared", at: "2026-08-22T11:28:00.000Z" },
+      { label: "Reminder sent", at: "2026-08-24T10:45:00.000Z" },
     ],
   },
   {
     id: "INV-10235",
-    customer: "Brava Holdings",
-    amount: 3100,
-    currency: "USD",
+    customer: "Kilimani Coffee Bar",
+    amount: 3200,
+    currency: "KES",
     status: "Paid",
-    date: "Oct 17",
-    paidVia: "Coop Bank Kenya",
+    date: "Aug 21",
+    paidVia: "M-Pesa",
+    paidAt: "2026-08-21T15:10:00.000Z",
   },
   {
     id: "INV-10233",
     customer: "Safari Exports",
-    amount: 5000,
+    amount: 12500,
     currency: "KES",
     status: "Partial",
-    date: "Oct 15",
+    date: "Aug 20",
     payments: [
       {
         id: "PAY-a1",
-        amount: 2000,
-        paidAt: "2026-05-20T14:00:00.000Z",
+        amount: 5000,
+        paidAt: "2026-08-20T14:00:00.000Z",
         paidVia: "M-Pesa",
       },
       {
         id: "PAY-a2",
-        amount: 1000,
-        paidAt: "2026-05-27T09:30:00.000Z",
-        paidVia: "Bank Transfer",
+        amount: 2500,
+        paidAt: "2026-08-24T09:30:00.000Z",
+        paidVia: "M-Pesa",
       },
     ],
     installmentPlan: {
@@ -170,30 +173,30 @@ const seed: Invoice[] = [
       installments: [
         {
           number: 1,
-          amount: 2000,
-          dueDate: "2026-05-20T00:00:00.000Z",
+          amount: 5000,
+          dueDate: "2026-08-20T00:00:00.000Z",
           status: "Paid",
-          paidAt: "2026-05-20T14:00:00.000Z",
+          paidAt: "2026-08-20T14:00:00.000Z",
         },
         {
           number: 2,
-          amount: 2000,
-          dueDate: "2026-06-20T00:00:00.000Z",
+          amount: 5000,
+          dueDate: "2026-09-20T00:00:00.000Z",
           status: "Due",
         },
         {
           number: 3,
-          amount: 1000,
-          dueDate: "2026-07-20T00:00:00.000Z",
+          amount: 2500,
+          dueDate: "2026-10-20T00:00:00.000Z",
           status: "Upcoming",
         },
       ],
     },
     timeline: [
-      { label: "Created", at: "2026-05-15T08:00:00.000Z" },
-      { label: "QR shared", at: "2026-05-15T08:12:00.000Z" },
-      { label: "Partial payment · KES 2,000", at: "2026-05-20T14:00:00.000Z" },
-      { label: "Partial payment · KES 1,000", at: "2026-05-27T09:30:00.000Z" },
+      { label: "Created", at: "2026-08-20T08:00:00.000Z" },
+      { label: "QR shared", at: "2026-08-20T08:12:00.000Z" },
+      { label: "Partial payment · KES 5,000", at: "2026-08-20T14:00:00.000Z" },
+      { label: "Partial payment · KES 2,500", at: "2026-08-24T09:30:00.000Z" },
     ],
   },
 ];
@@ -244,9 +247,21 @@ export function useInvoices() {
     sync();
     window.addEventListener("pesaswap:auth-changed", sync);
     window.addEventListener("storage", sync);
+    // A guest settling an invoice happens on the server. Without these the app
+    // keeps showing "Pending" for an invoice that is already paid.
+    const onSettled = () => void refetch();
+    const offSucceeded = realtime.on("payment.succeeded", onSettled);
+    const offRefunded = realtime.on("payment.refunded", onSettled);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refetch();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       window.removeEventListener("pesaswap:auth-changed", sync);
       window.removeEventListener("storage", sync);
+      document.removeEventListener("visibilitychange", onVisible);
+      offSucceeded();
+      offRefunded();
     };
   }, [refetch]);
 
@@ -264,41 +279,38 @@ export function useInvoices() {
   return {
     invoices,
     refetch,
+    isServerBacked: authed,
     add: async (inv: Invoice) => {
       // A real venue persists to the server (same create the dashboard uses), so
       // the new invoice shows up on BOTH surfaces. Demo sessions stay local.
       if (realVenueFromToken()) {
-        try {
-          await authFetch("/api/invoices", {
+        const response = await authFetch("/api/invoices", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
               customerName: inv.customer,
               amount: inv.amount,
+              currency: inv.currency,
               phone: inv.customerPhone,
               notes: inv.note,
             }),
-          });
-          await refetch();
-        } catch {
-          /* ignore — the list will re-sync on next load */
+        });
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ error: "Invoice rejected" }));
+          throw new Error(String((error as { error?: string }).error ?? "Invoice rejected"));
         }
+        await refetch();
         return;
       }
-      setInvoices((prev) => [inv, ...prev]);
+      // No venue claim: this invoice is local to this browser and will never
+      // reach the back office. Saying so beats a shareable-looking invoice the
+      // merchant only discovers is missing when the customer asks about it.
+      setInvoices((prev) => [{ ...inv, localOnly: true }, ...prev]);
     },
     markPaid: async (id: string, via = "PesaSwap") => {
       const target = invoices.find((i) => i.id === id);
       if (realVenueFromToken() && target?.serverId) {
-        try {
-          await authFetch(
-            `/api/invoices/${encodeURIComponent(target.serverId)}/paid`,
-            { method: "POST" },
-          );
-          await refetch();
-        } catch {
-          /* ignore */
-        }
+        console.warn("Manual paid state is disabled; use the server payment link.", via);
         return;
       }
       setInvoices((prev) =>
@@ -337,19 +349,11 @@ export function useInvoices() {
     recordPayment: async (id: string, paymentAmount: number, via = "PesaSwap") => {
       const target = invoices.find((i) => i.id === id);
       if (realVenueFromToken() && target?.serverId) {
-        try {
-          await authFetch(
-            `/api/invoices/${encodeURIComponent(target.serverId)}/pay`,
-            {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ amount: paymentAmount }),
-            },
-          );
-          await refetch();
-        } catch {
-          /* ignore */
-        }
+        console.warn(
+          "Manual invoice payment is disabled; use the server payment link.",
+          paymentAmount,
+          via,
+        );
         return;
       }
       setInvoices((prev) =>

@@ -1,8 +1,8 @@
 import { requireAuth } from "@/api/auth";
-import { getAdapter } from "@/lib/channels";
-import { isSuppressed } from "@/lib/consent";
-import { getSql } from "@/lib/db";
+import { queueOutbound } from "@/lib/outbound-jobs";
 import { venueFromPayload } from "@/lib/tenancy";
+import { roleAtLeast } from "@/lib/rbac";
+import { tokenHasScope } from "@/lib/api-tokens";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -18,6 +18,12 @@ function json(data: unknown, status = 200): Response {
 }
 
 const SHARE_CHANNELS = new Set(["whatsapp", "telegram", "sms"]);
+const SHARE_PURPOSES = {
+  invoice: "transactional",
+  payment_link: "transactional",
+  booking: "utility",
+  enquiry: "utility",
+} as const;
 
 // Normalize a recipient into a channel handle. Phones become E.164 (a leading 0
 // is treated as Kenya, the primary M-Pesa market); Telegram takes a chat id or
@@ -37,64 +43,6 @@ function toHandle(channel: string, to: string): string | null {
   return `+${digits}`;
 }
 
-// Reflect the sent message into the customer's conversation thread so it appears
-// in the inbox. Best-effort — never blocks the send.
-async function logOutbound(
-  env: unknown,
-  venue: string,
-  handle: string,
-  name: string | null,
-  body: string,
-  tool: string,
-): Promise<void> {
-  const sql = getSql(env);
-  if (!sql) return;
-  try {
-    const [conv] = await sql`
-      INSERT INTO conversations (venue_id, wa_id, name)
-      VALUES (${venue}, ${handle}, ${name})
-      ON CONFLICT (venue_id, wa_id)
-      DO UPDATE SET last_message_at = now(),
-                    name = COALESCE(conversations.name, EXCLUDED.name)
-      RETURNING id`;
-    if (conv?.id) {
-      await sql`
-        INSERT INTO messages (conversation_id, direction, body, tool)
-        VALUES (${conv.id}, 'outbound', ${body}, ${tool})`;
-    }
-  } catch {
-    /* best-effort */
-  }
-}
-
-// Cross-channel consent-to-switch audit: record that we're reaching this customer
-// on `channel`, noting the channel they were last seen on when it differs (a
-// switch). Compliance trail for moving a customer to a new channel. Best-effort.
-async function logConsentSwitch(
-  env: unknown,
-  venue: string,
-  handle: string,
-  channel: string,
-  kind: string,
-): Promise<void> {
-  const sql = getSql(env);
-  if (!sql) return;
-  try {
-    const [prev] = await sql`
-      SELECT channel FROM conversations
-      WHERE venue_id = ${venue} AND wa_id = ${handle}
-        AND channel IS NOT NULL AND channel <> ${channel}
-      ORDER BY last_message_at DESC NULLS LAST LIMIT 1`;
-    const fromChannel = prev?.channel ? String(prev.channel) : null;
-    await sql`
-      INSERT INTO consent_switch_log (id, venue_id, handle, channel, from_channel, kind)
-      VALUES (${`cs_${crypto.randomUUID().slice(0, 12)}`}, ${venue}, ${handle},
-              ${channel}, ${fromChannel}, ${kind})`;
-  } catch {
-    /* best-effort — never block outbound on the audit log */
-  }
-}
-
 // Merchant-initiated outbound share/send over any configured channel. Lets the
 // app push a payment link, QR link, invoice, booking or enquiry to a customer on
 // WhatsApp / Telegram / SMS using the venue's configured number + keys.
@@ -109,6 +57,9 @@ export async function handleShareRoute(
 
   const payload = await requireAuth(request, env);
   if (!payload) return json({ error: "unauthorized" }, 401);
+  if (!roleAtLeast(payload, "staff") || !tokenHasScope(payload, "messaging:write")) {
+    return json({ error: "forbidden" }, 403);
+  }
   const venue = venueFromPayload(payload, url);
 
   const body = (await request.json().catch(() => ({}))) as {
@@ -131,23 +82,21 @@ export async function handleShareRoute(
     .filter(Boolean)
     .join("\n\n");
   if (!message) return json({ error: "message required" }, 400);
+  const kind = String(body.kind ?? "");
+  if (!(kind in SHARE_PURPOSES)) return json({ error: "valid share kind required" }, 400);
 
-  // Consent: never message a handle that has opted out (omnichannel compliance).
-  const sql = getSql(env);
-  if (sql && (await isSuppressed(sql, venue, channel, handle))) {
-    return json({ ok: false, delivery: "suppressed", to: handle });
-  }
-
-  const result = await getAdapter(channel).send(handle, message, env, venue);
-  await logOutbound(
-    env,
+  const deliveryKey = request.headers.get("idempotency-key")?.trim();
+  if (!deliveryKey) return json({ error: "Idempotency-Key header required" }, 400);
+  const result = await queueOutbound(env, {
+    deliveryKey: `share:${venue}:${deliveryKey}`,
     venue,
+    sourceType: "share",
+    sourceId: deliveryKey,
+    channel: channel as "whatsapp" | "telegram" | "sms",
     handle,
-    body.name?.trim() || null,
-    message,
-    body.kind ?? "share",
-  );
-  await logConsentSwitch(env, venue, handle, channel, body.kind ?? "share");
-
-  return json({ ok: true, channel, to: handle, delivery: result.delivery });
+    recipientName: body.name?.trim() || null,
+    purpose: SHARE_PURPOSES[kind as keyof typeof SHARE_PURPOSES],
+    body: message,
+  });
+  return json({ ok: true, channel, to: handle, delivery: result.queued ? "queued" : "duplicate" }, result.queued ? 202 : 200);
 }

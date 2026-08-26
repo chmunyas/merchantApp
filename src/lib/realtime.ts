@@ -1,3 +1,5 @@
+import { getToken } from "@/lib/auth";
+
 /**
  * PesaSwap Real-Time Notifications
  * WebSocket-based merchant notifications with fallback polling.
@@ -258,13 +260,20 @@ class RealtimeManager {
 
     this.pollTimer = setInterval(async () => {
       try {
+        const token = getToken();
         const response = await fetch(
           `${this.backendUrl}/api/notifications?merchant=${encodeURIComponent(this.merchantId)}&since=${encodeURIComponent(lastChecked)}`,
+          token ? { headers: { authorization: `Bearer ${token}` } } : undefined,
         );
         if (response.ok) {
           const events = (await response.json()) as RealtimeEvent[];
           events.forEach((event) => this.dispatch(event));
           lastChecked = new Date().toISOString();
+        } else if (response.status === 401 || response.status === 403) {
+          // The session expired, was revoked, or no longer carries membership.
+          // Stop the financial poll until the app explicitly reconnects after a
+          // new auth event instead of producing an endless protected-route loop.
+          this.stopPolling();
         }
       } catch {
         // Network error — continue polling

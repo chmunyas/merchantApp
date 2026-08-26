@@ -1,114 +1,154 @@
-# Deployment & Scale Guide
+# Deployment and Scale Guide
 
-How PesaSwap Merchant App is deployed to Cloudflare, and the recommended
-settings to run it reliably at scale. The database is **always PostgreSQL**;
-the edge runtime is **Cloudflare Workers**.
+The target runtime is Cloudflare Workers with Hyperdrive and PostgreSQL. The
+canonical release decision and ordered gates are in [`review.md`](review.md).
+Production is currently **NO-GO**; this guide describes preparation and validation,
+not approval to move unrestricted money or PII.
 
-## 1. Current production topology
+## Topology
 
-```
-Browser / PWA
-   │  HTTPS
-   ▼
-Cloudflare Worker  (pesaswap-merchant-app)      ← global, auto-scaling
-   │  env.HYPERDRIVE.connectionString
-   ▼
-Cloudflare Hyperdrive  (id 37e129fb…, caching disabled)   ← edge connection pool
-   │  TLS (sslmode=require)
-   ▼
-Neon PostgreSQL  (direct endpoint, us-east-1)   ← single source of truth
+```text
+Browser/PWA → Cloudflare Worker (SSR + /api) → Hyperdrive → PostgreSQL
+                                      └──────→ PesaSwap/channel providers
 ```
 
-- **Live URL:** https://pesaswap-merchant-app.pesaswap.workers.dev
-- **Static assets** (`dist/client`, 159 files) are served from Cloudflare's edge
-  cache; the Worker (`dist/server/server.js`) runs SSR + the `/api/*` handlers.
-- **Bindings:** `HYPERDRIVE` (Postgres), `PESASWAP_URL` (var).
-- **Secrets** (via `wrangler secret put`): `JWT_SECRET`, `ADMIN_PASSWORD`.
-  Optional for live payments: `PESASWAP_API_KEY`, `PESASWAP_WEBHOOK_SECRET`.
+- Version-controlled production profile: top-level `wrangler.toml`.
+- Isolated simulated profile: `wrangler.toml` `[env.sandbox]`; it must use a
+  separate Worker URL and database.
+- Local development: `docker-compose.yml`, with simulators explicitly enabled.
+- Production-like local Worker: `docker-compose.prod.yml`, with debug, simulation,
+  and payment test mode explicitly disabled.
 
-## 2. Build & deploy
+## Mandatory preflight
 
-`wrangler deploy` re-bundles the Worker with esbuild, so it needs
-`node_modules`. The host uses a **container-only** `node_modules` volume, so
-build **and** deploy run inside the app container:
+The Worker now refuses request dispatch with 503 when its production posture is
+unsafe. Before any production deploy, verify:
+
+| Configuration | Required production value |
+| --- | --- |
+| `APP_ENV` | `production` |
+| `AUTH_REQUIRE_LOGIN` | `1` |
+| `AUTH_OTP_DEBUG` | `0` |
+| `ALLOW_SIMULATORS` | `0` |
+| `PAYMENTS_TEST_MODE` | `0` |
+| `PESASWAP_URL` | `https://api.pesaswap.io` |
+| `CORS_ALLOWED_ORIGIN` | Trusted production origin/allowlist, never `*` |
+
+Required secret-store values are `JWT_SECRET`, `PESASWAP_API_KEY`, and
+`PESASWAP_WEBHOOK_SECRET`. Configure `ADMIN_PASSWORD`/`ADMIN_EMAIL` as appropriate.
+When a feature is enabled, also provide its service secret:
+
+- `WHATSAPP_BRIDGE_TOKEN` and `WHATSAPP_BRIDGE_VENUE` whenever
+  `WHATSAPP_BRIDGE_URL` is set.
+- `WHATSAPP_APP_SECRET`, `TELEGRAM_WEBHOOK_SECRET`, `INSTAGRAM_APP_SECRET`,
+  `BRIDGE_SECRET`, and `EMAIL_WEBHOOK_SECRET` for their respective ingress paths.
+- `CRON_SECRET` for bridge/scheduler-triggered invoicing and sequence sweeps.
+- `TURNSTILE_SECRET` for production signup and portal OTP requests, plus a live
+  SMS or WhatsApp outbound provider for portal verification delivery.
+
+Do not commit, print, or paste secret values into issue trackers or logs.
+
+## Build and schema gate
+
+Run the repository quality gate before deployment:
 
 ```powershell
-# Build (writes dist/ to the bind-mounted repo)
-docker exec -w /app pesaswap-merchant-app npm run build
-
-# Deploy (Global API Key auth; a scoped token is better for automation — see §7)
-docker exec -w /app `
-  -e CLOUDFLARE_API_KEY="<key>" -e CLOUDFLARE_EMAIL="<email>" `
-  -e CLOUDFLARE_ACCOUNT_ID="e3e8622d30d13df73a95bd6db07ad9a7" `
-  pesaswap-merchant-app npx --yes wrangler@latest deploy
+npm ci
+npm run typecheck
+npm test
+npm run lint
+npm run build
 ```
 
-Schema migrations (run on any DB change, ordered by filename):
+Apply migrations strictly by filename order with stop-on-error semantics, using a
+direct PostgreSQL connection appropriate for schema changes. Back up production,
+record the migration set/checksums, and test restore/rollback procedures first.
+The current migration sequence ends at `db/66-state-timezone.sql`.
 
-```powershell
-docker run --rm -v D:\Demo\merchantApp\db:/db postgres:16 sh -c \
-  'for f in /db/*.sql; do psql "$NEON_DIRECT_URL" -v ON_ERROR_STOP=1 -f "$f"; done'
-```
+- Migration 57 records immutable PAT creators and converts legacy agent scopes.
+- Migration 58 invalidates all plaintext staff PINs and adds scoped scrypt
+  credentials. Managers must issue fresh PINs after deployment.
+- Migration 59 revokes/scrubs legacy portal links and adds expiring hash-only
+  credentials. Customers must OTP-verify for a new link.
+- Migration 60 deletes untrusted legacy push subscriptions and adds hash-only
+  device tokens. Staff must re-enable notifications.
+- Migration 61 adds single-use server payment intents and stable menu-item links
+  on order lines.
+- Migration 62 adds short-lived, per-order split-payment holds to serialize
+  concurrent share grants.
+- Migration 63 adds the fenced financial event/outbox, immutable snapshots,
+  refund reservations/reversals, and retry evidence.
+- Migration 64 adds invoice, tip, provider-evidence, settlement, and audit controls.
+- Migration 65 deactivates unverified channel accounts, adds persist-first ingress,
+  affirmative consent/template records, leased outbound deliveries, append-only
+  attempts/receipts, and sequence leases. It intentionally aborts on duplicate
+  active sequence enrollments.
+- Migration 66 adds compare-and-set revisions for shared/menu/table state and a
+  validated venue IANA timezone used by scheduling and demand analysis.
 
-## 3. Why it scales
+Apply migrations 57–66 immediately before the matching Worker. New migrations
+must use the next number and remain additive/idempotent where practical.
 
-- **App tier:** Workers run one isolate per request across Cloudflare's global
-  network — effectively unlimited horizontal scale, no servers to manage.
-- **The bottleneck is the database.** Two things protect it:
-  - **Hyperdrive** pools + reuses origin connections at the edge, so thousands
-    of concurrent isolates do **not** open thousands of Postgres connections.
-  - **Neon** autoscales compute and provides its own pooler for spikes.
-- The app already scopes a **fresh Postgres client per request** via
-  `withRequestSql` (AsyncLocalStorage) so sockets never cross requests on
-  Workers — the correct pattern; do not reintroduce a module-level client.
+## Deployment sequence
 
-## 4. Recommended production settings
+Current source migration head: `db/66-state-timezone.sql`. The migration
+runner applies each file and its `schema_migrations` marker in one transaction.
 
-| Area | Recommendation |
-|------|----------------|
-| **Custom domain** | Move off `*.workers.dev`: add a route in `wrangler.toml` (`routes = [{ pattern = "app.pesaswap.io", custom_domain = true }]`) and set `workers_dev = false`. |
-| **Preview URLs** | Set `preview_urls = false` in `wrangler.toml` for prod so unreleased versions aren't publicly reachable. |
-| **Neon compute** | Disable scale‑to‑zero (or set a floor) for latency‑sensitive prod — avoids ~0.5s cold starts. Right‑size compute; enable **PITR backups**. |
-| **Hyperdrive caching** | Currently **disabled** for correctness (live merchant/payment data). For read‑heavy public pages (menu, pay links) consider a **second** Hyperdrive config *with* caching for those specific read queries, keeping writes/admin on the uncached one. |
-| **Read scaling / multi‑region** | Add Neon **read replicas** + a Hyperdrive config per replica; route read‑only queries to replicas. |
-| **Security headers** | Add CSP, HSTS, `X‑Content‑Type‑Options: nosniff`, `Referrer‑Policy`, `X‑Frame‑Options` centrally in `src/server.ts`. |
-| **CORS** | `/api/*` currently returns `Access-Control-Allow-Origin: *`. Restrict to known origins (your domain) in production. |
-| **Edge WAF / rate limiting** | The app rate‑limits sensitive endpoints (`src/lib/rate-limit.ts`); add Cloudflare WAF + rate‑limiting rules for defense in depth. |
-| **Secrets** | Rotate any token shared in chat. Keep all runtime secrets in `wrangler secret`; never commit. Set `PESASWAP_*` when enabling live payments. |
-| **Indexes** | Ensure `venue_id`/tenant columns are indexed on every large table for multi‑tenant query performance at scale. |
+1. Preserve the evidence listed in Phase 0 of [`review.md`](review.md).
+2. Back up PostgreSQL and verify recovery.
+3. Validate the isolated sandbox with sandbox credentials and database.
+4. Apply production migrations under a change window.
+  Verify `63-financial-events.sql` as one transaction and confirm its outbox,
+  refund reservation, snapshot, adjustment, retry-audit, and immutability tables/
+  triggers before allowing payment traffic.
+  Before migration 64, inventory duplicate public invoice numbers, non-KES or
+  invalid invoice balances, overlapping tip periods, duplicate open shifts, and
+  legacy payouts. Migration 64 intentionally aborts rather than silently rewrite
+  unsafe financial history.
+  Before migration 65, inventory duplicate active sequence enrollments. After it
+  commits, re-verify every receiving/sending account and approved provider
+  template before enabling ingress or outbound traffic; legacy account rows are
+  intentionally inactive.
+  Before migration 66, confirm all venues can use the default `Africa/Nairobi`
+  timezone or prepare explicit IANA values. After deploy, run stale-revision
+  probes for merchant state, menu items, and tables and require HTTP 409.
+5. Deploy the Worker using a scoped Cloudflare API token.
+  Confirm the `*/2 * * * *` scheduled recovery trigger is installed.
+  For the sandbox staff-auth release, run `npm run deploy:sandbox` after its
+  migrations are applied. It always rebuilds before publishing and then verifies
+  the deployed staff form, service worker and protected PIN-rotation route.
+6. Immediately rotate affected runtime credentials and revoke old sessions/API
+   tokens as required by the containment plan.
+7. Run negative smoke tests: anonymous session, OTP disclosure, unauthenticated/
+   cross-tenant refund, simulator, bridge control, and forged channel ingress.
+8. Run one capped end-to-end provider transaction/refund and reconcile every row.
+  Include duplicate/reordered webhooks, an ambiguous refund timeout, stale-lease
+  recovery, forged/unknown receiving accounts, consent/window/template denials,
+  accepted-vs-delivered receipts, and manager failed-event retry evidence.
+9. Roll back on any failed gate; do not “monitor through” an integrity failure.
 
-## 5. Observability
+No production deployment or secret rotation is performed by a source-code change.
+Those operator actions must be recorded separately with evidence.
 
-- `wrangler tail` — live production logs.
-- Cloudflare **Workers Analytics** + **Logpush** (to R2/S3) for request metrics.
-- Neon dashboard — connections, compute, query latency.
-- Add an error tracker (e.g., Sentry) via the Worker's `console.error` path
-  (`src/lib/error-capture.ts` already centralises captured errors).
+## Runtime and scaling guidance
 
-## 6. Platform limits to design within
+- Keep per-request PostgreSQL clients through `withRequestSql`; never cache a
+  Workers socket across requests.
+- Keep correctness-sensitive merchant/payment queries uncached. Introduce read
+  replicas or a separately bounded cache only for genuinely public, immutable data.
+- Add Cloudflare WAF/bot controls in addition to application rate limits.
+- Financial fan-out uses the fenced PostgreSQL outbox in migration 63. Channel
+  ingress/outbound uses the leased PostgreSQL queues in migration 65. Keep the
+  scheduled trigger (or the protected local bridge recovery sweep) and failure/
+  unknown-outcome alerting enabled.
+- Configure Workers logs/analytics, Logpush, database metrics, error tracking,
+  uptime alerts, failed-event alerts, and refund/reconciliation alerts.
+- Configure PITR, tested backups, retention, and incident runbooks.
+- Add a custom domain and disable public preview URLs before a controlled pilot.
 
-- Worker CPU time (paid plan raises the default 30s wall / CPU budget).
-- Subrequests per request (50 free / 1000 paid) — batch external calls.
-- Request/response body size limits — stream large payloads.
-- Use `ctx.waitUntil()` for non‑blocking work (already used for connection
-  cleanup); consider **Cloudflare Queues** for heavy async (webhooks, broadcasts).
-- Enable the Workers **AI binding** (`[ai]` in `wrangler.toml`) in prod to move
-  the ops agent off its rule‑based local fallback.
+## Release approval
 
-## 7. CI/CD (recommended next step)
-
-Deploys are currently **manual** because the Global API Key is unsuitable for
-CI. To enable auto‑deploy on push:
-
-1. Create a **scoped API token**: `Account › Workers Scripts › Edit` +
-   `Account › Hyperdrive › Read` (+ `Account Settings › Read`, `User › Memberships › Read`).
-2. Set repo secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and
-   `CLOUDFLARE_DEPLOY_ENABLED=true`.
-3. The `deploy` job in `.github/workflows/ci.yml` runs `npm ci` (so
-   `node_modules` is present) and then deploys — the gate opens automatically.
-
-## 8. Cost snapshot
-
-- **Workers:** free 100k req/day; paid from $5/mo (10M+ requests).
-- **Hyperdrive:** free.
-- **Neon:** free tier + usage‑based; a small always‑on compute for prod latency.
+A successful build or deploy is not production approval. Approval requires every
+criterion in [`review.md`](review.md), independent penetration/PCI evidence, and a
+capped pilot that completes a full provider settlement cycle with zero unexplained
+ledger difference.

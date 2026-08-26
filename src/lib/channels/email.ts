@@ -56,34 +56,59 @@ export const emailAdapter: ChannelAdapter = {
   parseInbound(body) {
     return parseEmailInbound(body);
   },
-  // Send via Resend or SendGrid. Falls back to "simulated" without credentials so
-  // the pipeline works end-to-end in dev/demo. Set EMAIL_FROM + one of
-  // RESEND_API_KEY / SENDGRID_API_KEY to go live.
-  async send(handle, text, env): Promise<OutboundResult> {
+  // Send via Resend or SendGrid. Provider acceptance is not final delivery.
+  async send(handle, text, env, _venue, options): Promise<OutboundResult> {
     const to = handle.replace(/^email:/, "").trim();
     const from = envVar(env, "EMAIL_FROM");
     const resend = envVar(env, "RESEND_API_KEY");
     const sendgrid = envVar(env, "SENDGRID_API_KEY");
     const subject = envVar(env, "EMAIL_SUBJECT") ?? "A message from your venue";
     if (!to.includes("@") || !from || (!resend && !sendgrid)) {
-      return { delivery: "simulated" };
+      return {
+        delivery: "failed",
+        retryable: false,
+        error: "channel credentials missing",
+      };
     }
     try {
       if (resend) {
-        await fetch("https://api.resend.com/emails", {
+        const response = await fetch("https://api.resend.com/emails", {
           method: "POST",
           headers: {
             authorization: `Bearer ${resend}`,
             "content-type": "application/json",
+            ...(options?.idempotencyKey
+              ? { "idempotency-key": options.idempotencyKey }
+              : {}),
           },
           body: JSON.stringify({ from, to, subject, text }),
         });
+        const body = (await response.json().catch(() => null)) as
+          | { id?: string; message?: string }
+          | null;
+        if (!response.ok) {
+          return {
+            delivery: "failed",
+            providerCode: String(response.status),
+            retryable: response.status === 429 || response.status >= 500,
+            error: body?.message,
+          };
+        }
+        return {
+          delivery: "accepted",
+          providerMessageId: body?.id,
+          providerCode: String(response.status),
+          retryable: false,
+        };
       } else {
-        await fetch("https://api.sendgrid.com/v3/mail/send", {
+        const response = await fetch("https://api.sendgrid.com/v3/mail/send", {
           method: "POST",
           headers: {
             authorization: `Bearer ${sendgrid}`,
             "content-type": "application/json",
+            ...(options?.idempotencyKey
+              ? { "x-smtpapi": JSON.stringify({ unique_args: { delivery_key: options.idempotencyKey } }) }
+              : {}),
           },
           body: JSON.stringify({
             personalizations: [{ to: [{ email: to }] }],
@@ -92,10 +117,26 @@ export const emailAdapter: ChannelAdapter = {
             content: [{ type: "text/plain", value: text }],
           }),
         });
+        if (!response.ok) {
+          return {
+            delivery: "failed",
+            providerCode: String(response.status),
+            retryable: response.status === 429 || response.status >= 500,
+          };
+        }
+        return {
+          delivery: "accepted",
+          providerMessageId: response.headers.get("x-message-id") ?? undefined,
+          providerCode: String(response.status),
+          retryable: false,
+        };
       }
-      return { delivery: "sent" };
     } catch {
-      return { delivery: "simulated" };
+      return {
+        delivery: "unknown",
+        retryable: true,
+        error: "network outcome unknown",
+      };
     }
   },
 };

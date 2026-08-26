@@ -13,7 +13,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { getCurrentVenueId } from "@/lib/merchant-dashboard";
+import { getCurrentVenueId } from "@/lib/tenant-store";
 import { authFetch } from "@/lib/auth";
 
 export const Route = createFileRoute("/dashboard/telegram")({
@@ -38,7 +38,7 @@ function TelegramPage() {
 
   async function loadConfig() {
     try {
-      const res = await fetch(`/api/telegram/config?venue=${venue}`);
+      const res = await authFetch(`/api/telegram/config?venue=${venue}`);
       const data = (await res.json()) as {
         hasToken: boolean;
         bridgeEnabled: boolean;
@@ -53,7 +53,7 @@ function TelegramPage() {
   async function checkStatus() {
     setChecking(true);
     try {
-      const res = await fetch(`/api/telegram/status?venue=${venue}`);
+      const res = await authFetch(`/api/telegram/status?venue=${venue}`);
       setStatus((await res.json()) as Status);
     } catch {
       setStatus({ connected: false, error: "offline" });

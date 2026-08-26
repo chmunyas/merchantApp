@@ -2626,6 +2626,7 @@ function ServicesDashboardPage() {
       </Dialog>
       {servicePay ? (
         <OmniShare
+          kind="payment_link"
           open={!!servicePay}
           onClose={() => setServicePay(null)}
           title={`Send KES ${servicePay.amount.toLocaleString()} pay link`}

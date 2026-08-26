@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ModalOverlay } from "@/components/ui/modal-overlay";
 import {
   Sheet,
   SheetContent,
@@ -27,26 +28,20 @@ import { getBNPLTransactions, type BNPLTransaction } from "@/lib/coop-bnpl";
 import { pesaswapClient } from "@/lib/pesaswap-payments";
 import { authFetch } from "@/lib/auth";
 import { useAuthQuery } from "@/lib/use-auth-query";
+import type { PaymentLedgerRow } from "@/lib/payment-ledger";
 
-type LivePayment = {
+type LivePayment = PaymentLedgerRow;
+
+type FailedFinancialEvent = {
   id: string;
-  amount: number; // minor units
-  currency: string;
+  event_id: string;
+  consumer: string;
   status: string;
-  kind: string;
-  reference: string | null;
-  providerRef: string | null;
-  tipAmount: number;
-  initiator: string;
-  customerPhone: string | null;
-  customerName: string | null;
-  flowType: string | null;
-  invoiceNumber: string | null;
-  errorMessage: string | null;
-  refundedAmount: number; // minor units refunded on this payment
-  refundOf: string | null; // for a refund row: the payment it reverses
-  refundReason: string | null;
-  createdAt: string;
+  attempts: number;
+  last_error: string | null;
+  event_type: string;
+  aggregate_id: string;
+  occurred_at: string;
 };
 
 export const Route = createFileRoute("/dashboard/payments")({
@@ -96,6 +91,15 @@ function DashboardPaymentsPage() {
   );
   const livePayments = liveQuery.data ?? [];
   const liveLoading = liveQuery.isLoading;
+  const financialEventsQuery = useAuthQuery<
+    { events: FailedFinancialEvent[] },
+    FailedFinancialEvent[]
+  >(
+    ["financial-events"],
+    "/api/financial-events",
+    { select: (data) => data.events ?? [], refetchInterval: 30000 },
+  );
+  const failedFinancialEvents = financialEventsQuery.data ?? [];
 
   const refreshLive = useCallback(
     () =>
@@ -104,6 +108,18 @@ function DashboardPaymentsPage() {
       }),
     [queryClient],
   );
+
+  const retryFinancialEvent = useCallback(async (id: string) => {
+    const response = await authFetch(`/api/financial-events/${id}/retry`, {
+      method: "POST",
+    });
+    if (!response.ok) {
+      toast.error("Could not retry the financial event.");
+      return;
+    }
+    toast.success("Financial event queued for retry.");
+    await financialEventsQuery.refetch();
+  }, [financialEventsQuery]);
 
   // Silent background reconcile: pull refunds + stuck payments from PesaSwap into
   // the DB, then invalidate the cached list. Fire-and-forget — never blocks render.
@@ -224,13 +240,15 @@ function DashboardPaymentsPage() {
   async function handleRefund(payment: MerchantPayment) {
     if (!snapshot) return;
     setRefundLoading(true);
+    const amountMinor = Math.round(payment.amount * 100);
 
     try {
       await pesaswapClient.processRefund({
         payment_id: payment.paymentId,
-        amount: payment.amount,
+        amount: amountMinor,
         reason: "customer_request",
         refunded_by: "Dashboard Manager",
+        idempotency_key: `dashboard-refund-${payment.paymentId}-${amountMinor}`,
         items: payment.items.map((item) => ({
           id: item.id,
           name: item.name,
@@ -239,11 +257,6 @@ function DashboardPaymentsPage() {
         })),
       });
       toast.success(`Refund processed for ${payment.reference}`);
-    } catch {
-      toast.info(
-        "Refund API unavailable. Marking transaction as refunded locally.",
-      );
-    } finally {
       const nextTables = snapshot.tables.map((table) => ({
         ...table,
         payments: table.payments.map((entry) =>
@@ -256,6 +269,14 @@ function DashboardPaymentsPage() {
       const nextSnapshot = { ...snapshot, tables: nextTables };
       setSnapshot(nextSnapshot);
       setSelected({ ...payment, status: "refunded" });
+      await refreshLive();
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Refund failed. The transaction was not changed.",
+      );
+    } finally {
       setRefundLoading(false);
     }
   }
@@ -367,6 +388,53 @@ function DashboardPaymentsPage() {
         loading={liveLoading}
         onRefresh={refreshLive}
       />
+
+      {failedFinancialEvents.length > 0 ? (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="font-semibold text-amber-950">
+                Financial processing needs attention
+              </h2>
+              <p className="text-sm text-amber-800">
+                Payments are retained safely; these durable side effects will retry automatically.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void financialEventsQuery.refetch()}
+            >
+              Refresh
+            </Button>
+          </div>
+          <div className="mt-4 space-y-2">
+            {failedFinancialEvents.map((event) => (
+              <div
+                key={event.id}
+                className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">
+                    {event.consumer} · {event.event_type}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {event.aggregate_id} · attempt {event.attempts}
+                    {event.last_error ? ` · ${event.last_error}` : ""}
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void retryFinancialEvent(event.id)}
+                >
+                  Retry now
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="rounded-2xl border border-border bg-card p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -917,7 +985,7 @@ function LivePaymentsPanel({
                       {p.flowType || p.kind}
                     </td>
                     <td className="py-2 pr-4 font-mono text-xs text-muted-foreground">
-                      {p.providerRef || "—"}
+                      {p.providerRef || p.sourceId || p.reference || "—"}
                     </td>
                     <td className="py-2 pr-4 text-right">
                       {canRetry && p.customerPhone ? (
@@ -979,6 +1047,10 @@ function PaymentDetailModal({
       ? ([["Reason", payment.errorMessage]] as Array<[string, string]>)
       : []),
     ["M-Pesa receipt (REF)", payment.providerRef || "—"],
+    [
+      "Merchant reference",
+      payment.sourceId || payment.reference || "—",
+    ],
     ...(payment.invoiceNumber
       ? ([["Invoice", payment.invoiceNumber]] as Array<[string, string]>)
       : []),
@@ -1008,16 +1080,17 @@ function PaymentDetailModal({
     ["Payment ID", payment.id],
   ];
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
-      onClick={onClose}
+    <ModalOverlay
+      onClose={onClose}
+      labelledBy="txn-detail-heading"
+      className="flex items-end justify-center p-4 sm:items-center"
+      panelClassName="w-full max-w-md rounded-3xl bg-card p-6 shadow-xl"
+      closeLabel="Close transaction detail"
     >
-      <div
-        className="w-full max-w-md rounded-3xl bg-card p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-base font-bold">Transaction detail</h3>
+          <h3 id="txn-detail-heading" className="text-base font-bold">
+            Transaction detail
+          </h3>
           <span
             className={`rounded-full px-2 py-0.5 text-xs font-medium ${
               LIVE_STATUS_STYLE[payment.status] ?? "bg-slate-100 text-slate-700"
@@ -1042,8 +1115,7 @@ function PaymentDetailModal({
         >
           Close
         </button>
-      </div>
-    </div>
+    </ModalOverlay>
   );
 }
 
@@ -1091,22 +1163,26 @@ function RequestPaymentModal({ onClose }: { onClose: () => void }) {
         description ? ` (${description})` : ""
       }. Tap to pay 👇`;
       if (phone.trim()) {
+        const shareKey = `payment-link:${data.url}:${channel}:${phone.trim()}`;
         const shareRes = await authFetch("/api/share", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "idempotency-key": shareKey,
+          },
           body: JSON.stringify({
             channel,
             to: phone,
             text: message,
             link: data.url,
-            kind: "pay-request",
+            kind: "payment_link",
           }),
         });
         const sd = (await shareRes.json().catch(() => ({}))) as {
           delivery?: string;
         };
-        if (sd.delivery === "sent") {
-          toast.success(`Payment link sent on ${channel}.`);
+        if (sd.delivery === "accepted" || sd.delivery === "queued") {
+          toast.success(`Payment link queued on ${channel}.`);
         } else if (sd.delivery === "suppressed") {
           toast.error("This customer has opted out.");
         } else {
@@ -1123,20 +1199,21 @@ function RequestPaymentModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
-      onClick={onClose}
+    <ModalOverlay
+      onClose={onClose}
+      labelledBy="request-payment-heading"
+      className="flex items-end justify-center p-4 sm:items-center"
+      panelClassName="w-full max-w-sm rounded-3xl bg-card p-6 shadow-xl"
+      closeLabel="Close payment request"
     >
-      <div
-        className="w-full max-w-sm rounded-3xl bg-card p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
         <div className="mb-4 flex items-center gap-3">
           <div className="flex size-11 items-center justify-center rounded-2xl bg-emerald-100">
             <Send className="size-5 text-emerald-600" />
           </div>
           <div>
-            <h3 className="text-base font-bold">Request payment</h3>
+            <h3 id="request-payment-heading" className="text-base font-bold">
+              Request payment
+            </h3>
             <p className="text-xs text-muted-foreground">
               Send a secure pay link over any channel
             </p>
@@ -1225,8 +1302,7 @@ function RequestPaymentModal({ onClose }: { onClose: () => void }) {
         >
           Close
         </button>
-      </div>
-    </div>
+    </ModalOverlay>
   );
 }
 
@@ -1251,7 +1327,7 @@ function ReRequestModal({
       const res = await authFetch(`/api/payments/${payment.id}/retry`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: amount * 100, phone }),
+        body: JSON.stringify({ phone }),
       });
       if (res.ok) {
         toast.success(`M-Pesa prompt for KES ${amount.toLocaleString()} sent to ${phone}`);
@@ -1270,20 +1346,21 @@ function ReRequestModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
-      onClick={onClose}
+    <ModalOverlay
+      onClose={onClose}
+      labelledBy="rerequest-payment-heading"
+      className="flex items-end justify-center p-4 sm:items-center"
+      panelClassName="w-full max-w-sm rounded-3xl bg-card p-6 shadow-xl"
+      closeLabel="Close re-request payment"
     >
-      <div
-        className="w-full max-w-sm rounded-3xl bg-card p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
         <div className="mb-4 flex items-center gap-3">
           <div className="flex size-11 items-center justify-center rounded-2xl bg-emerald-100">
             <RotateCcw className="size-5 text-emerald-600" />
           </div>
           <div>
-            <h3 className="text-base font-bold">Re-request payment</h3>
+            <h3 id="rerequest-payment-heading" className="text-base font-bold">
+              Re-request payment
+            </h3>
             <p className="text-xs text-muted-foreground">
               Send a fresh M-Pesa prompt to the customer
             </p>
@@ -1345,7 +1422,6 @@ function ReRequestModal({
         >
           Cancel
         </button>
-      </div>
-    </div>
+    </ModalOverlay>
   );
 }

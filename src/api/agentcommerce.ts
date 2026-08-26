@@ -5,6 +5,8 @@ import { createInvoice, type LineItem } from "@/lib/invoices";
 import { getMenu } from "@/lib/menu";
 import { createPayLink } from "@/lib/pay-links";
 import { splitShares } from "@/lib/split-bill";
+import { requireAuth } from "@/api/auth";
+import { tokenHasScope } from "@/lib/api-tokens";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,22 +27,22 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function slug(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
-}
-
 function wholeNumber(value: unknown): number {
   const next = Number(value);
   return Number.isFinite(next) ? Math.max(0, Math.round(next)) : 0;
 }
 
-function isTrusted(request: Request, env: unknown): boolean {
-  const key = envVar(env, "A2A_API_KEY") ?? envVar(env, "OMNI_API_KEY");
-  return Boolean(key) && request.headers.get("x-api-key") === key;
+async function requireAgentToken(
+  request: Request,
+  env: unknown,
+  scopes: Array<"payments:write" | "menu:read" | "bookings:write">,
+): Promise<Record<string, unknown> | null> {
+  const principal = await requireAuth(request, env);
+  if (!principal || principal.isApiToken !== true) return null;
+  if (!tokenHasScope(principal, "agent:invoke")) return null;
+  return scopes.every((scope) => tokenHasScope(principal, scope))
+    ? principal
+    : null;
 }
 
 // Secret for signing verifiable agent intents (falls back to JWT_SECRET, then a
@@ -54,8 +56,7 @@ function intentSecret(env: unknown): string {
 }
 
 type CheckoutItemInput = {
-  name?: string;
-  price?: number | string;
+  id?: string;
   qty?: number | string;
 };
 
@@ -78,7 +79,7 @@ export async function handleAgentCommerceRoute(
         venue,
         currency: "KES",
         items: items.map((item) => ({
-          id: slug(`${item.category}-${item.name}`),
+          id: item.id,
           name: item.name,
           category: item.category,
           price: item.price,
@@ -97,37 +98,53 @@ export async function handleAgentCommerceRoute(
 
   if (path === "/api/agent/checkout" && request.method === "POST") {
     try {
+      const principal = await requireAgentToken(request, env, [
+        "payments:write",
+        "menu:read",
+      ]);
+      if (!principal) return json({ error: "trusted scoped agent required" }, 401);
       const body = (await request.json().catch(() => ({}))) as {
-        venue?: string;
         items?: CheckoutItemInput[];
-        amount?: number | string;
         customerRef?: string;
         phone?: string;
         split?: { parties?: number; amounts?: number[] };
       };
-      const venue = String(body.venue || "main").trim() || "main";
-      const items = (body.items ?? [])
+      const venue = String(principal.venue ?? "").trim();
+      if (!venue) return json({ error: "agent venue required" }, 403);
+      const requested = (body.items ?? [])
         .map((item) => ({
-          description: String(item.name ?? "").trim(),
+          id: String(item.id ?? "").trim(),
           qty: Math.max(1, wholeNumber(item.qty ?? 1)),
-          price: wholeNumber(item.price ?? 0),
         }))
-        .filter((item) => item.description && item.price > 0);
+        .filter((item) => /^[0-9a-f-]{36}$/i.test(item.id));
+      if (requested.length === 0) return json({ error: "catalogue item ids required" }, 400);
+      const sql = getSql(env);
+      if (!sql) return json({ error: "database not configured" }, 503);
+      const ids = [...new Set(requested.map((item) => item.id))];
+      const catalogue = await sql`
+        SELECT id, name, price, currency
+        FROM menu_items
+        WHERE venue_id = ${venue}
+          AND id IN (SELECT unnest(${ids}::uuid[]))
+          AND available = true`;
+      if (catalogue.length !== ids.length) return json({ error: "item unavailable" }, 409);
+      const byId = new Map(catalogue.map((item) => [String(item.id), item]));
+      const items = requested.map((entry) => {
+        const item = byId.get(entry.id)!;
+        return {
+          description: String(item.name),
+          qty: entry.qty,
+          price: wholeNumber(item.price),
+        };
+      });
       const computed = items.reduce(
         (sum, item) => sum + item.qty * item.price,
         0,
       );
-      const providedAmount = wholeNumber(body.amount);
-      const amount = providedAmount > 0 ? providedAmount : computed;
-      const lineItems =
-        items.length > 0 && (providedAmount <= 0 || providedAmount === computed)
-          ? (items as LineItem[])
-          : undefined;
+      const amount = computed;
+      const lineItems = items as LineItem[];
 
       if (amount <= 0) return json({ error: "amount required" }, 400);
-      if (!isTrusted(request, env) && amount > UNTRUSTED_AMOUNT_CAP) {
-        return json({ error: "amount exceeds public checkout cap" }, 400);
-      }
 
       // Split checkout: mint one server-bound pay link per share (kind=split) that
       // together sum EXACTLY to the total, so an agent can collect a shared bill.
@@ -156,10 +173,10 @@ export async function handleAgentCommerceRoute(
         const splitIntent: IntentPayload = {
           agentRef:
             request.headers.get("x-agent-id") ||
-            (isTrusted(request, env) ? "trusted-agent" : "public-agent"),
+            `token:${String(principal.tokenId ?? "agent")}`,
           userRef: body.customerRef ?? "",
           merchant: venue,
-          amount,
+          amount: amount * 100,
           currency: "KES",
           timestamp: Date.now(),
           context: "Agentic split checkout",
@@ -192,27 +209,24 @@ export async function handleAgentCommerceRoute(
       const intentPayload: IntentPayload = {
         agentRef:
           request.headers.get("x-agent-id") ||
-          (isTrusted(request, env) ? "trusted-agent" : "public-agent"),
+          `token:${String(principal.tokenId ?? "agent")}`,
         userRef: body.customerRef ?? "",
         merchant: venue,
-        amount: result.amount,
+        amount: result.amount * 100,
         currency: "KES",
         timestamp: Date.now(),
         context: "Agentic checkout",
       };
       const signature = await signIntent(intentPayload, intentSecret(env));
-      const sql = getSql(env);
-      if (sql) {
-        try {
-          await sql`
-            INSERT INTO agent_intents
-              (venue_id, agent_ref, user_ref, merchant, amount, currency, context, signature, status)
-              VALUES (${venue}, ${intentPayload.agentRef}, ${intentPayload.userRef ?? null},
-                      ${venue}, ${result.amount}, 'KES', ${intentPayload.context ?? null},
-                    ${signature}, 'checkout')`;
-        } catch {
-          /* audit insert is best-effort; the invoice already exists */
-        }
+      try {
+        await sql`
+          INSERT INTO agent_intents
+            (venue_id, agent_ref, user_ref, merchant, amount, currency, context, signature, status)
+            VALUES (${venue}, ${intentPayload.agentRef}, ${intentPayload.userRef ?? null},
+                    ${venue}, ${intentPayload.amount}, 'KES', ${intentPayload.context ?? null},
+                  ${signature}, 'checkout')`;
+      } catch {
+        /* audit insert is best-effort; the invoice already exists */
       }
 
       return json({
@@ -232,6 +246,8 @@ export async function handleAgentCommerceRoute(
   // against existing reservations, then inserts a CONFIRMED reservation (not a
   // pending enquiry) and returns the booking id.
   if (path === "/api/agent/booking" && request.method === "POST") {
+    const principal = await requireAgentToken(request, env, ["bookings:write"]);
+    if (!principal) return json({ error: "trusted scoped agent required" }, 401);
     const sql = getSql(env);
     if (!sql) return json({ error: "database not configured" }, 503);
     const body = (await request.json().catch(() => ({}))) as {
@@ -243,7 +259,7 @@ export async function handleAgentCommerceRoute(
       time?: string;
       notes?: string;
     };
-    const venue = String(body.venue || "main").trim() || "main";
+    const venue = String(principal.venue ?? "").trim();
     const covers = wholeNumber(body.covers);
     const name = String(body.name ?? "").trim();
     const date = String(body.date ?? "").trim();
@@ -285,34 +301,55 @@ export async function handleAgentCommerceRoute(
 
   // Create + sign a standalone agent intent (Agent Pay Gateway handshake).
   if (path === "/api/agent/intent" && request.method === "POST") {
+    const principal = await requireAgentToken(request, env, ["payments:write"]);
+    if (!principal) return json({ error: "trusted scoped agent required" }, 401);
     const body = (await request.json().catch(() => ({}))) as {
-      venue?: string;
       agentRef?: string;
       userRef?: string;
-      merchant?: string;
-      amount?: number | string;
-      currency?: string;
+      sourceType?: string;
+      sourceId?: string;
       context?: string;
     };
-    const venue = String(body.venue || "main").trim() || "main";
-    const amount = wholeNumber(body.amount);
-    if (amount <= 0) return json({ error: "amount required" }, 400);
-    if (!isTrusted(request, env) && amount > UNTRUSTED_AMOUNT_CAP) {
-      return json({ error: "amount exceeds public cap" }, 400);
+    const venue = String(principal.venue ?? "").trim();
+    const sql = getSql(env);
+    if (!sql) return json({ error: "database not configured" }, 503);
+    const sourceType = body.sourceType === "invoice" ? "invoice" : "order";
+    const sourceId = String(body.sourceId ?? "").trim();
+    if (!sourceId) return json({ error: "sourceId required" }, 400);
+    let amount = 0;
+    let currency = "KES";
+    if (sourceType === "order") {
+      const [order] = await sql`
+        SELECT total::bigint AS amount, currency FROM orders
+        WHERE id = ${sourceId} AND venue_id = ${venue} LIMIT 1`;
+      if (!order) return json({ error: "order not found" }, 404);
+      amount = Number(order.amount);
+      currency = String(order.currency ?? "KES");
+    } else {
+      const [invoice] = await sql`
+        SELECT ((amount - amount_paid) * 100)::bigint AS amount, currency
+        FROM invoices
+        WHERE (id::text = ${sourceId} OR number = ${sourceId})
+          AND venue_id = ${venue}
+        LIMIT 1`;
+      if (!invoice) return json({ error: "invoice not found" }, 404);
+      amount = Number(invoice.amount);
+      currency = String(invoice.currency ?? "KES");
     }
+    if (amount <= 0) return json({ error: "source is already settled" }, 409);
+    if (amount > UNTRUSTED_AMOUNT_CAP * 100) return json({ error: "amount exceeds agent cap" }, 400);
     const payload: IntentPayload = {
       agentRef: String(
         body.agentRef || request.headers.get("x-agent-id") || "public-agent",
       ),
       userRef: String(body.userRef || ""),
-      merchant: String(body.merchant || venue),
+      merchant: venue,
       amount,
-      currency: String(body.currency || "KES"),
+      currency,
       timestamp: Date.now(),
       context: String(body.context || ""),
     };
     const signature = await signIntent(payload, intentSecret(env));
-    const sql = getSql(env);
     let id: string | undefined;
     if (sql) {
       try {

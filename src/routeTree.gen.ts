@@ -16,6 +16,7 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as ResetPinRouteImport } from './routes/reset-pin'
 import { Route as ResellerRouteImport } from './routes/reseller'
 import { Route as ReportsRouteImport } from './routes/reports'
+import { Route as ReceiptRouteImport } from './routes/receipt'
 import { Route as PesaswapAppRouteImport } from './routes/pesaswapApp'
 import { Route as PaymentsRouteImport } from './routes/payments'
 import { Route as PayRouteImport } from './routes/pay'
@@ -34,6 +35,7 @@ import { Route as RetailStoreIdRouteImport } from './routes/retail.$storeId'
 import { Route as QCodeRouteImport } from './routes/q.$code'
 import { Route as MeTokenRouteImport } from './routes/me.$token'
 import { Route as DashboardWhatsappRouteImport } from './routes/dashboard/whatsapp'
+import { Route as DashboardWalkoutsRouteImport } from './routes/dashboard/walkouts'
 import { Route as DashboardTelegramRouteImport } from './routes/dashboard/telegram'
 import { Route as DashboardTeamRouteImport } from './routes/dashboard/team'
 import { Route as DashboardTablesRouteImport } from './routes/dashboard/tables'
@@ -50,6 +52,7 @@ import { Route as DashboardReorderRouteImport } from './routes/dashboard/reorder
 import { Route as DashboardQrRouteImport } from './routes/dashboard/qr'
 import { Route as DashboardPromosRouteImport } from './routes/dashboard/promos'
 import { Route as DashboardPricingRouteImport } from './routes/dashboard/pricing'
+import { Route as DashboardPayoutsRouteImport } from './routes/dashboard/payouts'
 import { Route as DashboardPaymentsRouteImport } from './routes/dashboard/payments'
 import { Route as DashboardPaymentMethodsRouteImport } from './routes/dashboard/payment-methods'
 import { Route as DashboardOrdersRouteImport } from './routes/dashboard/orders'
@@ -58,6 +61,7 @@ import { Route as DashboardKnowledgeRouteImport } from './routes/dashboard/knowl
 import { Route as DashboardInvoicesRouteImport } from './routes/dashboard/invoices'
 import { Route as DashboardInventoryRouteImport } from './routes/dashboard/inventory'
 import { Route as DashboardInboxRouteImport } from './routes/dashboard/inbox'
+import { Route as DashboardGuestRequestsRouteImport } from './routes/dashboard/guest-requests'
 import { Route as DashboardForecastRouteImport } from './routes/dashboard/forecast'
 import { Route as DashboardFloorplanRouteImport } from './routes/dashboard/floorplan'
 import { Route as DashboardFeesRouteImport } from './routes/dashboard/fees'
@@ -112,6 +116,11 @@ const ResellerRoute = ResellerRouteImport.update({
 const ReportsRoute = ReportsRouteImport.update({
   id: '/reports',
   path: '/reports',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReceiptRoute = ReceiptRouteImport.update({
+  id: '/receipt',
+  path: '/receipt',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PesaswapAppRoute = PesaswapAppRouteImport.update({
@@ -204,6 +213,11 @@ const DashboardWhatsappRoute = DashboardWhatsappRouteImport.update({
   path: '/whatsapp',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardWalkoutsRoute = DashboardWalkoutsRouteImport.update({
+  id: '/walkouts',
+  path: '/walkouts',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardTelegramRoute = DashboardTelegramRouteImport.update({
   id: '/telegram',
   path: '/telegram',
@@ -284,6 +298,11 @@ const DashboardPricingRoute = DashboardPricingRouteImport.update({
   path: '/pricing',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardPayoutsRoute = DashboardPayoutsRouteImport.update({
+  id: '/payouts',
+  path: '/payouts',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardPaymentsRoute = DashboardPaymentsRouteImport.update({
   id: '/payments',
   path: '/payments',
@@ -322,6 +341,11 @@ const DashboardInventoryRoute = DashboardInventoryRouteImport.update({
 const DashboardInboxRoute = DashboardInboxRouteImport.update({
   id: '/inbox',
   path: '/inbox',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardGuestRequestsRoute = DashboardGuestRequestsRouteImport.update({
+  id: '/guest-requests',
+  path: '/guest-requests',
   getParentRoute: () => DashboardRoute,
 } as any)
 const DashboardForecastRoute = DashboardForecastRouteImport.update({
@@ -437,6 +461,7 @@ export interface FileRoutesByFullPath {
   '/pay': typeof PayRoute
   '/payments': typeof PaymentsRoute
   '/pesaswapApp': typeof PesaswapAppRoute
+  '/receipt': typeof ReceiptRoute
   '/reports': typeof ReportsRoute
   '/reseller': typeof ResellerRoute
   '/reset-pin': typeof ResetPinRoute
@@ -464,6 +489,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/fees': typeof DashboardFeesRoute
   '/dashboard/floorplan': typeof DashboardFloorplanRoute
   '/dashboard/forecast': typeof DashboardForecastRoute
+  '/dashboard/guest-requests': typeof DashboardGuestRequestsRoute
   '/dashboard/inbox': typeof DashboardInboxRoute
   '/dashboard/inventory': typeof DashboardInventoryRoute
   '/dashboard/invoices': typeof DashboardInvoicesRoute
@@ -472,6 +498,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/orders': typeof DashboardOrdersRoute
   '/dashboard/payment-methods': typeof DashboardPaymentMethodsRoute
   '/dashboard/payments': typeof DashboardPaymentsRoute
+  '/dashboard/payouts': typeof DashboardPayoutsRoute
   '/dashboard/pricing': typeof DashboardPricingRoute
   '/dashboard/promos': typeof DashboardPromosRoute
   '/dashboard/qr': typeof DashboardQrRoute
@@ -488,6 +515,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/tables': typeof DashboardTablesRoute
   '/dashboard/team': typeof DashboardTeamRoute
   '/dashboard/telegram': typeof DashboardTelegramRoute
+  '/dashboard/walkouts': typeof DashboardWalkoutsRoute
   '/dashboard/whatsapp': typeof DashboardWhatsappRoute
   '/me/$token': typeof MeTokenRoute
   '/q/$code': typeof QCodeRoute
@@ -506,6 +534,7 @@ export interface FileRoutesByTo {
   '/pay': typeof PayRoute
   '/payments': typeof PaymentsRoute
   '/pesaswapApp': typeof PesaswapAppRoute
+  '/receipt': typeof ReceiptRoute
   '/reports': typeof ReportsRoute
   '/reseller': typeof ResellerRoute
   '/reset-pin': typeof ResetPinRoute
@@ -533,6 +562,7 @@ export interface FileRoutesByTo {
   '/dashboard/fees': typeof DashboardFeesRoute
   '/dashboard/floorplan': typeof DashboardFloorplanRoute
   '/dashboard/forecast': typeof DashboardForecastRoute
+  '/dashboard/guest-requests': typeof DashboardGuestRequestsRoute
   '/dashboard/inbox': typeof DashboardInboxRoute
   '/dashboard/inventory': typeof DashboardInventoryRoute
   '/dashboard/invoices': typeof DashboardInvoicesRoute
@@ -541,6 +571,7 @@ export interface FileRoutesByTo {
   '/dashboard/orders': typeof DashboardOrdersRoute
   '/dashboard/payment-methods': typeof DashboardPaymentMethodsRoute
   '/dashboard/payments': typeof DashboardPaymentsRoute
+  '/dashboard/payouts': typeof DashboardPayoutsRoute
   '/dashboard/pricing': typeof DashboardPricingRoute
   '/dashboard/promos': typeof DashboardPromosRoute
   '/dashboard/qr': typeof DashboardQrRoute
@@ -557,6 +588,7 @@ export interface FileRoutesByTo {
   '/dashboard/tables': typeof DashboardTablesRoute
   '/dashboard/team': typeof DashboardTeamRoute
   '/dashboard/telegram': typeof DashboardTelegramRoute
+  '/dashboard/walkouts': typeof DashboardWalkoutsRoute
   '/dashboard/whatsapp': typeof DashboardWhatsappRoute
   '/me/$token': typeof MeTokenRoute
   '/q/$code': typeof QCodeRoute
@@ -578,6 +610,7 @@ export interface FileRoutesById {
   '/pay': typeof PayRoute
   '/payments': typeof PaymentsRoute
   '/pesaswapApp': typeof PesaswapAppRoute
+  '/receipt': typeof ReceiptRoute
   '/reports': typeof ReportsRoute
   '/reseller': typeof ResellerRoute
   '/reset-pin': typeof ResetPinRoute
@@ -605,6 +638,7 @@ export interface FileRoutesById {
   '/dashboard/fees': typeof DashboardFeesRoute
   '/dashboard/floorplan': typeof DashboardFloorplanRoute
   '/dashboard/forecast': typeof DashboardForecastRoute
+  '/dashboard/guest-requests': typeof DashboardGuestRequestsRoute
   '/dashboard/inbox': typeof DashboardInboxRoute
   '/dashboard/inventory': typeof DashboardInventoryRoute
   '/dashboard/invoices': typeof DashboardInvoicesRoute
@@ -613,6 +647,7 @@ export interface FileRoutesById {
   '/dashboard/orders': typeof DashboardOrdersRoute
   '/dashboard/payment-methods': typeof DashboardPaymentMethodsRoute
   '/dashboard/payments': typeof DashboardPaymentsRoute
+  '/dashboard/payouts': typeof DashboardPayoutsRoute
   '/dashboard/pricing': typeof DashboardPricingRoute
   '/dashboard/promos': typeof DashboardPromosRoute
   '/dashboard/qr': typeof DashboardQrRoute
@@ -629,6 +664,7 @@ export interface FileRoutesById {
   '/dashboard/tables': typeof DashboardTablesRoute
   '/dashboard/team': typeof DashboardTeamRoute
   '/dashboard/telegram': typeof DashboardTelegramRoute
+  '/dashboard/walkouts': typeof DashboardWalkoutsRoute
   '/dashboard/whatsapp': typeof DashboardWhatsappRoute
   '/me/$token': typeof MeTokenRoute
   '/q/$code': typeof QCodeRoute
@@ -651,6 +687,7 @@ export interface FileRouteTypes {
     | '/pay'
     | '/payments'
     | '/pesaswapApp'
+    | '/receipt'
     | '/reports'
     | '/reseller'
     | '/reset-pin'
@@ -678,6 +715,7 @@ export interface FileRouteTypes {
     | '/dashboard/fees'
     | '/dashboard/floorplan'
     | '/dashboard/forecast'
+    | '/dashboard/guest-requests'
     | '/dashboard/inbox'
     | '/dashboard/inventory'
     | '/dashboard/invoices'
@@ -686,6 +724,7 @@ export interface FileRouteTypes {
     | '/dashboard/orders'
     | '/dashboard/payment-methods'
     | '/dashboard/payments'
+    | '/dashboard/payouts'
     | '/dashboard/pricing'
     | '/dashboard/promos'
     | '/dashboard/qr'
@@ -702,6 +741,7 @@ export interface FileRouteTypes {
     | '/dashboard/tables'
     | '/dashboard/team'
     | '/dashboard/telegram'
+    | '/dashboard/walkouts'
     | '/dashboard/whatsapp'
     | '/me/$token'
     | '/q/$code'
@@ -720,6 +760,7 @@ export interface FileRouteTypes {
     | '/pay'
     | '/payments'
     | '/pesaswapApp'
+    | '/receipt'
     | '/reports'
     | '/reseller'
     | '/reset-pin'
@@ -747,6 +788,7 @@ export interface FileRouteTypes {
     | '/dashboard/fees'
     | '/dashboard/floorplan'
     | '/dashboard/forecast'
+    | '/dashboard/guest-requests'
     | '/dashboard/inbox'
     | '/dashboard/inventory'
     | '/dashboard/invoices'
@@ -755,6 +797,7 @@ export interface FileRouteTypes {
     | '/dashboard/orders'
     | '/dashboard/payment-methods'
     | '/dashboard/payments'
+    | '/dashboard/payouts'
     | '/dashboard/pricing'
     | '/dashboard/promos'
     | '/dashboard/qr'
@@ -771,6 +814,7 @@ export interface FileRouteTypes {
     | '/dashboard/tables'
     | '/dashboard/team'
     | '/dashboard/telegram'
+    | '/dashboard/walkouts'
     | '/dashboard/whatsapp'
     | '/me/$token'
     | '/q/$code'
@@ -791,6 +835,7 @@ export interface FileRouteTypes {
     | '/pay'
     | '/payments'
     | '/pesaswapApp'
+    | '/receipt'
     | '/reports'
     | '/reseller'
     | '/reset-pin'
@@ -818,6 +863,7 @@ export interface FileRouteTypes {
     | '/dashboard/fees'
     | '/dashboard/floorplan'
     | '/dashboard/forecast'
+    | '/dashboard/guest-requests'
     | '/dashboard/inbox'
     | '/dashboard/inventory'
     | '/dashboard/invoices'
@@ -826,6 +872,7 @@ export interface FileRouteTypes {
     | '/dashboard/orders'
     | '/dashboard/payment-methods'
     | '/dashboard/payments'
+    | '/dashboard/payouts'
     | '/dashboard/pricing'
     | '/dashboard/promos'
     | '/dashboard/qr'
@@ -842,6 +889,7 @@ export interface FileRouteTypes {
     | '/dashboard/tables'
     | '/dashboard/team'
     | '/dashboard/telegram'
+    | '/dashboard/walkouts'
     | '/dashboard/whatsapp'
     | '/me/$token'
     | '/q/$code'
@@ -863,6 +911,7 @@ export interface RootRouteChildren {
   PayRoute: typeof PayRoute
   PaymentsRoute: typeof PaymentsRoute
   PesaswapAppRoute: typeof PesaswapAppRoute
+  ReceiptRoute: typeof ReceiptRoute
   ReportsRoute: typeof ReportsRoute
   ResellerRoute: typeof ResellerRoute
   ResetPinRoute: typeof ResetPinRoute
@@ -925,6 +974,13 @@ declare module '@tanstack/react-router' {
       path: '/reports'
       fullPath: '/reports'
       preLoaderRoute: typeof ReportsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/receipt': {
+      id: '/receipt'
+      path: '/receipt'
+      fullPath: '/receipt'
+      preLoaderRoute: typeof ReceiptRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pesaswapApp': {
@@ -1053,6 +1109,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardWhatsappRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/walkouts': {
+      id: '/dashboard/walkouts'
+      path: '/walkouts'
+      fullPath: '/dashboard/walkouts'
+      preLoaderRoute: typeof DashboardWalkoutsRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/telegram': {
       id: '/dashboard/telegram'
       path: '/telegram'
@@ -1165,6 +1228,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardPricingRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/payouts': {
+      id: '/dashboard/payouts'
+      path: '/payouts'
+      fullPath: '/dashboard/payouts'
+      preLoaderRoute: typeof DashboardPayoutsRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/payments': {
       id: '/dashboard/payments'
       path: '/payments'
@@ -1219,6 +1289,13 @@ declare module '@tanstack/react-router' {
       path: '/inbox'
       fullPath: '/dashboard/inbox'
       preLoaderRoute: typeof DashboardInboxRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/guest-requests': {
+      id: '/dashboard/guest-requests'
+      path: '/guest-requests'
+      fullPath: '/dashboard/guest-requests'
+      preLoaderRoute: typeof DashboardGuestRequestsRouteImport
       parentRoute: typeof DashboardRoute
     }
     '/dashboard/forecast': {
@@ -1398,6 +1475,7 @@ interface DashboardRouteChildren {
   DashboardFeesRoute: typeof DashboardFeesRoute
   DashboardFloorplanRoute: typeof DashboardFloorplanRoute
   DashboardForecastRoute: typeof DashboardForecastRoute
+  DashboardGuestRequestsRoute: typeof DashboardGuestRequestsRoute
   DashboardInboxRoute: typeof DashboardInboxRoute
   DashboardInventoryRoute: typeof DashboardInventoryRoute
   DashboardInvoicesRoute: typeof DashboardInvoicesRoute
@@ -1406,6 +1484,7 @@ interface DashboardRouteChildren {
   DashboardOrdersRoute: typeof DashboardOrdersRoute
   DashboardPaymentMethodsRoute: typeof DashboardPaymentMethodsRoute
   DashboardPaymentsRoute: typeof DashboardPaymentsRoute
+  DashboardPayoutsRoute: typeof DashboardPayoutsRoute
   DashboardPricingRoute: typeof DashboardPricingRoute
   DashboardPromosRoute: typeof DashboardPromosRoute
   DashboardQrRoute: typeof DashboardQrRoute
@@ -1422,6 +1501,7 @@ interface DashboardRouteChildren {
   DashboardTablesRoute: typeof DashboardTablesRoute
   DashboardTeamRoute: typeof DashboardTeamRoute
   DashboardTelegramRoute: typeof DashboardTelegramRoute
+  DashboardWalkoutsRoute: typeof DashboardWalkoutsRoute
   DashboardWhatsappRoute: typeof DashboardWhatsappRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
 }
@@ -1442,6 +1522,7 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardFeesRoute: DashboardFeesRoute,
   DashboardFloorplanRoute: DashboardFloorplanRoute,
   DashboardForecastRoute: DashboardForecastRoute,
+  DashboardGuestRequestsRoute: DashboardGuestRequestsRoute,
   DashboardInboxRoute: DashboardInboxRoute,
   DashboardInventoryRoute: DashboardInventoryRoute,
   DashboardInvoicesRoute: DashboardInvoicesRoute,
@@ -1450,6 +1531,7 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardOrdersRoute: DashboardOrdersRoute,
   DashboardPaymentMethodsRoute: DashboardPaymentMethodsRoute,
   DashboardPaymentsRoute: DashboardPaymentsRoute,
+  DashboardPayoutsRoute: DashboardPayoutsRoute,
   DashboardPricingRoute: DashboardPricingRoute,
   DashboardPromosRoute: DashboardPromosRoute,
   DashboardQrRoute: DashboardQrRoute,
@@ -1466,6 +1548,7 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardTablesRoute: DashboardTablesRoute,
   DashboardTeamRoute: DashboardTeamRoute,
   DashboardTelegramRoute: DashboardTelegramRoute,
+  DashboardWalkoutsRoute: DashboardWalkoutsRoute,
   DashboardWhatsappRoute: DashboardWhatsappRoute,
   DashboardIndexRoute: DashboardIndexRoute,
 }
@@ -1496,6 +1579,7 @@ const rootRouteChildren: RootRouteChildren = {
   PayRoute: PayRoute,
   PaymentsRoute: PaymentsRoute,
   PesaswapAppRoute: PesaswapAppRoute,
+  ReceiptRoute: ReceiptRoute,
   ReportsRoute: ReportsRoute,
   ResellerRoute: ResellerRoute,
   ResetPinRoute: ResetPinRoute,

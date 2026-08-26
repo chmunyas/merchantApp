@@ -46,16 +46,22 @@ export const smsAdapter: ChannelAdapter = {
   parseInbound(body) {
     return parseSmsInbound(body);
   },
-  // Send via Africa's Talking (Kenya). Falls back to "simulated" without creds.
+  // Send via Africa's Talking (Kenya). Provider acceptance is not delivery.
   async send(handle, text, env): Promise<OutboundResult> {
     const apiKey = envVar(env, "AT_API_KEY");
     const username = envVar(env, "AT_USERNAME");
-    if (!apiKey || !username) return { delivery: "simulated" };
+    if (!apiKey || !username) {
+      return {
+        delivery: "failed",
+        retryable: false,
+        error: "channel credentials missing",
+      };
+    }
     const params = new URLSearchParams({ username, to: handle, message: text });
     const senderId = envVar(env, "AT_SENDER_ID");
     if (senderId) params.set("from", senderId);
     try {
-      await fetch("https://api.africastalking.com/version1/messaging", {
+      const response = await fetch("https://api.africastalking.com/version1/messaging", {
         method: "POST",
         headers: {
           apiKey,
@@ -64,9 +70,41 @@ export const smsAdapter: ChannelAdapter = {
         },
         body: params.toString(),
       });
-      return { delivery: "sent" };
+      if (!response.ok) {
+        return {
+          delivery: "failed",
+          providerCode: String(response.status),
+          retryable: response.status === 429 || response.status >= 500,
+        };
+      }
+      const body = (await response.json().catch(() => null)) as
+        | {
+            SMSMessageData?: {
+              Recipients?: Array<{ status?: string; messageId?: string }>;
+            };
+          }
+        | null;
+      const recipients = body?.SMSMessageData?.Recipients ?? [];
+      return recipients.length > 0 && recipients.every((recipient) =>
+        /success/i.test(String(recipient.status ?? "")),
+      )
+        ? {
+            delivery: "accepted",
+            providerMessageId: recipients[0]?.messageId,
+            providerCode: String(response.status),
+            retryable: false,
+          }
+        : {
+            delivery: "failed",
+            providerCode: String(response.status),
+            retryable: false,
+          };
     } catch {
-      return { delivery: "simulated" };
+      return {
+        delivery: "unknown",
+        retryable: true,
+        error: "network outcome unknown",
+      };
     }
   },
 };

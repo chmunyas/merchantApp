@@ -13,7 +13,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { getCurrentVenueId } from "@/lib/merchant-dashboard";
+import { ModalOverlay } from "@/components/ui/modal-overlay";
+import { getCurrentVenueId } from "@/lib/tenant-store";
 import { authFetch } from "@/lib/auth";
 import { useAuthQuery } from "@/lib/use-auth-query";
 import { cn } from "@/lib/utils";
@@ -340,17 +341,19 @@ function DashboardContactsPage() {
       </div>
 
       {timelineFor && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => setTimelineFor(null)}
+        <ModalOverlay
+          onClose={() => setTimelineFor(null)}
+          labelledBy="contact-timeline-heading"
+          className="flex items-center justify-center p-4"
+          panelClassName="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+          closeLabel="Close customer timeline"
         >
-          <div
-            className="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
-            onClick={(event) => event.stopPropagation()}
-          >
             <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
               <div>
-                <p className="text-sm font-semibold text-slate-900">
+                <p
+                  id="contact-timeline-heading"
+                  className="text-sm font-semibold text-slate-900"
+                >
                   {timelineFor.name}
                 </p>
                 <p className="text-xs text-muted-foreground">
@@ -409,8 +412,7 @@ function DashboardContactsPage() {
                   ))
               )}
             </div>
-          </div>
-        </div>
+        </ModalOverlay>
       )}
     </div>
   );

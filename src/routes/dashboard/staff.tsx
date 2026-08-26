@@ -64,6 +64,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { TipsPanel } from "@/components/staff/TipsPanel";
 import {
   ensureMerchantDemoData,
   flattenTransactions,
@@ -86,7 +87,7 @@ export const Route = createFileRoute("/dashboard/staff")({
   component: StaffDashboardPage,
 });
 
-type StaffTab = "team" | "performance" | "shifts" | "payouts" | "notifications";
+type StaffTab = "team" | "performance" | "shifts" | "tips" | "payouts" | "notifications";
 type PerformancePeriod = "today" | "week" | "month";
 type AutoPayoutMode = "manual" | "daily" | "weekly";
 type StaffNotificationPreferences = Record<
@@ -99,7 +100,6 @@ type StaffFormState = {
   name: string;
   phone: string;
   role: StaffRole;
-  pin: string;
   assignedZones: string[];
 };
 
@@ -280,7 +280,6 @@ function emptyStaffForm(): StaffFormState {
     name: "",
     phone: "2547",
     role: "waiter",
-    pin: "",
     assignedZones: [],
   };
 }
@@ -458,7 +457,7 @@ function StaffDashboardPage() {
   const [walkoutForm, setWalkoutForm] =
     useState<WalkoutFormState>(emptyWalkoutForm);
   const [sendingBatch, setSendingBatch] = useState(false);
-  const [sendingPayoutTo, setSendingPayoutTo] = useState<string | null>(null);
+  const [sendingPayoutTo] = useState<string | null>(null);
 
   const snapshot = initialSnapshot;
   const zoneMap = useMemo(
@@ -835,7 +834,6 @@ function StaffDashboardPage() {
       name: staff.name,
       phone: staff.phone,
       role: staff.role,
-      pin: staff.pin,
       assignedZones: staff.assignedZones ?? [],
     });
     setStaffDialogOpen(true);
@@ -844,10 +842,9 @@ function StaffDashboardPage() {
   const handleSaveStaff = () => {
     const name = staffForm.name.trim();
     const phone = staffForm.phone.trim();
-    const pin = staffForm.pin.trim();
-    if (!name || !/^254\d{9}$/.test(phone) || !/^\d{4}$/.test(pin)) {
+    if (!name || !/^254\d{9}$/.test(phone)) {
       toast.error(
-        "Use a name, a valid 254XXXXXXXXX M-Pesa number and a 4-digit PIN.",
+        "Use a name and a valid 254XXXXXXXXX M-Pesa number.",
       );
       return;
     }
@@ -867,7 +864,6 @@ function StaffDashboardPage() {
                 ...staff,
                 name,
                 phone,
-                pin,
                 role: staffForm.role,
                 assignedZones: staffForm.assignedZones,
                 assignedTables,
@@ -881,7 +877,6 @@ function StaffDashboardPage() {
             name,
             phone,
             role: staffForm.role,
-            pin,
             isActive: true,
             hiredAt: new Date().toISOString(),
             assignedZones: staffForm.assignedZones,
@@ -1138,57 +1133,9 @@ function StaffDashboardPage() {
   };
 
   const handleIndividualPayout = async () => {
-    const staff = staffById.get(payoutForm.staffId);
-    const amount = Number(payoutForm.amount);
-    if (!staff || amount <= 0) {
-      toast.error("Choose a staff member and enter a valid payout amount.");
-      return;
-    }
-    setSendingPayoutTo(staff.id);
-    const payoutId = createId("payout");
-    const startedAt = new Date().toISOString();
-    const processingPayout: StaffPayout = {
-      id: payoutId,
-      staffId: staff.id,
-      amount,
-      currency: "KES",
-      mpesaPhone: staff.phone,
-      status: "processing",
-      type: payoutForm.type,
-      createdAt: startedAt,
-      period: startedAt.slice(0, 7),
-    };
-    updatePayouts([processingPayout, ...payouts]);
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    const processedAt = new Date().toISOString();
-    const nextPayouts: StaffPayout[] = [
-      {
-        ...processingPayout,
-        status: "sent",
-        processedAt,
-        mpesaReference: `MPS-${staff.phone.slice(-4)}-${Date.now().toString().slice(-5)}`,
-      },
-      ...payouts,
-    ];
-    const nextStaff = staffMembers.map((member) =>
-      member.id === staff.id
-        ? {
-            ...member,
-            totalEarnings: member.totalEarnings + amount,
-            pendingPayout:
-              payoutForm.type === "tip"
-                ? Math.max(0, member.pendingPayout - amount)
-                : member.pendingPayout,
-            lastPayoutAt: processedAt,
-          }
-        : member,
+    toast.error(
+      "Simulated payouts are disabled. Create a pending payout in Accounting and wait for verified transfer evidence.",
     );
-    updatePayouts(nextPayouts);
-    updateStaffOnly(nextStaff);
-    addNotification(addPayoutNotification(staff.id, amount));
-    setPayoutForm(emptyPayoutForm(staff.id));
-    setSendingPayoutTo(null);
-    toast.success(`STK push simulated successfully to ${staff.phone}.`);
   };
 
   const handleWalkoutReport = () => {
@@ -1282,7 +1229,7 @@ function StaffDashboardPage() {
         onValueChange={(value) => setActiveTab(value as StaffTab)}
         className="space-y-6"
       >
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-white p-2 lg:grid-cols-5">
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-white p-2 lg:grid-cols-6">
           <TabsTrigger value="team" className="rounded-xl">
             Team
           </TabsTrigger>
@@ -1291,6 +1238,9 @@ function StaffDashboardPage() {
           </TabsTrigger>
           <TabsTrigger value="shifts" className="rounded-xl">
             Shifts &amp; Scheduling
+          </TabsTrigger>
+          <TabsTrigger value="tips" className="rounded-xl">
+            Tips
           </TabsTrigger>
           <TabsTrigger value="payouts" className="rounded-xl">
             Payouts
@@ -1883,6 +1833,10 @@ function StaffDashboardPage() {
               </div>
             </div>
           </div>
+        </TabsContent>
+
+        <TabsContent value="tips" className="space-y-6">
+          <TipsPanel />
         </TabsContent>
 
         <TabsContent value="payouts" className="space-y-6">
@@ -2506,20 +2460,6 @@ function StaffDashboardPage() {
                 <option value="admin">Admin</option>
               </select>
             </label>
-            <label className="space-y-2 text-sm text-slate-600">
-              <span>4-digit PIN</span>
-              <Input
-                value={staffForm.pin}
-                onChange={(event) =>
-                  setStaffForm((current) => ({
-                    ...current,
-                    pin: event.target.value,
-                  }))
-                }
-                maxLength={4}
-                placeholder="1234"
-              />
-            </label>
             <div className="space-y-2 sm:col-span-2">
               <span className="text-sm text-slate-600">Zone assignment</span>
               <div className="grid gap-2 sm:grid-cols-3">
@@ -2727,7 +2667,7 @@ function StaffDashboardPage() {
                     {profileStaff.phone}
                   </p>
                   <p className="mt-1 text-sm text-slate-500">
-                    App PIN • {profileStaff.pin}
+                    PINs are managed securely in venue staff settings.
                   </p>
                 </div>
                 <div className="rounded-2xl bg-slate-50 p-4">

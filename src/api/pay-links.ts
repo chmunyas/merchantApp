@@ -1,5 +1,6 @@
 import { requireAuth } from "@/api/auth";
 import { getSql } from "@/lib/db";
+import { normalizeCurrency, toMinorUnits } from "@/lib/currency";
 import {
   createPayLink,
   resolvePayLink,
@@ -7,6 +8,7 @@ import {
 } from "@/lib/pay-links";
 import { roleAtLeast } from "@/lib/rbac";
 import { venueFromPayload } from "@/lib/tenancy";
+import { tokenHasScope } from "@/lib/api-tokens";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -57,6 +59,9 @@ export async function handlePayLinkRoute(
   if (!roleAtLeast(payload, "staff")) {
     return json({ error: "forbidden" }, 403);
   }
+  if (!tokenHasScope(payload, request.method === "GET" ? "payments:read" : "payments:write")) {
+    return json({ error: "forbidden" }, 403);
+  }
   const venue = venueFromPayload(payload, url);
 
   // Mint a pay link — POST /api/pay-links { amount(minor|whole?), description, ... }.
@@ -72,18 +77,22 @@ export async function handlePayLinkRoute(
       name?: string;
       expiresInMinutes?: number;
     };
+    const currency = normalizeCurrency(body.currency);
+    if (!currency) {
+      return json({ error: "unsupported currency" }, 400);
+    }
     const amountMinor =
       typeof body.amount === "number" && body.amount > 0
         ? Math.round(body.amount)
         : typeof body.amountKes === "number" && body.amountKes > 0
-          ? Math.round(body.amountKes * 100)
+          ? toMinorUnits(body.amountKes, currency)
           : 0;
     if (amountMinor <= 0) {
       return json({ error: "amount must be positive" }, 400);
     }
     const result = await createPayLink(env, venue, {
       amount: amountMinor,
-      currency: body.currency,
+      currency,
       description: body.description ?? null,
       kind: (body.kind as PayLinkKind) ?? "request",
       reference: body.reference ?? null,

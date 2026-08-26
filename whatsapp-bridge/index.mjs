@@ -23,13 +23,16 @@ const APP_INBOUND_URL =
 const APP_BASE_URL = process.env.APP_BASE_URL ?? "http://merchant-app:8080";
 const BRIDGE_PORT = Number(process.env.BRIDGE_PORT ?? 8090);
 const BRIDGE_VENUE = process.env.BRIDGE_VENUE ?? "main";
-// Shared secret required on mutating / pairing endpoints when the bridge is
+// Shared secret required on all bridge-control endpoints when the bridge is
 // exposed publicly (e.g. behind a Cloudflare Tunnel so the deployed Worker can
-// reach it). Unset => open (safe only on an internal-only Docker network).
+// reach it), and presented to the app on bridge/inbound.
 const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN ?? "";
 // Shared secret presented to the app's cron sweeps (invoicing/run, sequences/run)
 // so those endpoints can reject anonymous callers. Matches the app's CRON_SECRET.
 const CRON_SECRET = process.env.CRON_SECRET ?? "";
+// Presented on Telegram updates forwarded from long polling to the app. It must
+// match TELEGRAM_WEBHOOK_SECRET on the Worker in production.
+const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET ?? "";
 
 const logger = pino({ level: "silent" });
 const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 4 });
@@ -117,13 +120,27 @@ function jidToNumber(jid) {
 
 async function forwardInbound(from, name, text, id) {
   try {
-    await fetch(APP_INBOUND_URL, {
+    const response = await fetch(APP_INBOUND_URL, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ venue: BRIDGE_VENUE, from, name, text, id }),
+      headers: {
+        "content-type": "application/json",
+        ...(BRIDGE_TOKEN ? { "x-webhook-secret": BRIDGE_TOKEN } : {}),
+      },
+      body: JSON.stringify({
+        accountId: meNumber ? String(meNumber).replace(/[^\d]/g, "") : null,
+        from,
+        name,
+        text,
+        id,
+      }),
     });
+    if (!response.ok) {
+      throw new Error(`app ingress rejected with ${response.status}`);
+    }
+    return true;
   } catch (error) {
     logger.error({ error }, "failed to forward inbound");
+    return false;
   }
 }
 
@@ -206,12 +223,19 @@ async function start() {
       } catch {
         /* presence is best-effort */
       }
-      await forwardInbound(
-        jidToNumber(jid),
-        message.pushName ?? null,
-        text,
-        message.key.id,
-      );
+      let forwarded = false;
+      for (let attempt = 0; attempt < 5 && !forwarded; attempt += 1) {
+        forwarded = await forwardInbound(
+          jidToNumber(jid),
+          message.pushName ?? null,
+          text,
+          message.key.id,
+        );
+        if (!forwarded) await sleep(500 * 2 ** attempt);
+      }
+      if (!forwarded) {
+        logger.error({ messageId: message.key.id }, "inbound was not durably acknowledged");
+      }
     }
   });
 }
@@ -219,12 +243,13 @@ async function start() {
 async function sendMessage(to, text) {
   if (!sock || status !== "open") throw new Error("not connected");
   const jid = numberToJid(to);
-  await sock.sendMessage(jid, { text });
+  const sent = await sock.sendMessage(jid, { text });
   try {
     await sock.sendPresenceUpdate("paused", jid);
   } catch {
     /* best-effort */
   }
+  return sent?.key?.id ?? null;
 }
 
 async function logout() {
@@ -261,6 +286,10 @@ setInterval(() => {
     method: "POST",
     headers: cronHeaders,
   }).catch(() => {});
+  fetch(`${APP_BASE_URL}/api/channels/run`, {
+    method: "POST",
+    headers: cronHeaders,
+  }).catch(() => {});
 }, 180000);
 
 // --- Telegram long polling (official Bot API; forwards to the app pipeline) ---
@@ -283,6 +312,7 @@ async function getTelegramToken() {
 
 async function telegramLoop() {
   let announced = false;
+  let tgBotId = null;
   for (;;) {
     const token = await getTelegramToken();
     if (!token) {
@@ -293,6 +323,12 @@ async function telegramLoop() {
     if (!announced) {
       console.log("[whatsapp-bridge] telegram polling started");
       announced = true;
+      try {
+        const me = await fetch(`https://api.telegram.org/bot${token}/getMe`).then((r) => r.json());
+        tgBotId = me.ok && me.result?.id != null ? String(me.result.id) : null;
+      } catch {
+        tgBotId = null;
+      }
     }
     try {
       const res = await fetch(
@@ -301,15 +337,30 @@ async function telegramLoop() {
       const data = await res.json();
       if (data.ok && Array.isArray(data.result)) {
         for (const update of data.result) {
-          tgOffset = update.update_id + 1;
+          if (!tgBotId) throw new Error("telegram bot identity unavailable");
           console.log(
             `[whatsapp-bridge] telegram update from ${update.message?.from?.first_name}: ${update.message?.text}`,
           );
-          fetch(`${APP_BASE_URL}/api/telegram/webhook`, {
+          const forwarded = await fetch(
+            `${APP_BASE_URL}/api/channel-webhooks/telegram/${encodeURIComponent(tgBotId)}`,
+            {
             method: "POST",
-            headers: { "content-type": "application/json" },
+            headers: {
+              "content-type": "application/json",
+              ...(TELEGRAM_WEBHOOK_SECRET
+                ? {
+                    "x-telegram-bot-api-secret-token":
+                      TELEGRAM_WEBHOOK_SECRET,
+                  }
+                : {}),
+            },
             body: JSON.stringify(update),
-          }).catch(() => {});
+            },
+          );
+          if (!forwarded.ok) {
+            throw new Error(`app telegram ingress rejected with ${forwarded.status}`);
+          }
+          tgOffset = update.update_id + 1;
         }
       } else if (data.error_code === 409) {
         console.log("[whatsapp-bridge] telegram 409 — a webhook is set; backing off");
@@ -371,6 +422,9 @@ function authorized(req) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   try {
+    if (url.pathname === "/status" && req.method === "GET" && !authorized(req)) {
+      return sendJson(res, 401, { ok: false, error: "unauthorized" });
+    }
     if (url.pathname === "/status" && req.method === "GET") {
       return sendJson(res, 200, {
         enabled: true,
@@ -399,8 +453,8 @@ const server = http.createServer(async (req, res) => {
       if (!body.to || !body.text) {
         return sendJson(res, 400, { ok: false, error: "to and text required" });
       }
-      await sendMessage(body.to, body.text);
-      return sendJson(res, 200, { ok: true });
+      const id = await sendMessage(body.to, body.text);
+      return sendJson(res, 200, { ok: true, id });
     }
     if (url.pathname === "/logout" && req.method === "POST") {
       await logout();

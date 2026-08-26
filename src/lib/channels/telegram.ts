@@ -47,9 +47,15 @@ export const telegramAdapter: ChannelAdapter = {
   parseInbound(body) {
     return parseTelegramInbound(body);
   },
-  async send(handle, text, env, venue): Promise<OutboundResult> {
-    const { botToken } = await getTelegramConfig(env, venue);
-    if (!botToken) return { delivery: "simulated" };
+  async send(handle, text, env, venue, options): Promise<OutboundResult> {
+    const { botToken } = await getTelegramConfig(env, venue, options?.accountId);
+    if (!botToken) {
+      return {
+        delivery: "failed",
+        retryable: false,
+        error: "channel credentials missing",
+      };
+    }
     const chatId = handle.replace(/^tg:/, "");
     try {
       const res = await fetch(
@@ -65,11 +71,35 @@ export const telegramAdapter: ChannelAdapter = {
       // inspect the body to avoid reporting a rejected send as delivered.
       const data = (await res.json().catch(() => null)) as {
         ok?: boolean;
+        result?: { message_id?: number };
+        error_code?: number;
+        description?: string;
+        parameters?: { retry_after?: number };
       } | null;
-      if (res.ok && data?.ok) return { delivery: "sent" };
-      return { delivery: "simulated" };
+      if (res.ok && data?.ok) {
+        return {
+          delivery: "accepted",
+          providerMessageId:
+            data.result?.message_id == null
+              ? undefined
+              : String(data.result.message_id),
+          providerCode: String(res.status),
+          retryable: false,
+        };
+      }
+      return {
+        delivery: "failed",
+        providerCode: String(data?.error_code ?? res.status),
+        retryable: res.status === 429 || res.status >= 500,
+        retryAfterSeconds: data?.parameters?.retry_after,
+        error: data?.description,
+      };
     } catch {
-      return { delivery: "simulated" };
+      return {
+        delivery: "unknown",
+        retryable: true,
+        error: "network outcome unknown",
+      };
     }
   },
 };

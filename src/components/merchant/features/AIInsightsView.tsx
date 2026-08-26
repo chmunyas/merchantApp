@@ -9,10 +9,13 @@ import {
 
 import type {
   ChaseStep,
-  CustomerScore,
   Invoice,
   PaymentPrediction,
 } from "./types";
+import {
+  scoreCustomerHealth,
+  type CustomerHealthScore,
+} from "@/lib/customer-health";
 
 const CHASE_SEQUENCE: ChaseStep[] = [
   { day: 1, tone: "gentle", label: "Friendly reminder" },
@@ -21,62 +24,30 @@ const CHASE_SEQUENCE: ChaseStep[] = [
   { day: 21, tone: "final", label: "Final notice before escalation" },
 ];
 
-function computeCustomerScores(invoices: Invoice[]): CustomerScore[] {
-  const customers = new Map<
-    string,
-    { paid: number[]; total: number; revenue: number; onTime: number }
-  >();
+type CustomerHealth = CustomerHealthScore & {
+  name: string;
+  currency: string;
+};
 
-  invoices.forEach((inv) => {
-    if (!customers.has(inv.customer)) {
-      customers.set(inv.customer, {
-        paid: [],
-        total: 0,
-        revenue: 0,
-        onTime: 0,
-      });
-    }
-    const c = customers.get(inv.customer)!;
-    c.total++;
-    c.revenue += inv.amount;
-    if (inv.status === "Paid" && inv.paidAt) {
-      const created = inv.timeline?.[0]?.at;
-      if (created) {
-        const days = Math.max(
-          1,
-          Math.round(
-            (new Date(inv.paidAt).getTime() - new Date(created).getTime()) /
-              86400000,
-          ),
-        );
-        c.paid.push(days);
-        if (days <= 7) c.onTime++;
-      }
-    }
+function computeCustomerHealth(invoices: Invoice[]): CustomerHealth[] {
+  const grouped = new Map<string, Invoice[]>();
+  invoices.forEach((invoice) => {
+    const current = grouped.get(invoice.customer) ?? [];
+    current.push(invoice);
+    grouped.set(invoice.customer, current);
   });
-
-  return Array.from(customers.entries()).map(([name, data]) => {
-    const avgDays =
-      data.paid.length > 0
-        ? Math.round(data.paid.reduce((a, b) => a + b, 0) / data.paid.length)
-        : 14;
-    const onTimeRate = data.total > 0 ? data.onTime / data.total : 0;
-    const grade: "A" | "B" | "C" =
-      avgDays <= 5 && onTimeRate >= 0.8 ? "A" : avgDays <= 14 ? "B" : "C";
-    return {
+  return Array.from(grouped.entries())
+    .map(([name, customerInvoices]) => ({
       name,
-      grade,
-      avgDaysToPay: avgDays,
-      totalInvoices: data.total,
-      totalRevenue: data.revenue,
-      onTimeRate,
-    };
-  });
+      currency: customerInvoices[0]?.currency ?? "KES",
+      ...scoreCustomerHealth(customerInvoices),
+    }))
+    .sort((a, b) => b.score - a.score || b.outstanding - a.outstanding);
 }
 
 function computePredictions(
   invoices: Invoice[],
-  scores: CustomerScore[],
+  scores: CustomerHealth[],
 ): PaymentPrediction[] {
   const pending = invoices.filter(
     (i) =>
@@ -86,10 +57,11 @@ function computePredictions(
   );
   return pending.map((inv) => {
     const score = scores.find((s) => s.name === inv.customer);
-    const baseDays = score?.avgDaysToPay ?? 10;
-    const jitter = Math.round((Math.random() - 0.5) * 3);
-    const predictedDays = Math.max(1, baseDays + jitter);
-    const confidence = score ? Math.min(95, 60 + score.totalInvoices * 10) : 45;
+    const baseDays = score?.averageDaysToPay || 10;
+    const predictedDays = Math.max(1, baseDays);
+    const confidence = score
+      ? Math.min(95, 55 + score.paidInvoices * 10)
+      : 45;
     return {
       invoiceId: inv.id,
       customer: inv.customer,
@@ -104,8 +76,8 @@ function computePredictions(
 function computeCashFlowForecast(
   invoices: Invoice[],
   predictions: PaymentPrediction[],
-): { day: string; amount: number }[] {
-  const forecast: { day: string; amount: number }[] = [];
+  ): { day: string; amount: number; currency: string }[] {
+  const forecast: { day: string; amount: number; currency: string }[] = [];
   const today = new Date();
   for (let d = 0; d < 7; d++) {
     const date = new Date(today);
@@ -119,7 +91,11 @@ function computeCashFlowForecast(
     const expectedAmount = predictions
       .filter((p) => p.predictedDays >= d && p.predictedDays < d + 2)
       .reduce((sum, p) => sum + p.amount, 0);
-    forecast.push({ day: dayLabel, amount: expectedAmount });
+    forecast.push({
+      day: dayLabel,
+      amount: expectedAmount,
+      currency: predictions[0]?.currency ?? invoices[0]?.currency ?? "KES",
+    });
   }
   return forecast;
 }
@@ -148,12 +124,14 @@ function getChaseStatus(invoice: Invoice): {
 
 export function AIInsightsView({
   invoices,
+  isServerBacked,
   onOpen,
 }: {
   invoices: Invoice[];
+  isServerBacked: boolean;
   onOpen: (inv: Invoice) => void;
 }) {
-  const scores = useMemo(() => computeCustomerScores(invoices), [invoices]);
+  const scores = useMemo(() => computeCustomerHealth(invoices), [invoices]);
   const predictions = useMemo(
     () => computePredictions(invoices, scores),
     [invoices, scores],
@@ -173,9 +151,12 @@ export function AIInsightsView({
   const avgDSO =
     scores.length > 0
       ? Math.round(
-          scores.reduce((s, c) => s + c.avgDaysToPay, 0) / scores.length,
+          scores.reduce((s, c) => s + c.averageDaysToPay, 0) / scores.length,
         )
       : 0;
+  const healthAverage = scores.length
+    ? Math.round(scores.reduce((sum, customer) => sum + customer.score, 0) / scores.length)
+    : null;
 
   return (
     <div className="px-5 pt-3 space-y-5">
@@ -189,7 +170,7 @@ export function AIInsightsView({
         <div className="flex items-center gap-1 rounded-full bg-purple-100 px-2 py-1">
           <Brain className="size-3 text-purple-600" />
           <span className="text-[9px] font-mono text-purple-700 uppercase">
-            Live
+            {isServerBacked ? "Live" : "Demo"}
           </span>
         </div>
       </div>
@@ -215,14 +196,7 @@ export function AIInsightsView({
             Score avg
           </p>
           <p className="text-xl font-bold font-mono">
-            {scores.length > 0
-              ? scores.filter((s) => s.grade === "A").length > scores.length / 2
-                ? "A"
-                : scores.filter((s) => s.grade === "C").length >
-                    scores.length / 2
-                  ? "C"
-                  : "B"
-              : "—"}
+            {healthAverage === null ? "—" : `${healthAverage}/100`}
           </p>
         </div>
       </div>
@@ -250,7 +224,9 @@ export function AIInsightsView({
                 />
               </div>
               <span className="text-[10px] font-mono font-semibold w-14 text-right">
-                {f.amount > 0 ? `$${(f.amount / 1000).toFixed(1)}k` : "—"}
+                {f.amount > 0
+                  ? `${f.currency} ${f.amount.toLocaleString()}`
+                  : "—"}
               </span>
             </div>
           ))}
@@ -378,31 +354,27 @@ export function AIInsightsView({
               key={customer.name}
               className="flex items-center gap-3 p-2.5 rounded-xl bg-muted"
             >
-              <span
-                className={`size-7 rounded-full flex items-center justify-center text-xs font-bold ${
-                  customer.grade === "A"
-                    ? "bg-emerald-100 text-emerald-700"
-                    : customer.grade === "B"
-                      ? "bg-amber-100 text-amber-700"
-                      : "bg-red-100 text-red-700"
-                }`}
-              >
-                {customer.grade}
+              <span className="size-11 rounded-full flex items-center justify-center text-[10px] font-bold bg-emerald-100 text-emerald-700">
+                {customer.score}
               </span>
               <div className="flex-1 min-w-0">
                 <p className="text-[11px] font-semibold truncate">
                   {customer.name}
                 </p>
                 <p className="text-[9px] font-mono text-muted-foreground">
-                  {customer.avgDaysToPay}d avg · {customer.totalInvoices}{" "}
-                  invoices · {Math.round(customer.onTimeRate * 100)}% on-time
+                  {customer.band} · {customer.averageDaysToPay || "—"}d avg · {customer.paidInvoices}/{customer.totalInvoices} paid
                 </p>
               </div>
               <span className="text-[10px] font-mono font-bold">
-                ${(customer.totalRevenue / 1000).toFixed(1)}k
+                {customer.currency} {customer.outstanding.toLocaleString()} due
               </span>
             </div>
           ))}
+        </div>
+        <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3 text-[10px] leading-relaxed text-slate-600">
+          <p className="font-semibold text-slate-800">How the score is calculated</p>
+          <p>0–100 = payment reliability (40) + recent activity (25) + repeat engagement (20) + settled balance (15).</p>
+          <p className="mt-1">Reliability uses paid invoices; activity uses days since the latest invoice event; engagement uses invoice count; balance uses paid value versus total value. Scores are calculated from the invoices currently loaded.</p>
         </div>
       </div>
     </div>

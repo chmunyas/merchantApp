@@ -1,6 +1,13 @@
 import { useState } from "react";
 import { Lock, Pencil, QrCode } from "lucide-react";
 
+import { invoiceNumber } from "@/lib/invoice-number";
+import {
+  DEFAULT_CURRENCY,
+  normalizeCurrency,
+  SUPPORTED_CURRENCIES,
+  type SupportedCurrency,
+} from "@/lib/currency";
 import type { Invoice } from "./types";
 import {
   FX_RATES,
@@ -25,7 +32,9 @@ export function InvoiceCreator({
   const [amount, setAmount] = useState(
     initialInvoice ? String(initialInvoice.amount) : "",
   );
-  const [currency, setCurrency] = useState(initialInvoice?.currency ?? "USD");
+  const [currency, setCurrency] = useState<SupportedCurrency>(
+    normalizeCurrency(initialInvoice?.currency) ?? DEFAULT_CURRENCY,
+  );
   const [note, setNote] = useState(initialInvoice?.note ?? "");
   const [isRecurring, setIsRecurring] = useState(
     Boolean(initialInvoice?.recurring),
@@ -101,11 +110,16 @@ export function InvoiceCreator({
           <Field label="Currency">
             <select
               value={currency}
-              onChange={(e) => setCurrency(e.target.value)}
+              onChange={(e) => {
+                const next = normalizeCurrency(e.target.value);
+                if (next) setCurrency(next);
+              }}
               className="w-full bg-transparent text-sm font-bold font-mono outline-none"
             >
-              {["USD", "EUR", "GBP", "NGN", "KES"].map((c) => (
-                <option key={c}>{c}</option>
+              {SUPPORTED_CURRENCIES.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
               ))}
             </select>
           </Field>
@@ -245,7 +259,8 @@ export function InvoiceCreator({
             </div>
             <button
               type="button"
-              onClick={() => setLockFx((v) => !v)}
+              onClick={() => setLockFx(false)}
+              disabled
               className={`relative h-7 w-12 rounded-full transition-colors ${
                 lockFx ? "bg-foreground" : "bg-muted"
               }`}
@@ -383,9 +398,7 @@ export function InvoiceCreator({
           disabled={!valid}
           onClick={() =>
             onCreate({
-              id:
-                initialInvoice?.id ??
-                `INV-${Math.floor(10000 + Math.random() * 89999)}`,
+              id: initialInvoice?.id ?? invoiceNumber(),
               customer: customer.trim(),
               amount: Number(amount),
               currency,

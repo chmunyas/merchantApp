@@ -1,5 +1,5 @@
 import { getSql } from "@/lib/db";
-import { requireAuth, requireRole } from "@/api/auth";
+import { requireHumanAuth, requireRole } from "@/api/auth";
 import { hashPassword } from "@/lib/jwt";
 
 const corsHeaders = {
@@ -19,6 +19,15 @@ function parseDate(value: string | null, fallback: number): number {
   if (!value) return fallback;
   const t = Date.parse(value);
   return Number.isFinite(t) ? t : fallback;
+}
+
+async function requireReseller(
+  request: Request,
+  env: unknown,
+): Promise<{ payload: Awaited<ReturnType<typeof requireHumanAuth>>; orgId: string } | null> {
+  const payload = await requireHumanAuth(request, env);
+  if (!payload || payload.role !== "reseller_admin" || !payload.org) return null;
+  return { payload, orgId: payload.org };
 }
 
 // Reseller organizations (e.g. a bank that resells the app to its merchants).
@@ -118,10 +127,9 @@ export async function handleOrgRoute(
   }
 
   if (url.pathname === "/api/org/merchants" && request.method === "GET") {
-    const payload = await requireAuth(request, env);
-    if (!payload) return json({ error: "unauthorized" }, 401);
-    const orgId = typeof payload.org === "string" ? payload.org : null;
-    if (!orgId) return json({ error: "not a reseller account" }, 403);
+    const reseller = await requireReseller(request, env);
+    if (!reseller) return json({ error: "forbidden" }, 403);
+    const { orgId } = reseller;
     const merchants = await sql`
       SELECT v.id, v.name, v.code, v.active, v.created_at,
              (SELECT count(*)::int FROM app_users u WHERE u.venue_id = v.id) AS users
@@ -132,10 +140,9 @@ export async function handleOrgRoute(
 
   // Reseller admin: my own org (for the branding editor).
   if (url.pathname === "/api/org/me" && request.method === "GET") {
-    const payload = await requireAuth(request, env);
-    if (!payload) return json({ error: "unauthorized" }, 401);
-    const orgId = typeof payload.org === "string" ? payload.org : null;
-    if (!orgId) return json({ error: "not a reseller account" }, 403);
+    const reseller = await requireReseller(request, env);
+    if (!reseller) return json({ error: "forbidden" }, 403);
+    const { orgId } = reseller;
     const [org] = await sql`
       SELECT id, name, slug, branding, require_invite FROM organizations WHERE id = ${orgId} LIMIT 1`;
     return json({ org: org ?? null });
@@ -143,10 +150,9 @@ export async function handleOrgRoute(
 
   // Reseller admin: onboard a merchant (venue + owner login) under my org.
   if (url.pathname === "/api/org/merchants" && request.method === "POST") {
-    const payload = await requireAuth(request, env);
-    if (!payload) return json({ error: "unauthorized" }, 401);
-    const orgId = typeof payload.org === "string" ? payload.org : null;
-    if (!orgId) return json({ error: "not a reseller account" }, 403);
+    const reseller = await requireReseller(request, env);
+    if (!reseller) return json({ error: "forbidden" }, 403);
+    const { orgId } = reseller;
     const body = (await request.json().catch(() => ({}))) as {
       businessName?: string;
       email?: string;
@@ -181,10 +187,9 @@ export async function handleOrgRoute(
 
   // Reseller admin: update my org branding (logo / colour / powered-by).
   if (url.pathname === "/api/org" && request.method === "PUT") {
-    const payload = await requireAuth(request, env);
-    if (!payload) return json({ error: "unauthorized" }, 401);
-    const orgId = typeof payload.org === "string" ? payload.org : null;
-    if (!orgId) return json({ error: "not a reseller account" }, 403);
+    const reseller = await requireReseller(request, env);
+    if (!reseller) return json({ error: "forbidden" }, 403);
+    const { orgId } = reseller;
     const body = (await request.json().catch(() => ({}))) as {
       logoUrl?: string;
       primaryColor?: string;
@@ -218,10 +223,9 @@ export async function handleOrgRoute(
   // merchants (per-merchant + total, with the reseller's commission at
   // organizations.commission_bps).
   if (url.pathname === "/api/org/analytics" && request.method === "GET") {
-    const payload = await requireAuth(request, env);
-    if (!payload) return json({ error: "unauthorized" }, 401);
-    const orgId = typeof payload.org === "string" ? payload.org : null;
-    if (!orgId) return json({ error: "not a reseller account" }, 403);
+    const reseller = await requireReseller(request, env);
+    if (!reseller) return json({ error: "forbidden" }, 403);
+    const { orgId } = reseller;
     const now = Date.now();
     const from = parseDate(url.searchParams.get("from"), now - 30 * 86_400_000);
     const to = parseDate(url.searchParams.get("to"), now + 86_400_000);
@@ -272,17 +276,23 @@ export async function handleOrgRoute(
   // Reseller admin: my commission LEDGER — durable per-payment revenue-share posts
   // (the audit trail behind the on-demand analytics).
   if (url.pathname === "/api/org/ledger" && request.method === "GET") {
-    const payload = await requireAuth(request, env);
-    if (!payload) return json({ error: "unauthorized" }, 401);
-    const orgId = typeof payload.org === "string" ? payload.org : null;
-    if (!orgId) return json({ error: "not a reseller account" }, 403);
+    const reseller = await requireReseller(request, env);
+    if (!reseller) return json({ error: "forbidden" }, 403);
+    const { orgId } = reseller;
     const [totals] = await sql`
       SELECT count(*)::int AS n,
-             coalesce(sum(commission_amount), 0)::bigint AS total
-      FROM commission_ledger WHERE org_id = ${orgId}`;
+             (coalesce(sum(cl.commission_amount), 0) -
+              coalesce((SELECT sum(ca.amount) FROM commission_adjustments ca
+                        WHERE ca.org_id = ${orgId}), 0))::bigint AS total
+      FROM commission_ledger cl WHERE cl.org_id = ${orgId}`;
     const entries = await sql`
       SELECT cl.id, cl.venue_id, v.name AS venue_name, cl.gross_amount,
-             cl.commission_amount, cl.commission_bps, cl.created_at
+             (cl.commission_amount - COALESCE((
+               SELECT sum(ca.amount) FROM commission_adjustments ca
+               WHERE ca.payment_id = cl.payment_id AND ca.org_id = cl.org_id
+             ), 0))::bigint AS commission_amount,
+             cl.commission_amount AS original_commission_amount,
+             cl.commission_bps, cl.created_at
       FROM commission_ledger cl
       LEFT JOIN venues v ON v.id = cl.venue_id
       WHERE cl.org_id = ${orgId}
@@ -296,10 +306,9 @@ export async function handleOrgRoute(
 
   // Reseller admin: generate a single-use signup invite token (invite-only orgs).
   if (url.pathname === "/api/org/invites" && request.method === "POST") {
-    const payload = await requireAuth(request, env);
-    if (!payload) return json({ error: "unauthorized" }, 401);
-    const orgId = typeof payload.org === "string" ? payload.org : null;
-    if (!orgId) return json({ error: "not a reseller account" }, 403);
+    const reseller = await requireReseller(request, env);
+    if (!reseller) return json({ error: "forbidden" }, 403);
+    const { orgId } = reseller;
     const body = (await request.json().catch(() => ({}))) as {
       email?: string;
       days?: number;
@@ -315,10 +324,9 @@ export async function handleOrgRoute(
 
   // Reseller admin: list my org's invites.
   if (url.pathname === "/api/org/invites" && request.method === "GET") {
-    const payload = await requireAuth(request, env);
-    if (!payload) return json({ error: "unauthorized" }, 401);
-    const orgId = typeof payload.org === "string" ? payload.org : null;
-    if (!orgId) return json({ error: "not a reseller account" }, 403);
+    const reseller = await requireReseller(request, env);
+    if (!reseller) return json({ error: "forbidden" }, 403);
+    const { orgId } = reseller;
     const invites = await sql`
       SELECT token, email, used_at, used_venue, expires_at, created_at
       FROM org_invites WHERE org_id = ${orgId}

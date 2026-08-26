@@ -14,22 +14,61 @@ const h = vi.hoisted(() => {
     if (/SELECT status FROM payments WHERE id/i.test(text)) {
       return Promise.resolve([] as unknown[]);
     }
+    if (/INSERT INTO financial_events/i.test(text)) {
+      return Promise.resolve([{ id: "11111111-1111-4111-8111-111111111111" }] as unknown[]);
+    }
+    if (/WITH candidates AS/i.test(text)) {
+      return Promise.resolve([{
+        id: "22222222-2222-4222-8222-222222222222",
+        event_id: "11111111-1111-4111-8111-111111111111",
+        consumer: "invoice",
+        attempts: 1,
+        claim_token: "33333333-3333-4333-8333-333333333333",
+        event_type: "payment.succeeded",
+        venue_id: "v_test",
+        aggregate_id: "pay_inv_succ_abcdefghij1234567890",
+        payload: {
+          paymentId: "pay_inv_succ_abcdefghij1234567890",
+          venue: "v_test",
+          amount: 10000,
+          currency: "KES",
+          status: "succeeded",
+          kind: "payment",
+          providerRef: "UGB5TBBAPB",
+          metadata: { invoice_number: "INV-1" },
+        },
+      }] as unknown[]);
+    }
+    if (/SELECT 1 FROM financial_outbox/i.test(text)) {
+      return Promise.resolve([{ ok: 1 }] as unknown[]);
+    }
+    if (/INSERT INTO financial_effects/i.test(text)) {
+      return Promise.resolve([{ event_id: "11111111-1111-4111-8111-111111111111" }] as unknown[]);
+    }
+    if (/UPDATE financial_outbox[\s\S]*RETURNING id/i.test(text)) {
+      return Promise.resolve([{ id: "22222222-2222-4222-8222-222222222222" }] as unknown[]);
+    }
     // settlement lookup: resolve the invoice id for (venue, number).
     if (/SELECT id FROM invoices\s+WHERE venue_id/i.test(text)) {
       return Promise.resolve([{ id: "inv-uuid-1" }] as unknown[]);
     }
     // recordPayment's invoice fetch (amount + running total).
-    if (/SELECT amount, amount_paid, currency, number FROM invoices/i.test(text)) {
+    if (/SELECT id, amount(?:, amount_paid)?,?(?: currency| status)?\s+FROM invoices/i.test(text)) {
       return Promise.resolve([
-        { amount: 100, amount_paid: 0, currency: "KES", number: "INV-1" },
+        { id: "inv-uuid-1", amount: 100, amount_paid: 0, currency: "KES", number: "INV-1" },
       ] as unknown[]);
+    }
+    if (/AS collected[\s\S]*AS refunded/i.test(text)) {
+      return Promise.resolve([{ collected: 10000, refunded: 0 }] as unknown[]);
     }
     return Promise.resolve([] as unknown[]);
   }) as unknown as {
     (s: TemplateStringsArray, ...v: unknown[]): Promise<unknown[]>;
     json: (v: unknown) => unknown;
+    begin: <T>(fn: (tx: typeof sql) => Promise<T>) => Promise<T>;
   };
   sql.json = (v: unknown) => v;
+  sql.begin = async <T>(fn: (tx: typeof sql) => Promise<T>) => fn(sql);
   return { calls, sql };
 });
 
@@ -102,8 +141,8 @@ describe("invoice settlement — a pay-link payment ties to the invoice + carrie
     // The receivable is settled: the invoice is marked paid...
     const paidUpdate = h.calls.find(
       (c) =>
-        /UPDATE invoices SET amount_paid/i.test(c.text) &&
-        /status = 'paid'/i.test(c.text),
+        /UPDATE invoices[\s\S]*SET amount_paid/i.test(c.text) &&
+        c.values.includes("paid"),
     );
     expect(paidUpdate).toBeTruthy();
     // ...and the M-Pesa receipt is persisted on the invoice as paid_ref, tying the

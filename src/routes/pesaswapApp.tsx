@@ -19,7 +19,7 @@ export const Route = createFileRoute("/pesaswapApp")({
       {
         name: "viewport",
         content:
-          "width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover",
+          "width=device-width, initial-scale=1, viewport-fit=cover",
       },
       { name: "mobile-web-app-capable", content: "yes" },
       { name: "apple-mobile-web-app-capable", content: "yes" },
@@ -44,16 +44,25 @@ function PesaSwapAppPage() {
     if (typeof window !== "undefined") adoptLaunchToken();
     return null;
   });
-  // Then fall back to a scoped session only if there's still no token (so
-  // /api/share etc. are authed). ensureSessionToken no-ops when a token exists.
+  // SSR cannot read sessionStorage, so rendering MerchantApp on the server would
+  // emit demo invoices while an authenticated client renders live venue data.
+  // Keep the server and first client frame identical; the token above is adopted
+  // synchronously before the real operator surface mounts on the next frame.
+  const [clientReady, setClientReady] = useState(false);
+  // Fall back to a scoped session if there is no token. The operator surface
+  // paints immediately; auth bootstrap continues without blocking first paint.
   useEffect(() => {
     void ensureSessionToken("merchant");
+    setClientReady(true);
   }, []);
 
   return (
-    <div className="min-h-[100dvh] bg-slate-950 sm:flex sm:items-center sm:justify-center sm:p-6">
-      <div className="relative mx-auto h-[100dvh] w-full overflow-hidden bg-background sm:h-[860px] sm:max-h-[92dvh] sm:w-[420px] sm:rounded-[2.2rem] sm:border sm:border-border sm:shadow-2xl">
-        <MerchantApp standalone />
+    <div className="min-h-[100dvh] bg-slate-950 md:flex md:items-center md:justify-center md:p-6">
+      <div
+        data-testid="operator-shell"
+        className="relative mx-auto h-[100dvh] w-full overflow-hidden bg-background md:h-[min(900px,92dvh)] md:w-[min(100%,960px)] md:rounded-2xl md:border md:border-border md:shadow-2xl"
+      >
+        {clientReady ? <MerchantApp standalone /> : null}
       </div>
     </div>
   );

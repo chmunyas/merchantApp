@@ -29,6 +29,7 @@ import {
   type MerchantTable,
 } from "@/lib/merchant-dashboard";
 import { cn } from "@/lib/utils";
+import { authFetch } from "@/lib/auth";
 
 export const Route = createFileRoute("/dashboard/enquiries")({
   component: DashboardEnquiriesPage,
@@ -84,7 +85,7 @@ function DashboardEnquiriesPage() {
     // ones so web requests from the PWA appear here. Local status changes win.
     void (async () => {
       try {
-        const res = await fetch(
+        const res = await authFetch(
           `/api/enquiries?venue=${encodeURIComponent(getCurrentVenueId())}`,
         );
         if (!res.ok) return;

@@ -2,7 +2,8 @@ import { getTelegramConfig } from "@/lib/channels/telegram-config";
 import { getSql } from "@/lib/db";
 import { envVar } from "@/lib/env";
 import { roleAtLeast } from "@/lib/rbac";
-import { requireAuth, venueFromPayload } from "@/api/auth";
+import { requireHumanAuth, venueFromPayload } from "@/api/auth";
+import { registerChannelAccount } from "@/lib/venue-routing";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -28,8 +29,11 @@ export async function handleTelegramRoute(
   const path = url.pathname;
 
   if (path === "/api/telegram/config" && request.method === "GET") {
-    const getPayload = await requireAuth(request, env);
-    const getVenue = getPayload ? venueFromPayload(getPayload, url) : undefined;
+    const getPayload = await requireHumanAuth(request, env);
+    if (!getPayload || !roleAtLeast(getPayload, "merchant")) {
+      return json({ error: "forbidden" }, 403);
+    }
+    const getVenue = venueFromPayload(getPayload, url);
     const cfg = await getTelegramConfig(env, getVenue);
     return json({
       hasToken: Boolean(cfg.botToken),
@@ -38,7 +42,7 @@ export async function handleTelegramRoute(
   }
 
   if (path === "/api/telegram/config" && request.method === "POST") {
-    const cfgPayload = await requireAuth(request, env);
+    const cfgPayload = await requireHumanAuth(request, env);
     if (!cfgPayload) return json({ error: "unauthorized" }, 401);
     // Bot token is an owner-only setting.
     if (!roleAtLeast(cfgPayload, "merchant")) {
@@ -59,10 +63,11 @@ export async function handleTelegramRoute(
 
   // Verify the token against Telegram (getMe) — returns the bot's @username.
   if (path === "/api/telegram/status" && request.method === "GET") {
-    const statusPayload = await requireAuth(request, env);
-    const statusVenue = statusPayload
-      ? venueFromPayload(statusPayload, url)
-      : undefined;
+    const statusPayload = await requireHumanAuth(request, env);
+    if (!statusPayload || !roleAtLeast(statusPayload, "merchant")) {
+      return json({ error: "forbidden" }, 403);
+    }
+    const statusVenue = venueFromPayload(statusPayload, url);
     const cfg = await getTelegramConfig(env, statusVenue);
     if (!cfg.botToken) {
       return json({ connected: false, error: "No bot token set." });
@@ -73,10 +78,19 @@ export async function handleTelegramRoute(
       );
       const data = (await res.json()) as {
         ok?: boolean;
-        result?: { username?: string; first_name?: string };
+        result?: { id?: number; username?: string; first_name?: string };
         description?: string;
       };
       if (data.ok && data.result) {
+        if (data.result.id != null) {
+          await registerChannelAccount(
+            env,
+            "telegram",
+            String(data.result.id),
+            statusVenue,
+            "telegram_get_me",
+          );
+        }
         return json({
           connected: true,
           username: data.result.username,
@@ -92,13 +106,27 @@ export async function handleTelegramRoute(
 
   // Production: register a public webhook (replaces long polling).
   if (path === "/api/telegram/webhook/set" && request.method === "POST") {
-    const setPayload = await requireAuth(request, env);
+    const setPayload = await requireHumanAuth(request, env);
     if (!setPayload) {
       return json({ error: "unauthorized" }, 401);
     }
+    if (!roleAtLeast(setPayload, "merchant")) return json({ error: "forbidden" }, 403);
     const cfg = await getTelegramConfig(env, venueFromPayload(setPayload, url));
     if (!cfg.botToken) return json({ ok: false, error: "No bot token set." });
-    const webhookUrl = `${url.origin}/api/telegram/webhook`;
+    const me = await fetch(`https://api.telegram.org/bot${cfg.botToken}/getMe`)
+      .then((response) => response.json()) as { ok?: boolean; result?: { id?: number } };
+    if (!me.ok || me.result?.id == null) {
+      return json({ ok: false, error: "Could not verify Telegram bot." });
+    }
+    const venue = venueFromPayload(setPayload, url);
+    await registerChannelAccount(
+      env,
+      "telegram",
+      String(me.result.id),
+      venue,
+      "telegram_get_me",
+    );
+    const webhookUrl = `${url.origin}/api/channel-webhooks/telegram/${encodeURIComponent(String(me.result.id))}`;
     try {
       // When TELEGRAM_WEBHOOK_SECRET is configured, register it as Telegram's
       // secret_token so every inbound carries X-Telegram-Bot-Api-Secret-Token —
@@ -118,10 +146,11 @@ export async function handleTelegramRoute(
   }
 
   if (path === "/api/telegram/webhook/delete" && request.method === "POST") {
-    const delPayload = await requireAuth(request, env);
+    const delPayload = await requireHumanAuth(request, env);
     if (!delPayload) {
       return json({ error: "unauthorized" }, 401);
     }
+    if (!roleAtLeast(delPayload, "merchant")) return json({ error: "forbidden" }, 403);
     const cfg = await getTelegramConfig(env, venueFromPayload(delPayload, url));
     if (!cfg.botToken) return json({ ok: false, error: "No bot token set." });
     try {

@@ -1,4 +1,6 @@
 import { getSql } from "@/lib/db";
+import { decideRoute } from "@/lib/route-policy";
+import { bucketFor, shardFor } from "@/lib/rate-limit-shard";
 
 // Best client IP: Cloudflare's CF-Connecting-IP, else the first X-Forwarded-For
 // hop, else a stable "unknown" bucket.
@@ -14,18 +16,78 @@ export type RateLimitResult = {
   limited: boolean;
   remaining: number;
   retryAfter: number;
+  unavailable?: boolean;
 };
 
-// Fixed-window counter backed by Postgres so it works across the worker pool.
-// Fails open (never blocks) if the database is unavailable.
+type LimiterBinding = {
+  idFromName(name: string): unknown;
+  get(id: unknown): { fetch(request: Request): Promise<Response> };
+};
+
+/**
+ * Sharded Durable Object counter — the primary path. Keeps the hottest check in
+ * the system off the primary database entirely. Returns null when the binding is
+ * absent (Node dev, tests) or the call fails, so the caller can fall back.
+ */
+async function rateLimitViaDurableObject(
+  env: unknown,
+  key: string,
+  limit: number,
+  windowSeconds: number,
+): Promise<RateLimitResult | null> {
+  const binding = (env as { RATE_LIMITER?: LimiterBinding } | undefined)
+    ?.RATE_LIMITER;
+  if (!binding) return null;
+  try {
+    const shard = binding.get(binding.idFromName(shardFor(key)));
+    const response = await shard.fetch(
+      new Request("https://limiter/incr", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          key: bucketFor(key, windowSeconds, Date.now()),
+          limit,
+          windowSeconds,
+        }),
+      }),
+    );
+    if (!response.ok) return null;
+    const body = (await response.json()) as {
+      limited: boolean;
+      remaining: number;
+      retryAfter: number;
+    };
+    return {
+      limited: Boolean(body.limited),
+      remaining: Math.max(0, Number(body.remaining) || 0),
+      retryAfter: Math.max(0, Number(body.retryAfter) || 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Fixed-window counter. Prefers the sharded Durable Object; falls back to the
+// Postgres table where no binding exists (Node dev, tests, older deploys).
+// Fails open (never blocks) if neither backend is available.
 export async function rateLimit(
   env: unknown,
   key: string,
   limit: number,
   windowSeconds: number,
 ): Promise<RateLimitResult> {
+  const viaDo = await rateLimitViaDurableObject(env, key, limit, windowSeconds);
+  if (viaDo) return viaDo;
+
   const sql = getSql(env);
-  if (!sql) return { limited: false, remaining: limit, retryAfter: 0 };
+  if (!sql) {
+    return {
+      limited: false,
+      remaining: limit,
+      retryAfter: 0,
+      unavailable: true,
+    };
+  }
   const windowId = Math.floor(Date.now() / (windowSeconds * 1000));
   const bucket = `${key}:${windowId}`;
   const expiresAt = new Date((windowId + 1) * windowSeconds * 1000);
@@ -51,11 +113,23 @@ export async function rateLimit(
     }
     return { limited: false, remaining: limit - count, retryAfter: 0 };
   } catch {
-    return { limited: false, remaining: limit, retryAfter: 0 };
+    return {
+      limited: false,
+      remaining: limit,
+      retryAfter: 0,
+      unavailable: true,
+    };
   }
 }
 
-type Rule = { method: string; path: string; limit: number; window: number };
+export type Rule = {
+  id: string;
+  method: string;
+  path: string;
+  limit: number;
+  window: number;
+  failClosed: boolean;
+};
 
 // True only when DISABLE_RATE_LIMIT is explicitly set (on the Workers env binding
 // or, in Node dev, process.env). Used exclusively by the E2E job — production
@@ -79,17 +153,38 @@ function rateLimitDisabled(env: unknown): boolean {
 
 // Public/unauthenticated endpoints that mutate or cost money/compute. Tight
 // limits blunt credential-stuffing, signup spam and AI/payment abuse.
-const RULES: Rule[] = [
-  { method: "POST", path: "/api/auth/signup", limit: 5, window: 60 },
-  { method: "POST", path: "/api/auth/login", limit: 10, window: 60 },
-  { method: "POST", path: "/api/auth/session", limit: 30, window: 60 },
-  { method: "POST", path: "/api/auth/google", limit: 10, window: 60 },
-  { method: "POST", path: "/api/auth/password", limit: 5, window: 60 },
-  { method: "POST", path: "/api/enquiries", limit: 10, window: 60 },
-  { method: "POST", path: "/api/chat", limit: 20, window: 60 },
-  { method: "POST", path: "/api/payments/create", limit: 10, window: 60 },
-  { method: "POST", path: "/api/refunds", limit: 10, window: 60 },
-  { method: "POST", path: "/api/a2a", limit: 30, window: 60 },
+export const RULES: readonly Rule[] = [
+  { id: "auth.signup", method: "POST", path: "/api/auth/signup", limit: 5, window: 60, failClosed: true },
+  { id: "auth.login", method: "POST", path: "/api/auth/login", limit: 10, window: 60, failClosed: true },
+  { id: "auth.session", method: "POST", path: "/api/auth/session", limit: 30, window: 60, failClosed: true },
+  { id: "auth.google", method: "POST", path: "/api/auth/google", limit: 10, window: 60, failClosed: true },
+  { id: "auth.otp.request", method: "POST", path: "/api/auth/otp/request", limit: 10, window: 60, failClosed: true },
+  { id: "auth.otp.verify", method: "POST", path: "/api/auth/otp/verify", limit: 20, window: 60, failClosed: true },
+  { id: "auth.staff-login", method: "POST", path: "/api/auth/staff-login", limit: 10, window: 60, failClosed: true },
+  { id: "auth.password.admin", method: "POST", path: "/api/auth/password", limit: 5, window: 60, failClosed: true },
+  { id: "enquiries.create", method: "POST", path: "/api/enquiries", limit: 10, window: 60, failClosed: true },
+  { id: "chat.send", method: "POST", path: "/api/chat", limit: 20, window: 60, failClosed: true },
+  { id: "payments.create", method: "POST", path: "/api/payments/create", limit: 10, window: 60, failClosed: true },
+  { id: "payments.status", method: "GET", path: "/api/payments/:id/status", limit: 60, window: 60, failClosed: true },
+  { id: "payments.refund", method: "POST", path: "/api/refunds", limit: 10, window: 60, failClosed: true },
+  { id: "portal.token", method: "POST", path: "/api/portal/token", limit: 5, window: 900, failClosed: true },
+  { id: "portal.token.verify", method: "POST", path: "/api/portal/token/verify", limit: 15, window: 900, failClosed: true },
+  { id: "portal.redeem", method: "POST", path: "/api/portal/:token/redeem", limit: 5, window: 600, failClosed: true },
+  { id: "portal.refund-request", method: "POST", path: "/api/portal/:token/refund-request", limit: 5, window: 3600, failClosed: true },
+  { id: "portal.data-request", method: "POST", path: "/api/portal/:token/data-request", limit: 5, window: 3600, failClosed: true },
+  { id: "guest.venue", method: "GET", path: "/api/guest/venue", limit: 20, window: 300, failClosed: true },
+  { id: "guest.receipt-lookup", method: "POST", path: "/api/guest/receipt-lookup", limit: 5, window: 900, failClosed: true },
+  { id: "guest.receipt-lookup.verify", method: "POST", path: "/api/guest/receipt-lookup/verify", limit: 15, window: 900, failClosed: true },
+  { id: "portal.revoke", method: "POST", path: "/api/portal/:token/revoke", limit: 5, window: 600, failClosed: true },
+  { id: "qr.order", method: "POST", path: "/api/qr/:uuid/order", limit: 15, window: 60, failClosed: true },
+  { id: "reviews.create", method: "POST", path: "/api/reviews", limit: 10, window: 60, failClosed: true },
+  { id: "reviews.google.callback", method: "GET", path: "/api/reviews/google/callback", limit: 20, window: 300, failClosed: true },
+  { id: "agent.checkout", method: "POST", path: "/api/agent/checkout", limit: 10, window: 60, failClosed: true },
+  { id: "agent.booking", method: "POST", path: "/api/agent/booking", limit: 10, window: 60, failClosed: true },
+  { id: "agent.intent", method: "POST", path: "/api/agent/intent", limit: 20, window: 60, failClosed: true },
+  { id: "ai.transcribe", method: "POST", path: "/api/ai/transcribe", limit: 10, window: 60, failClosed: true },
+  { id: "menu.translate", method: "POST", path: "/api/menu/translate", limit: 10, window: 60, failClosed: true },
+  { id: "a2a.invoke", method: "POST", path: "/api/a2a", limit: 30, window: 60, failClosed: true },
 ];
 
 // Central rate-limit gate. Returns a 429 Response when a matching public route
@@ -104,17 +199,34 @@ export async function enforceRateLimit(
   // that is NEVER set in production, so real abuse protection is untouched.
   if (rateLimitDisabled(env)) return null;
   const url = new URL(request.url);
+  const decision = decideRoute(request.method, url.pathname);
+  const routeId = decision.kind === "match" ? decision.route.policy.id : null;
   const rule = RULES.find(
-    (r) => r.method === request.method && r.path === url.pathname,
+    (r) =>
+      r.method === request.method &&
+      (r.id === routeId || r.path === url.pathname),
   );
   if (!rule) return null;
   const ip = clientIp(request);
   const result = await rateLimit(
     env,
-    `${rule.method}:${rule.path}:${ip}`,
+    `${rule.method}:${rule.id}:${ip}`,
     rule.limit,
     rule.window,
   );
+  if (result.unavailable && rule.failClosed) {
+    return new Response(
+      JSON.stringify({ error: "Rate-limit service unavailable." }),
+      {
+        status: 503,
+        headers: {
+          "content-type": "application/json",
+          "access-control-allow-origin": "*",
+          "cache-control": "no-store",
+        },
+      },
+    );
+  }
   if (!result.limited) return null;
   return new Response(
     JSON.stringify({ error: "Too many requests. Please slow down." }),

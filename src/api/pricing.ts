@@ -9,6 +9,7 @@ import { getSql } from "@/lib/db";
 import { roleAtLeast } from "@/lib/rbac";
 import { venueFromPayload } from "@/lib/tenancy";
 import { demandSlots, menuProfitStats } from "@/lib/venue-stats";
+import { tokenHasScope } from "@/lib/api-tokens";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -47,6 +48,9 @@ export async function handlePricingRoute(
   if (!roleAtLeast(payload, "manager")) {
     return json({ error: "forbidden" }, 403);
   }
+  if (!tokenHasScope(payload, "analytics:read") || !tokenHasScope(payload, "menu:read")) {
+    return json({ error: "forbidden" }, 403);
+  }
   const venue = venueFromPayload(payload, url);
   const sql = getSql(env);
   if (!sql) return json({ error: "database not configured" }, 503);
@@ -65,9 +69,11 @@ export async function handlePricingRoute(
     ) + 1,
   );
 
+  const [venueRow] = await sql`
+    SELECT timezone FROM venues WHERE id = ${venue} LIMIT 1`;
   const [stats, slots] = await Promise.all([
     menuProfitStats(sql, venue, from, to),
-    demandSlots(sql, venue),
+    demandSlots(sql, venue, String(venueRow?.timezone ?? "Africa/Nairobi")),
   ]);
 
   const engineering = classifyMenu(stats, "KES");
